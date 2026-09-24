@@ -9,16 +9,19 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Infrastructure
-**Current Milestone:** Milestone 2 — Prisma Base Schema
+**Current Milestone:** Milestone 3 — Shared Types & Validation (Base)
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
 shared packages, the Prisma toolchain, and local Docker infrastructure are all
-scaffolded and passing validation (Milestone 0). The first real database models —
-`User` and `RefreshToken` — are now implemented, migrated, and seeded (Milestone 1,
-Docker infra, landed as a side effect of Milestone 0; Milestone 2 landed in this
-session). No product features (endpoints, UI) have been implemented — every app
-still shows framework-default or placeholder content, exactly as scoped.
+scaffolded and passing validation (Milestone 0, with Docker infra/Milestone 1 landing
+as a side effect of it). The first real database models — `User` and `RefreshToken` —
+are implemented, migrated, and seeded (Milestone 2). `packages/types` and
+`packages/validation` now carry real, tested content for everything auth needs
+(Milestone 3) — the single source of truth register/login/refresh/logout/session will
+be validated against once Milestone 5 (Auth) implements the actual endpoints. No
+product features (endpoints, UI) have been implemented — every app still shows
+framework-default or placeholder content, exactly as scoped.
 
 ---
 
@@ -68,6 +71,27 @@ still shows framework-default or placeholder content, exactly as scoped.
 - [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
       projects) — this milestone is the first to exercise the `typecheck` target
 
+### Milestone 3 — Shared Types & Validation (Base)
+
+- [x] `packages/types`: `Cursor` (plain string alias) and `PaginatedResponse<TItem>`
+      (`docs/API.md` §1's `{ data, meta.nextCursor }` envelope) — replaces the
+      placeholder content the package carried since Milestone 0
+- [x] `packages/validation`: `usernameSchema` and `userResponseSchema` (`src/lib/user.ts`);
+      `passwordSchema`, `registerInputSchema`, `loginInputSchema`, `refreshInputSchema`,
+      `logoutInputSchema`, `authResponseSchema`, `refreshResponseSchema`,
+      `sessionResponseSchema` (`src/lib/auth.ts`) — every request/response shape
+      `docs/API.md` §3 (Auth) documents, replacing the placeholder content
+- [x] `zod` added as a real dependency of `packages/validation` (was scaffolded but
+      unused since Milestone 0)
+- [x] `packages/config` needed no changes — its `apiEnvSchema` already covered DB URL,
+      JWT keys, Redis URL, and S3 config since Milestone 0, and `loadEnv()`'s
+      missing/invalid-var test already existed
+- [x] 36 new unit tests (`user.spec.ts`, `auth.spec.ts`) covering every schema's
+      accept/reject cases, plus 2 for `packages/types`' `PaginatedResponse` shape
+- [x] `docs/API.md` §3 tightened to mirror the schemas exactly, resolving an ambiguity
+      the original draft left open (see "Architectural Decisions Made" below)
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11 projects)
+
 ---
 
 ## Validation Performed
@@ -114,6 +138,24 @@ already satisfies `docs/IMPLEMENTATION_PLAN.md` Milestone 2's test criterion. Se
 **Note for whoever continues this work**: the above were run interactively; there is
 no CI pipeline yet. Wiring `nx affected -t lint test build e2e` into CI is explicitly
 scoped to Milestone 20 (hardening pass) in `docs/IMPLEMENTATION_PLAN.md`, not before.
+
+### Milestone 3
+
+```bash
+pnpm exec nx run-many -t lint test build -p types,validation --skip-nx-cache
+# ^ caught a real bug on the first pass: @nx/dependency-checks flagged
+#   @instagram-clone/types as declared-but-unused in packages/validation
+#   (added preemptively, per docs/ARCHITECTURE.md §6.1, but M3 doesn't
+#   actually need it yet — pagination schemas are out of scope). Removed the
+#   dependency rather than suppress the lint rule; it'll come back the
+#   milestone that actually imports from `types` into `validation`.
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+```
+
+36 new schema tests (`packages/validation`) + 2 new type-shape tests (`packages/types`),
+all passing. No Docker/Postgres interaction needed for this milestone — pure
+TypeScript/Zod, no runtime service dependency.
 
 ---
 
@@ -187,6 +229,29 @@ in full (with rationale) in `docs/DATABASE.md` itself — summarized here:
 
 `docs/ARCHITECTURE.md` risk #1 (Prisma 7 config/migration approach) and risk #6
 (citext decision) are both marked resolved, pointing back here.
+
+### Milestone 3 — Architectural Decisions Made
+
+`docs/IMPLEMENTATION_PLAN.md` and `docs/FEATURES.md` both left two things
+unspecified, explicitly deferring them to "the shared Zod schema" — i.e. this
+milestone. Both are now decided and recorded in `docs/API.md` §3:
+
+- **Password policy: length-only (8–128 characters), no mandated character
+  classes.** Follows NIST SP 800-63B guidance that complexity rules (require a
+  digit, a symbol, etc.) push users toward predictable substitutions
+  (`Password1!`) without meaningfully improving resistance to guessing —
+  length is what actually matters. The 128-char upper bound is a defensive
+  limit on hashing cost, not a security rule. Implemented as `passwordSchema`
+  in `packages/validation/src/lib/auth.ts`.
+- **`POST /auth/logout`'s body needed a resolved shape.** The original
+  `docs/API.md` draft only showed `{ allDevices? }`, but mobile has no cookie
+  to carry the refresh token being revoked — the same web-cookie/mobile-body
+  split already used by `/auth/refresh` has to apply here too. Resolved as
+  `LogoutInputSchema = { refreshToken?, allDevices? }`; `docs/API.md` §3 updated
+  to match and to spell out the pattern once instead of repeating it per row.
+
+Neither decision changes anything in `docs/DATABASE.md` — both are
+request-validation-layer concerns, not schema changes.
 
 ---
 
@@ -272,26 +337,33 @@ of null (reading 'useContext')` on every route. Removed from `.env.example`;
 
 ## Architectural Decisions Pending
 
-None. The deviations above (Milestone 0 and Milestone 2 alike) are
-implementation-detail-level — versions, ports, a webpack externals list, one deferred
-column, one simplified index, two deferred extensions — recorded with rationale in
-`docs/DATABASE.md` and `docs/ARCHITECTURE.md` where they touch those docs. None of them
-change anything either document asserts at the design level.
+None. Milestone 3 resolved the two decisions `docs/IMPLEMENTATION_PLAN.md` and
+`docs/FEATURES.md` had explicitly deferred to it (password policy, logout body shape —
+see "Milestone 3 — Architectural Decisions Made" above). Everything else recorded in
+this file (Milestone 0 and Milestone 2 alike) is implementation-detail-level —
+versions, ports, a webpack externals list, one deferred column, one simplified index,
+two deferred extensions — with rationale in `docs/DATABASE.md` and `docs/ARCHITECTURE.md`
+where it touches those docs. None of it changes anything either document asserts at the
+design level.
 
 ---
 
 ## Next Milestone
 
-**Milestone 3 — Shared Types & Validation (Base)**: per `docs/IMPLEMENTATION_PLAN.md`,
-add `packages/types`' base primitives (`Cursor`, `PaginatedResponse<T>`) and
-`packages/validation`'s `RegisterInputSchema`/`LoginInputSchema`/`UserResponseSchema`
-(auth-scoped Zod schemas only), replacing the placeholder content those two packages
-have carried since Milestone 0. `packages/config` needs no further work here — it
-already has real content.
+**Milestone 4 — API Bootstrap**: per `docs/IMPLEMENTATION_PLAN.md`, most of the
+generic bootstrap work (Nest app generation, `ConfigModule`/`packages/config` wiring,
+`helmet`, CORS, URI versioning, `apps/api-e2e`) already landed in Milestone 0 — what's
+actually left is: a DI-provided `PrismaModule`/`PrismaService` wrapping the
+`@prisma/client`+`@prisma/adapter-pg` setup from Milestone 2 (with `OnModuleInit`/
+`OnModuleDestroy` connect/disconnect); a global `ZodValidationPipe` (via `nestjs-zod`)
+that finally makes `apps/api` consume the schemas this milestone (M3) built, instead of
+them sitting unused; a global exception filter producing the RFC 7807 Problem Details
+shape `docs/API.md` §1 specifies; `@nestjs/swagger` wired to emit `openapi.json`
+(needed by Milestone 6's `packages/api-client` codegen pipeline — see
+`docs/ARCHITECTURE.md` risk #2); and an explicit `GET /api/v1/health` endpoint.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 3 section, and
-check the `User` model (`prisma/schema.prisma`, this milestone) for the exact field
-names/constraints the new Zod schemas need to agree with (e.g. `username`'s 3–30 char
-bound is enforced by `packages/validation`, not the database, per `docs/DATABASE.md`
-§3.1 — the schema must actually enforce it now that a real `User` model exists to
-validate input for).
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 4 section and
+`docs/ARCHITECTURE.md` §5.2 (API module structure). Confirm current `nestjs-zod` and
+`@nestjs/swagger` versions/APIs against their docs before wiring them in — both are
+exactly the kind of "framework moves fast" dependency `docs/ARCHITECTURE.md` risk #9
+warns about, and neither has been installed yet in this repo.

@@ -73,16 +73,35 @@ Credentials: true`) enabled since the refresh cookie requires it.
 
 ## 3. Auth
 
-| Method & path         | Auth                                                     | Body / Query                                                                    | Response                                                                                                                                                   |
-| --------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/register` | none                                                     | `{ email, username, password, fullName? }` (validated by `RegisterInputSchema`) | `201` → `{ user }` + sets refresh cookie (web) / returns refresh token (mobile) + access token                                                             |
-| `POST /auth/login`    | none                                                     | `{ emailOrUsername, password }`                                                 | `200` → `{ user, accessToken, accessTokenExpiresAt }` + refresh cookie/token as above                                                                      |
-| `POST /auth/refresh`  | refresh cookie (web) or `{ refreshToken }` body (mobile) | —                                                                               | `200` → new `{ accessToken, accessTokenExpiresAt }` + rotated refresh cookie/token. `401` + full family revocation if a reused/expired token is presented. |
-| `POST /auth/logout`   | refresh cookie/body                                      | `{ allDevices?: boolean }`                                                      | `204` — revokes the presented token's family (or all of the user's families if `allDevices`)                                                               |
-| `GET /auth/session`   | access token                                             | —                                                                               | `200` → `{ user }` — cheap "am I logged in / who am I" check used by SSR                                                                                   |
+Request/response shapes below are the literal Zod schemas in `packages/validation`
+(`src/lib/auth.ts`, `src/lib/user.ts`) — implemented in Milestone 3; those schemas are
+the single source of truth, this table just mirrors them.
+
+| Method & path         | Auth\*                                                     | Body                                                              | Response                                                                                                                                                                              |
+| --------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register` | none                                                       | `RegisterInputSchema`: `{ email, username, password, fullName? }` | `201` → `AuthResponseSchema`: `{ user, accessToken, accessTokenExpiresAt, refreshToken? }` + sets the refresh cookie (web)                                                            |
+| `POST /auth/login`    | none                                                       | `LoginInputSchema`: `{ emailOrUsername, password }`               | `200` → `AuthResponseSchema` (same shape as register)                                                                                                                                 |
+| `POST /auth/refresh`  | refresh cookie (web) or `RefreshInputSchema` body (mobile) | `RefreshInputSchema`: `{ refreshToken? }`                         | `200` → `RefreshResponseSchema`: `{ accessToken, accessTokenExpiresAt, refreshToken? }`, rotated cookie (web). `401` + full family revocation if a reused/expired token is presented. |
+| `POST /auth/logout`   | refresh cookie (web) or `LogoutInputSchema` body (mobile)  | `LogoutInputSchema`: `{ refreshToken?, allDevices? }`             | `204` — revokes the presented token's family (or all of the user's families if `allDevices`)                                                                                          |
+| `GET /auth/session`   | access token                                               | —                                                                 | `200` → `SessionResponseSchema`: `{ user }` — cheap "am I logged in / who am I" check used by SSR                                                                                     |
+
+\* `refreshToken` is optional in `RefreshInputSchema`/`LogoutInputSchema` because it's
+only ever sent by mobile clients — web relies on the httpOnly cookie exclusively and
+sends no body at all for these two routes. `AuthResponseSchema`/`RefreshResponseSchema`
+mirror this: `refreshToken` is present in the response body only for mobile.
+
+`UserResponseSchema` (used as `user` above) is the _own-user_ shape returned from auth
+endpoints — id, username, email, fullName, bio, websiteUrl, isPrivate, createdAt, never
+`passwordHash`/`tokenVersion`/`deletedAt`/`emailVerifiedAt`. It is **not** the richer
+public _profile_ shape (avatar, follower counts, `isFollowedByMe`) returned by
+`GET /users/:username` in §4 — that's a separate, wider schema added in Milestone 8.
 
 Registration does not require email verification before login in the MVP (see
 `FEATURES.md`); `User.emailVerifiedAt` exists for a future verification flow.
+
+Password policy (`passwordSchema`): 8–128 characters, no mandated character classes —
+following NIST SP 800-63B guidance that complexity rules push users toward predictable
+substitutions without meaningfully improving guessability; length is what matters.
 
 ## 4. Users & Profiles
 
