@@ -7,8 +7,75 @@ generator client {
   output   = "./generated/prisma"
 }
 
-// No models yet — this milestone only wires up the Prisma toolchain
-// (client generation, migration tooling, Docker Postgres) against an empty
-// schema. The first real models (User, RefreshToken) land in the milestone
-// that implements authentication — see docs/IMPLEMENTATION_PLAN.md and the
-// full data model design in docs/DATABASE.md.
+// ---------------------------------------------------------------------------
+// Conventions (see docs/DATABASE.md §1):
+//   - Primary keys: Prisma-generated UUIDv7 (`uuid(7)`), stored as native `uuid`.
+//   - Tables/columns are snake_case in Postgres (`@@map`/`@map`), camelCase in
+//     the Prisma Client.
+//   - `createdAt`/`updatedAt` on every table; `deletedAt` only on tables that
+//     support soft delete.
+// ---------------------------------------------------------------------------
+
+model User {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  // citext (case-insensitive text) — extension enabled in this migration.
+  username String @unique @db.Citext
+  email    String @unique @db.Citext
+
+  passwordHash String @map("password_hash")
+
+  fullName   String? @map("full_name")
+  bio        String?
+  websiteUrl String? @map("website_url")
+
+  // Reserved for a future follow-request workflow — MVP follow is always
+  // immediate regardless of this flag (see docs/FEATURES.md #5).
+  isPrivate Boolean @default(false) @map("is_private")
+
+  // Bumped to invalidate all outstanding access tokens (e.g. on password
+  // change) without needing an access-token allowlist.
+  tokenVersion Int @default(0) @map("token_version")
+
+  // Reserved — MVP does not require verification before login.
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  refreshTokens RefreshToken[]
+
+  @@index([deletedAt])
+  @@map("users")
+}
+
+/// Backs the rotating-refresh-token auth design (docs/ARCHITECTURE.md §7).
+model RefreshToken {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Shared by every token descended from one login; a replayed, already-
+  // rotated-away token revokes the whole family (reuse detection).
+  familyId String @map("family_id") @db.Uuid
+
+  // SHA-256 of the opaque token handed to the client — never the raw token.
+  tokenHash String @unique @map("token_hash")
+
+  userAgent String? @map("user_agent")
+  ipAddress String? @map("ip_address") @db.Inet
+
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+
+  // Set on rotation; supports a reuse-detection audit trail.
+  replacedByTokenHash String? @map("replaced_by_token_hash")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}

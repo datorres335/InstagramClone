@@ -5,6 +5,14 @@
   "projectType": "library",
   "tags": ["scope:api", "type:util"],
   "targets": {
+    "typecheck": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*.ts", "{projectRoot}/tsconfig.json"],
+      "options": {
+        "command": "tsc -p prisma/tsconfig.json"
+      }
+    },
     "generate": {
       "executor": "nx:run-commands",
       "cache": true,

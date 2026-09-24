@@ -1,21 +1,25 @@
 # Database Design
 
-Defines the PostgreSQL schema managed by Prisma 7 (`prisma/schema.prisma`). This is a
-logical design — field names/types below are what the Prisma schema should express, not
-literal Prisma syntax, since exact Prisma 7 syntax (driver adapters, `prisma.config.ts`)
-should be confirmed against current docs at implementation time (see `ARCHITECTURE.md`
-risk #1).
+Defines the PostgreSQL schema managed by Prisma 7 (`prisma/schema.prisma`). The `User`
+and `RefreshToken` models below are implemented as of Milestone 2 — see
+`prisma/schema.prisma` and `prisma/migrations/20260924043452_0001_init_user_auth/` for
+the literal, current Prisma syntax and applied SQL. Every other table in this document
+is still a logical design only, to be implemented (and re-verified against current
+Prisma docs) in the milestone that adds it.
 
 ## 1. Conventions
 
-- **Primary keys**: UUIDv7 (time-ordered UUIDs) generated at the database or Prisma
-  level, stored as native `uuid`. UUIDv7 is chosen over UUIDv4 for index locality
-  (monotonic-ish, so B-tree inserts don't fragment the way random UUIDv4s do) and over
-  auto-increment integers to avoid leaking row counts / enabling enumeration. Confirm at
-  implementation time whether Prisma 7 exposes a native `uuid(7)` default or whether it
-  should be generated in application code / via a Postgres default
-  (`gen_random_uuid()` from `pgcrypto` only gives v4 — a v7 default likely needs either
-  a small SQL function or app-level generation with a library such as `uuidv7`).
+- **Primary keys**: UUIDv7 (time-ordered UUIDs), stored as native `uuid`. UUIDv7 is
+  chosen over UUIDv4 for index locality (monotonic-ish, so B-tree inserts don't
+  fragment the way random UUIDv4s do) and over auto-increment integers to avoid leaking
+  row counts / enabling enumeration. **Resolved (Milestone 2)**: Prisma 7 exposes this
+  natively as `@default(uuid(7))` — confirmed working, current, non-deprecated API.
+  Generation happens in the Prisma Client (application-level, immediately before
+  `INSERT`), not as a Postgres column default — there is no `gen_random_uuid()`-style
+  SQL default in the generated migration, so any row created outside Prisma Client
+  (raw SQL, another tool) would need to supply its own id. This is a non-issue for us:
+  all writes go through Prisma per `CLAUDE.md`'s "all application data must go through
+  the NestJS API" rule.
 - **Timestamps**: `createdAt` (`timestamptz`, default `now()`) and `updatedAt`
   (`timestamptz`, auto-updated) on every table. `deletedAt` (`timestamptz`, nullable) on
   tables that support soft delete (see §7).
@@ -58,14 +62,25 @@ User ──1:N──▶ Notification (recipient); Notification ──N:1──�
 | fullName                          | text        | nullable                                                                                                                      |
 | bio                               | text        | nullable, max 150 chars (Instagram-like limit)                                                                                |
 | websiteUrl                        | text        | nullable                                                                                                                      |
-| avatarMediaId                     | uuid        | FK → `Media.id`, nullable                                                                                                     |
 | isPrivate                         | boolean     | not null, default `false` — reserved for a future follow-request workflow; MVP follow is always immediate (see `FEATURES.md`) |
 | tokenVersion                      | int         | not null, default `0` — bumped to invalidate all outstanding access tokens (e.g. on password change)                          |
 | emailVerifiedAt                   | timestamptz | nullable — column reserved; MVP does not require verification before login (see `FEATURES.md`)                                |
 | createdAt / updatedAt / deletedAt | timestamptz | see conventions                                                                                                               |
 
-Indexes: unique(`username`), unique(`email`), index(`deletedAt`) (partial index
-`WHERE deletedAt IS NULL` used by most queries).
+**Deviation from the original design (Milestone 2):** `avatarMediaId` is _not_ part of
+the Milestone 2 migration. It's a nullable FK to `Media`, and `Media` doesn't exist
+until Milestone 9 (media pipeline) — adding the column now would mean either a fake/no-op
+FK or a dangling nullable column with no relation for seven milestones. It will be added
+in the same migration that creates `Media`, alongside the actual relation and index. No
+other milestone needs it (auth, profile viewing/editing don't touch avatars).
+
+Indexes: unique(`username`), unique(`email`), index(`deletedAt`). **Deviation:** this is
+a plain B-tree index, not the partial index (`WHERE deletedAt IS NULL`) originally
+specified here. Prisma's schema DSL has no partial-index syntax, so a partial index
+would mean hand-maintaining raw SQL outside Prisma's migration diffing indefinitely —
+real complexity for a micro-optimization with zero rows to benefit from it yet. A plain
+index is correct and sufficient today; revisit only if real query-performance data
+justifies the added maintenance cost.
 
 ### 3.2 `RefreshToken`
 
@@ -249,15 +264,27 @@ NotificationType:  FOLLOW | LIKE | COMMENT
 
 ## 5. Extensions Required
 
-- `citext` — case-insensitive `username`/`email`.
-- `pgcrypto` — UUID generation helpers (exact function depends on the UUIDv7 approach
-  chosen at implementation time, see §1).
+- `citext` — case-insensitive `username`/`email`. **Enabled in migration
+  `0001_init_user_auth` (Milestone 2)**, since `User.username`/`User.email` use it
+  directly.
 - `pg_trgm` — trigram indexes powering `ILIKE`/similarity search on `username` and
   `fullName` for the User Search feature (`CREATE INDEX ... USING gin (username
-gin_trgm_ops)`).
+gin_trgm_ops)`). **Deferred** to the Milestone 17 migration that actually adds the
+  trigram index, not enabled speculatively — see the deviation note below.
 
-All three are enabled in the very first migration, since retrofitting an extension is
-cheap but retrofitting the _columns/indexes_ that depend on it later is not.
+**Deviation from the original design:** this section originally said to enable all
+extensions used anywhere in the schema — including `pgcrypto`, for UUID generation —
+in the very first migration, on the theory that "retrofitting an extension is cheap but
+retrofitting the columns/indexes that depend on it later is not." In practice:
+`pgcrypto` turned out to be unnecessary — Prisma 7's `@default(uuid(7))` generates ids
+in the Prisma Client, not via a Postgres function, so no crypto extension is needed for
+primary keys at all (see §1). And enabling `pg_trgm` now, with nothing using it, would
+just be dead configuration until Milestone 17 — the "cheap now, expensive later" argument
+doesn't actually apply to extensions the way it does to columns/indexes, since enabling
+an extension in the _same_ migration that first uses it costs nothing extra. Each
+extension is now enabled in the migration that first has a column or index depending on
+it, per `CLAUDE.md`'s "do not implement future features unless explicitly requested in
+the current milestone."
 
 ## 6. Key Query Patterns
 
@@ -290,7 +317,10 @@ adds value.
   (e.g. `0001_init_user_auth`, `0002_media`, `0003_posts`, ...) rather than one giant
   initial migration, so each milestone's schema change is reviewable and revertible
   independently, and `prisma/migrations` doubles as a changelog of the data model's
-  growth.
+  growth. Prisma prefixes each migration folder with a generation timestamp
+  (`prisma migrate dev --name <name>` produces
+  `prisma/migrations/<yyyymmddhhmmss>_<name>/`) — the `000N_*` name is ours, for
+  ordering-at-a-glance in this doc; the timestamp prefix is what Prisma actually reads.
 - `prisma migrate dev` locally; `prisma migrate deploy` in CI/production — never
   `db push` outside of local prototyping, so migration history stays authoritative.
 - Destructive changes (column drops/renames) get an explicit expand/contract note in the
