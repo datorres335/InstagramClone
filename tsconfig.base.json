@@ -1,0 +1,36 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": false,
+    "declaration": false,
+    "importHelpers": true,
+    "noEmitOnError": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    // TS 6.0 deprecated bare `baseUrl` ahead of removal in TS 7.0; we still
+    // need it for the `paths` mappings below (ts-jest, used by apps/api,
+    // enforces the deprecation as a hard error unless silenced).
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "rootDir": ".",
+    "paths": {
+      "@instagram-clone/types": ["./packages/types/src/index.ts"],
+      "@instagram-clone/validation": ["./packages/validation/src/index.ts"],
+      "@instagram-clone/config": ["./packages/config/src/index.ts"],
+      "@instagram-clone/api-client": ["./packages/api-client/src/index.ts"]
+    }
+  },
+  "exclude": ["node_modules", "tmp", "dist"]
+}

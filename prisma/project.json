@@ -1,0 +1,51 @@
+{
+  "name": "prisma",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "root": "prisma",
+  "projectType": "library",
+  "tags": ["scope:api", "type:util"],
+  "targets": {
+    "generate": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": [
+        "{projectRoot}/schema.prisma",
+        "{workspaceRoot}/prisma.config.ts"
+      ],
+      "outputs": ["{projectRoot}/generated"],
+      "options": {
+        "command": "prisma generate"
+      }
+    },
+    "migrate-dev": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma migrate dev"
+      }
+    },
+    "migrate-deploy": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma migrate deploy"
+      }
+    },
+    "migrate-status": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma migrate status"
+      }
+    },
+    "studio": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma studio"
+      }
+    },
+    "db-seed": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "prisma db seed"
+      }
+    }
+  }
+}

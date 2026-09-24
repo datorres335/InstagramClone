@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Nx
+.nx/cache
+.nx/workspace-data
+
+# Build outputs
+dist/
+out/
+build/
+.next/
+.expo/
+.expo-shared/
+web-build/
+
+# Prisma
+prisma/generated/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Testing
+coverage/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+
+# Native / Expo
+*.orig.*
+ios/
+android/
+
+# TypeScript build info
+*.tsbuildinfo
+
+vitest.config.*.timestamp*
+
+# Next.js
+.next
+out

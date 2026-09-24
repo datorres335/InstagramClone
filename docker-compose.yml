@@ -1,0 +1,84 @@
+name: instagram-clone
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-instagram_clone}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-instagram_clone}
+      POSTGRES_DB: ${POSTGRES_DB:-instagram_clone}
+    ports:
+      # Host-side port defaults to 5433 (not 5432) because a machine that
+      # already runs a native/other Postgres on 5432 would otherwise silently
+      # route connections to that instance instead of this container.
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-instagram_clone}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    # MinIO removed its images from Docker Hub (2026-09-11); quay.io is now
+    # the canonical registry — see https://github.com/minio/minio/issues (Hub deprecation).
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-instagram_clone}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-instagram_clone_secret}
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-instagram_clone}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-instagram_clone_secret}
+      MINIO_BUCKET: ${MINIO_BUCKET:-instagram-clone-media}
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
+      mc mb -p local/$$MINIO_BUCKET &&
+      mc anonymous set download local/$$MINIO_BUCKET &&
+      exit 0
+      "
+
+  maildev:
+    image: maildev/maildev:latest
+    restart: unless-stopped
+    ports:
+      - '${MAILDEV_SMTP_PORT:-1025}:1025'
+      - '${MAILDEV_WEB_PORT:-1080}:1080'
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

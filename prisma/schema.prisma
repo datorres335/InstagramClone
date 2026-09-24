@@ -1,0 +1,14 @@
+datasource db {
+  provider = "postgresql"
+}
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/prisma"
+}
+
+// No models yet — this milestone only wires up the Prisma toolchain
+// (client generation, migration tooling, Docker Postgres) against an empty
+// schema. The first real models (User, RefreshToken) land in the milestone
+// that implements authentication — see docs/IMPLEMENTATION_PLAN.md and the
+// full data model design in docs/DATABASE.md.

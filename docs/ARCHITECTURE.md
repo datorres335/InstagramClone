@@ -1,0 +1,433 @@
+# Architecture
+
+Status: design phase — no application code has been written yet. This document is the
+source of truth for how the system fits together; `DATABASE.md`, `API.md`, `FEATURES.md`
+and `IMPLEMENTATION_PLAN.md` all assume the decisions recorded here.
+
+## 1. Goals & Non-Goals
+
+**Goals**
+
+- A production-quality, horizontally-scalable Instagram-style application (photos, not
+  video) built as a pnpm/Nx TypeScript monorepo.
+- Maximum sharing of _logic_ (types, validation, API contracts) between web, mobile and
+  API without forcing UI code to be shared.
+- REST API that is boring, predictable, and independently versionable from its clients.
+- A schema and API surface that can grow into the "future features" list (stories,
+  reels, DMs, push, realtime) without a rewrite.
+
+**Non-goals (for this phase)**
+
+- No implementation yet — this pass is architecture + docs only.
+- No video/Reels/Stories pipeline (listed as future work only).
+- No real-time transport (WebSockets/SSE) in the MVP — notifications are poll-based.
+- No multi-region / multi-tenant design — single-region deployment is assumed.
+
+## 2. Technology Summary
+
+| Concern         | Choice                                                                | Notes                                                              |
+| --------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Monorepo        | Nx (latest stable)                                                    | Task graph, caching, generators, module boundaries                 |
+| Package manager | pnpm                                                                  | Workspaces via `pnpm-workspace.yaml`; single lockfile at repo root |
+| Language        | TypeScript (strict mode everywhere)                                   | Shared `tsconfig.base.json`                                        |
+| Web             | Next.js 16, App Router                                                | React 19, Turbopack, Server Components + `"use cache"`             |
+| API             | NestJS (latest stable, v11.x line)                                    | Modular, DI-based, REST controllers                                |
+| Mobile          | Expo (latest stable SDK), Expo Router                                 | File-based routing, New Architecture on                            |
+| ORM             | Prisma 7                                                              | TypeScript query engine, driver adapters, `prisma.config.ts`       |
+| Database        | PostgreSQL 17                                                         | `pg_trgm`, `citext`, `pgcrypto` extensions                         |
+| Validation      | Zod 4                                                                 | Single source of truth in `packages/validation`                    |
+| API style       | REST, URI-versioned (`/api/v1`)                                       | OpenAPI generated from the same Zod schemas                        |
+| Auth            | Access JWT + rotating refresh tokens                                  | Refresh-token-family reuse detection                               |
+| Object storage  | S3-compatible (MinIO locally, AWS S3/R2 in prod)                      | Client uploads via presigned URLs                                  |
+| Background jobs | Redis + BullMQ                                                        | Image variants, notification fan-out                               |
+| Local infra     | Docker Compose                                                        | Postgres, MinIO, Redis, Maildev                                    |
+| Testing         | Vitest (unit), Nest/Supertest (API integration), Playwright (web E2E) | Per-project Nx targets                                             |
+| Lint/format     | ESLint 9 (flat config) + Prettier                                     | Shared `packages/eslint-config`                                    |
+
+Exact framework minor/patch versions are intentionally not pinned in this document —
+confirm current stable versions against each framework's official docs at the moment a
+milestone that installs them begins (see `IMPLEMENTATION_PLAN.md`, Milestone 0), since
+this design phase and the first line of code may be separated in time.
+
+## 3. Monorepo Structure
+
+```
+instagram-clone/
+├── apps/
+│   ├── web/                 # Next.js 16 (App Router) — apps/web/app/**
+│   ├── api/                 # NestJS — apps/api/src/modules/**
+│   ├── api-e2e/             # API integration tests (Nx convention: <app>-e2e)
+│   ├── web-e2e/             # Playwright E2E for the web app
+│   └── mobile/              # Expo Router app
+│
+├── packages/
+│   ├── types/                # Shared TS types & enums (framework-agnostic)
+│   ├── validation/            # Zod schemas — the single source of truth for shapes
+│   ├── api-client/            # Typed REST client consumed by web + mobile
+│   ├── config/                 # Env schema + typed config loader (zod-validated)
+│   └── eslint-config/          # Shared flat ESLint config + Prettier config
+│
+├── prisma/
+│   ├── schema.prisma
+│   ├── prisma.config.ts
+│   ├── migrations/
+│   └── seed.ts
+│
+├── docker/                    # Compose file + service-specific config (e.g. MinIO init)
+├── docs/
+├── nx.json
+├── pnpm-workspace.yaml
+├── tsconfig.base.json
+├── package.json
+└── CLAUDE.md
+```
+
+Notes:
+
+- `prisma/` lives at the repo root, **not** inside `apps/api`, because the Prisma
+  Client it generates is a _shared_ build artifact: the API imports it directly, and
+  `packages/validation`/`packages/types` may derive types from it (e.g. via
+  `Prisma.UserGetPayload<...>` helper types) without depending on the whole `api` app.
+  It is wrapped in an Nx project (`prisma`) so `generate`/`migrate` are cacheable Nx
+  targets with proper `dependsOn` wiring ahead of `api`'s build/test/serve targets.
+- `api-e2e` and `web-e2e` are separate Nx projects (the standard Nx convention) rather
+  than folders inside `api`/`web`, so their heavier dependencies (Supertest, Playwright)
+  and slower CI targets don't pollute the app projects' dependency graphs.
+
+### 3.1 Nx configuration
+
+- Workspace created with `--packageManager=pnpm`; every install goes through `pnpm add`
+  (never `npm`/`yarn`) — enforced by `pnpm-workspace.yaml` plus a root `.npmrc`
+  (`engine-strict=true`) and documented in `CLAUDE.md`.
+- Official Nx plugins used for generators + inferred tasks: `@nx/next`, `@nx/nest`,
+  `@nx/expo`, `@nx/js` (for `packages/*`), `@nx/eslint`, `@nx/vite` (unit tests),
+  `@nx/playwright`. Nx's inferred-tasks model reads each project's native config
+  (`next.config.ts`, `nest-cli.json`, `app.config.ts`, `vite.config.ts`,
+  `playwright.config.ts`) to derive `build`/`test`/`lint`/`serve` targets, so there is
+  minimal custom `project.json` boilerplate.
+- `nx.json` defines the task pipeline so that `build`/`test` depend on
+  `^build` (dependencies built first) and on Prisma Client generation; named inputs
+  exclude `docs/**` and `*.md` from cache-busting `production` builds.
+- Remote/local caching: local Nx cache is on by default; if the team wants CI cache
+  sharing, that's an explicit later decision (Nx Cloud or a self-hosted cache), not
+  assumed here.
+
+### 3.2 Module boundaries
+
+Enforced with `@nx/enforce-module-boundaries` via project tags:
+
+| Tag            | Applied to                                                     | Allowed dependencies        |
+| -------------- | -------------------------------------------------------------- | --------------------------- |
+| `scope:web`    | `web`, `web-e2e`                                               | `scope:shared`              |
+| `scope:api`    | `api`, `api-e2e`, `prisma`                                     | `scope:shared`              |
+| `scope:mobile` | `mobile`                                                       | `scope:shared`              |
+| `scope:shared` | `types`, `validation`, `api-client`, `config`, `eslint-config` | `scope:shared` only         |
+| `type:app`     | apps                                                           | `type:feature`, `type:util` |
+| `type:util`    | `types`, `validation`, `config`, `eslint-config`               | `type:util` only            |
+| `type:feature` | `api-client`                                                   | `type:util`                 |
+
+Rules encoded in root ESLint config:
+
+1. `scope:web` and `scope:mobile` **must never** depend on `scope:api` (no importing
+   Nest code into a client), and vice versa.
+2. `packages/api-client` may depend on `types` and `validation`, but not on `api`
+   itself (it talks to the API over HTTP only) and not on Prisma (no leaking DB types
+   to clients).
+3. `packages/types` and `packages/validation` have **zero** dependencies on any `apps/*`
+   project — this is what makes them genuinely shared.
+4. UI component libraries are deliberately **not** a shared package — see §6.
+
+## 4. System Diagram
+
+```
+                     ┌─────────────────────┐        ┌─────────────────────┐
+                     │   apps/web (Next)   │        │  apps/mobile (Expo)  │
+                     │  Server + Client    │        │   React Native App   │
+                     │    Components       │        │                      │
+                     └──────────┬──────────┘        └──────────┬───────────┘
+                                │  uses                          │  uses
+                                ▼                                ▼
+                       ┌───────────────────────────────────────────────┐
+                       │           packages/api-client (typed)          │
+                       │   fetch wrapper + access-token refresh logic   │
+                       └───────────────────────┬───────────────────────┘
+                                                │ HTTPS / JSON (REST)
+                                                ▼
+                                     ┌─────────────────────┐
+                                     │   apps/api (Nest)    │
+                                     │  Controllers → Services → Repositories │
+                                     └───┬───────────┬──────┘
+                              Prisma     │           │  presigned URL issuance
+                                         ▼           ▼
+                              ┌─────────────────┐   ┌────────────────────┐
+                              │  PostgreSQL 17   │   │  S3-compatible      │
+                              │  (primary store) │   │  object storage     │
+                              └─────────────────┘   └─────────┬──────────┘
+                                         ▲                     │ direct client upload
+                                         │ enqueue/consume      │ (browser/app → bucket)
+                                         ▼                     ▼
+                              ┌─────────────────┐    ┌────────────────────┐
+                              │ Redis + BullMQ   │    │  (media variant     │
+                              │ (jobs, throttling)│──▶│  worker consumes    │
+                              └─────────────────┘    │  from bucket)       │
+                                                       └────────────────────┘
+```
+
+Both web and mobile talk to the API exclusively through `packages/api-client`; neither
+talks to Postgres, Redis or the object store directly. Media bytes flow **client → S3
+directly** (presigned URL), not through the API process, to avoid the API becoming a
+large-file proxy.
+
+## 5. Application Architecture
+
+### 5.1 `apps/web` — Next.js 16, App Router
+
+- App Router only (no `pages/`). Route groups: `(auth)` for login/register,
+  `(app)` for the authenticated shell (feed, profile, explore, notifications, settings).
+- Rendering strategy:
+  - Public/shareable pages (a single post permalink, a public profile) use Server
+    Components with the `"use cache"` directive (Cache Components model) plus
+    `revalidateTag` invalidation triggered from the API-client mutation layer, so a new
+    like/comment can bust the right cache entries.
+  - The authenticated feed, notifications, and any per-user views are dynamic (no
+    full-route caching) since they depend on the caller's session and follow graph.
+  - Mutations (create post, follow, like) go through Server Actions that call
+    `packages/api-client`, which in turn call the Nest API — the Next server acts as a
+    thin, trusted caller of the API using the same REST contract mobile uses, so there
+    is exactly one authorization surface (the API), not two.
+- Auth on web: refresh token lives in an **httpOnly, Secure, SameSite=Lax** cookie set
+  by the API; the Next server reads it (via `cookies()`) to call protected API routes on
+  the user's behalf during SSR, and the client holds the short-lived access token in
+  memory only (never `localStorage`), refreshed transparently by `api-client`. See §7.
+- Images: `next/image` configured with a loader pointing at the object-storage /
+  CDN domain; the API returns fully-qualified media URLs (post-processed variants), not
+  raw storage keys, so the web app never talks to S3 directly for reads.
+
+### 5.2 `apps/api` — NestJS
+
+- Modular structure under `apps/api/src/modules/<domain>` (`auth`, `users`, `follows`,
+  `posts`, `media`, `likes`, `comments`, `saved-posts`, `search`, `explore`,
+  `notifications`), each with `*.controller.ts`, `*.service.ts`, `*.repository.ts` (thin
+  Prisma-facing layer), and `*.module.ts`. Controllers stay HTTP-only concerns
+  (status codes, DTO mapping); business rules live in services so they're unit-testable
+  without an HTTP layer.
+- Global concerns, each its own module: `ConfigModule` (wraps `packages/config`),
+  `PrismaModule` (provides a single `PrismaClient` via DI, `onModuleDestroy` disconnect),
+  `AuthModule` (JWT strategy, refresh rotation), `ThrottlerModule` (`@nestjs/throttler`,
+  Redis storage), a global `HttpExceptionFilter` producing RFC 7807 Problem Details, and
+  a global `ZodValidationPipe` (via `nestjs-zod`) so every DTO is validated against a
+  schema imported from `packages/validation` — **not** re-declared with `class-validator`
+  decorators, to keep one validation source of truth across API/web/mobile.
+- API versioning via Nest's built-in URI versioning (`/api/v1/...`); every controller is
+  explicitly versioned from day one even though only `v1` exists, so a `v2` migration
+  later is additive, not a breaking refactor.
+- OpenAPI: `@nestjs/swagger` decorated from the same Zod schemas (`nestjs-zod`'s
+  `zodToOpenAPI`) generates `openapi.json` as a build artifact, served at `/api/docs`
+  in non-production and exported for `packages/api-client` codegen (§6.3).
+- Background jobs run **in-process** in `apps/api` for the MVP (a `BullMQ` `Processor`
+  registered in the relevant module, e.g. `MediaModule` processes image-variant jobs) —
+  see the risk register (§16) for when this should be split into a separate worker app.
+
+### 5.3 `apps/mobile` — Expo + Expo Router
+
+- File-based routing under `apps/mobile/app/`, mirroring the web app's logical
+  structure: `(auth)/login`, `(auth)/register`, `(tabs)/feed`, `(tabs)/explore`,
+  `(tabs)/notifications`, `profile/[username]`, `post/[id]`.
+- New Architecture (Fabric/TurboModules) enabled by default at the current Expo SDK;
+  no reliance on legacy-architecture-only libraries.
+- Auth on mobile: both access and refresh tokens stored via `expo-secure-store`
+  (iOS Keychain / Android Keystore) — never `AsyncStorage`, which is unencrypted.
+  `api-client` is platform-agnostic and receives a small storage adapter injected per
+  platform (cookie-based on web, SecureStore-based on mobile) so the refresh logic
+  itself is shared code.
+- Image picking/upload uses `expo-image-picker` + `expo-file-system` to `PUT` directly
+  to the presigned S3 URL obtained from the API, same flow as web.
+- Env vars follow Expo's `EXPO_PUBLIC_` prefix convention for anything bundled into the
+  client, validated at startup through `packages/config`.
+
+## 6. Shared Packages
+
+Shared packages hold only things genuinely identical across runtimes: data shapes,
+validation, wire-format clients, and config parsing. **No React DOM or React Native UI
+components are shared** — Instagram's iOS/Android/web surfaces already look and behave
+differently per platform (gesture handling, navigation chrome, safe areas, platform
+conventions), and forcing one component layer onto both `react-dom` and `react-native`
+either means adopting a cross-platform UI runtime (e.g. NativeWind/RN-Web-style
+constraints) that fights each platform's idioms, or maintaining shim components that
+provide little real leverage over just writing two small, idiomatic components. If a
+strong, concrete need for shared UI emerges later (e.g. a design-token package driving
+both Tailwind config on web and a theme object on mobile), that's a narrow, additive
+package — not a shared component library.
+
+| Package         | Contains                                                                                                                                                                                                                    | Depended on by                                     |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `types`         | Framework-agnostic TS types/enums not derivable from Zod alone (e.g. discriminated unions for notification payloads, pagination envelope generics)                                                                          | `validation`, `api-client`, `api`, `web`, `mobile` |
+| `validation`    | Zod schemas for every request/response body and query string (`RegisterInputSchema`, `CreatePostInputSchema`, `PostResponseSchema`, ...); schemas are the source both Nest DTOs and client-side form validation derive from | `api-client`, `api`, `web`, `mobile`               |
+| `api-client`    | Typed REST client: one function per endpoint, generated method signatures from the OpenAPI spec, hand-written transport (fetch + auth-refresh interceptor + retry-once-on-401 logic + pagination helpers)                   | `web`, `mobile`                                    |
+| `config`        | `zod`-validated env schema per app (`ApiEnvSchema`, `WebEnvSchema`, `MobileEnvSchema`) and a small `loadEnv()` helper that throws a readable error on startup if env vars are missing/invalid                               | `api`, `web`, `mobile`                             |
+| `eslint-config` | Shared flat ESLint config (base + per-framework overrides for Next/Nest/Expo) and shared Prettier config                                                                                                                    | every project via root config                      |
+
+### 6.1 Why `types` _and_ `validation` (not just one)
+
+Zod schemas already produce static types via `z.infer<>`, so most types are just
+`export type X = z.infer<typeof XSchema>` re-exports from `validation`. `types` exists
+for the residual cases where a type is needed without runtime validation baggage (e.g. a
+type describing a Prisma-derived read model used only inside `api`) or where a shape is
+inherently a TS-only construct (discriminated unions over branded ID types). Keeping them
+as two packages (rather than folding `types` into `validation`) lets `api-client` and
+UI code depend on `types` without pulling `zod` into a bundle where it isn't needed for
+validation, and keeps the dependency direction explicit: `validation` depends on `types`
+for shared primitives (e.g. a `Cursor` type), never the reverse.
+
+### 6.2 Why REST + hand-written client instead of tRPC-style inference
+
+The requirements specify REST explicitly (mobile clients, third-party integration
+potential, and simple caching/CDN semantics favor REST over RPC-style coupling). To
+still get end-to-end type safety without hand-duplicating every DTO:
+
+1. `packages/validation` defines the request/response Zod schemas.
+2. `apps/api` DTOs are generated from those same schemas via `nestjs-zod`
+   (`createZodDto`), so the Nest layer and the shared package can never drift silently —
+   a schema change is a single edit.
+3. `@nestjs/swagger` + `nestjs-zod`'s OpenAPI conversion emit `openapi.json` as part of
+   the `api` build.
+4. `packages/api-client` runs `openapi-typescript` against that spec (an Nx target with
+   `dependsOn: ["api:build"]`) to generate response/request **types**, which the
+   hand-written fetch wrapper's methods are declared against. The wrapper itself
+   (auth refresh, retries, pagination cursors, error unwrapping) is hand-written once
+   and shared by web and mobile, rather than regenerated, since that logic is
+   business/transport logic, not a wire shape.
+
+This keeps exactly one authored source of truth (`packages/validation`) for shapes, one
+generated artifact (`openapi.json`) as the contract, and one hand-written, testable
+transport layer — see the risk register for what happens if this pipeline breaks.
+
+## 7. Authentication & Session Architecture
+
+- **Access token**: short-lived JWT (target lifetime: 15 minutes), signed by the API
+  (asymmetric, e.g. `RS256`/`EdDSA`, so the public key could later verify tokens outside
+  the API process if needed), containing `sub` (user id), `iat`, `exp`, and a token
+  version claim used to invalidate all access tokens for a user (e.g. after a password
+  change) without an allowlist.
+- **Refresh token**: opaque, high-entropy random string (not a JWT — nothing to decode,
+  so a leaked DB doesn't hand out a forgeable format), sent to the client once, and
+  stored **hashed** (e.g. SHA-256, since it's already high-entropy — no need for a slow
+  KDF here) in a `RefreshToken` table (see `DATABASE.md`).
+- **Rotation with reuse detection**: every `/auth/refresh` call consumes the presented
+  refresh token and issues a brand-new one in the same "family" (`familyId` shared
+  across all tokens descended from one login). If a refresh token is presented that has
+  already been rotated away (i.e. it's marked `revokedAt` but someone still tries to use
+  it), the **entire family is revoked**, forcing re-authentication on every device using
+  that family — this is the standard mitigation for stolen-refresh-token replay.
+- **Storage per client**:
+  - Web: refresh token in an httpOnly/Secure/SameSite=Lax cookie, scoped to
+    `/api/v1/auth`; access token held in memory in the browser (or Next server) only.
+    CSRF is mitigated because the refresh endpoint only accepts the cookie _plus_ is
+    same-site-restricted, and state-changing endpoints require the `Authorization:
+Bearer` header (not sent automatically by the browser, so classic CSRF doesn't
+    apply to them).
+  - Mobile: both tokens in `expo-secure-store`; refresh is triggered by `api-client`'s
+    401-retry interceptor, identical logic to web modulo the storage adapter.
+- **Logout**: revokes the presented refresh token (and, for "log out everywhere",
+  revokes the whole family / all families for the user).
+- Password hashing: `argon2id` (via `argon2` package), not bcrypt, for new-project
+  defaults in 2026.
+
+## 8. Media Storage Architecture
+
+1. Client requests an upload slot: `POST /api/v1/media/presign` with declared
+   `contentType`, `byteSize`, and `purpose` (`AVATAR` | `POST_IMAGE`). The API validates
+   type/size limits server-side (not trusted from the client at read time) and returns a
+   presigned S3 `PUT` URL plus a `mediaId` for a `Media` row created in `PENDING` status.
+2. Client uploads bytes **directly to the bucket** using that URL — the API process
+   never sees the file body.
+3. Client confirms: `POST /api/v1/media/:id/complete`. The API verifies the object now
+   exists in the bucket (a `HEAD` request) and enqueues a BullMQ job to generate
+   derived variants (e.g. `thumbnail` 150px, `feed` 1080px, keeping the original) using
+   `sharp`, writing each variant back to the bucket under a deterministic key and
+   updating `Media.status` to `READY` (or `FAILED` with a reason) when done.
+4. Only `READY` media may be attached to a `Post` or set as a profile avatar; the create-
+   post endpoint rejects `mediaId`s that aren't the uploading user's own and aren't
+   `READY`.
+5. Reads: the API stores S3 object keys, not public URLs, and resolves them to URLs at
+   response time (either a CDN domain in front of the bucket, or short-lived signed GET
+   URLs if the bucket stays private) — this indirection is what lets storage
+   configuration change without a data migration.
+
+Locally, MinIO (S3 API-compatible) runs in Docker Compose with a bucket bootstrapped on
+startup; production targets any S3-compatible provider (AWS S3, Cloudflare R2,
+Backblaze B2) by swapping endpoint/credentials in `packages/config` — the application
+code only ever uses the AWS SDK v3 S3 client with a configurable `endpoint`.
+
+## 9. Local Development Environment
+
+`docker-compose.yml` at the repo root provides infrastructure only (never application
+code, which runs via Nx on the host for fast iteration):
+
+| Service    | Image             | Purpose                                                                           |
+| ---------- | ----------------- | --------------------------------------------------------------------------------- |
+| `postgres` | `postgres:17`     | Primary database                                                                  |
+| `minio`    | `minio/minio`     | S3-compatible object storage + `minio/mc` init container to create the dev bucket |
+| `redis`    | `redis:7`         | BullMQ job queue, throttler storage                                               |
+| `maildev`  | `maildev/maildev` | Catches outbound email locally (password reset, etc.)                             |
+
+`.env.example` at the root documents every variable consumed by `packages/config`;
+each app loads only the subset it needs, validated at boot.
+
+## 10. Testing Strategy
+
+| Layer           | Tool                                                                                                                        | Scope                                                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Unit            | Vitest                                                                                                                      | `packages/*` (pure functions, schema validation), Nest services/pipes in isolation (mocked Prisma), React component logic       |
+| API integration | Nest `@nestjs/testing` + Supertest, against a real Postgres (a dedicated `test` database, migrated fresh per run) and MinIO | `apps/api-e2e` — full HTTP request → DB round trip per endpoint                                                                 |
+| Web E2E         | Playwright                                                                                                                  | `apps/web-e2e` — critical user journeys (register→login, create post, follow, like, comment) against a running web+api+db stack |
+| Mobile          | Jest + React Native Testing Library                                                                                         | Component/unit level only in the MVP; full device E2E (Detox/Maestro) is a future addition, not required by this phase          |
+
+Every Nx project exposes `test`/`lint` targets; `build`/`test` for `api` depend on
+Prisma Client generation being up to date. CI (not built in this phase, but assumed)
+would run `nx affected -t lint test build e2e` on PRs.
+
+## 11. Security Considerations
+
+- All state-changing endpoints require the `Authorization: Bearer` access token;
+  `ThrottlerModule` rate-limits auth endpoints aggressively (e.g. login/register/refresh)
+  and all endpoints moderately.
+- Helmet-equivalent security headers on the API (`helmet` Nest middleware); CORS locked
+  to known web origins.
+- Input validation on every endpoint via the shared Zod schemas (§5.2); Prisma
+  parameterizes all queries, so SQL injection is not a realistic surface as long as raw
+  `$queryRawUnsafe` is never used with unsanitized input (only the search feature is a
+  candidate for raw SQL, and it should use `$queryRaw` tagged templates).
+- Object storage buckets are private by default; media is served via CDN/signed URLs,
+  never a public-write bucket.
+- Secrets (`DATABASE_URL`, JWT signing keys, S3 credentials) only ever live in env vars
+  validated by `packages/config`, never committed; `.env` is git-ignored, `.env.example`
+  is committed.
+
+## 12. Architectural Risks & Dependencies
+
+Risks are ordered roughly by how early they need a decision, not by severity.
+
+| #   | Risk / Dependency                                                                                                                                                                                                                                                                           | Why it matters                                                                                                                    | Mitigation / Decision                                                                                                                                                                                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **Prisma 7 is a major version with real breaking changes** (TypeScript query engine, mandatory driver adapters or explicit config in `prisma.config.ts`, explicit generated-client `output` path) relative to the Prisma most tutorials still show.                                         | Getting the schema/config wrong blocks every other milestone, since everything depends on `prisma`.                               | Milestone 2 starts with a spike against Prisma's own current migration guide before any domain modeling; pin the exact Prisma 7.x version and driver adapter (`@prisma/adapter-pg`) once confirmed.      |
+| 2   | **OpenAPI → `api-client` codegen pipeline is a build-order dependency**: `api-client`'s generated types require `api`'s `openapi.json`, which requires `api` to build/boot.                                                                                                                 | If this Nx `dependsOn` wiring is wrong, web/mobile silently build against stale types.                                            | Wire `api-client:build` with `dependsOn: ["api:build"]` from the start (Milestone 6) and add a CI check that fails if `openapi.json` differs from what's committed/generated fresh.                      |
+| 3   | **Feed fan-out strategy (read-time vs write-time)**: MVP uses fan-out-on-read (`WHERE authorId IN (following)`), which is simple and correct but degrades for accounts following thousands of people or being followed by many (hot-row contention on write, expensive `IN` scans on read). | Directly affects `Post`/`Follow` indexing decisions in `DATABASE.md` and the feed endpoint's query plan.                          | Documented explicitly as an MVP-scoped decision (see `DATABASE.md` §Scaling); revisit with a precomputed feed table + cache only if/when real usage demands it — do not build it speculatively.          |
+| 4   | **Background job execution model**: image-variant generation and notification fan-out run in-process inside `apps/api` for the MVP.                                                                                                                                                         | Simplicity now vs. a scaling ceiling later (CPU-bound `sharp` work competing with the HTTP event loop process).                   | Explicitly scoped to MVP; the job processors are written as isolated Nest providers so extracting them into a standalone `apps/worker` later is a move, not a rewrite. Flagged again in Milestone 10/17. |
+| 5   | **Auth token storage differs by platform** (cookie on web vs SecureStore on mobile), so `api-client`'s refresh logic must be storage-adapter-agnostic from the start.                                                                                                                       | Getting this wrong means duplicating auth logic later instead of sharing it.                                                      | `api-client` is designed with an injected storage adapter interface from Milestone 6, exercised by both web and mobile before either ships other features.                                               |
+| 6   | **Case-insensitive uniqueness for username/email** needs either Postgres `citext` or normalized lowercase columns + unique index.                                                                                                                                                           | Wrong choice now means a painful migration once real user data exists.                                                            | Decision recorded in `DATABASE.md`: `citext` extension enabled in the first migration.                                                                                                                   |
+| 7   | **Search relevance** (`pg_trgm` similarity search) is adequate for MVP scale but not a real search engine.                                                                                                                                                                                  | Sets expectations for the "User search"/"Explore" features so nobody assumes Elasticsearch-quality ranking.                       | Documented as an explicit MVP limitation in `FEATURES.md`; revisit with a dedicated search service only post-MVP.                                                                                        |
+| 8   | **Nx module boundaries must be enforced from commit one**, not retrofitted.                                                                                                                                                                                                                 | Retrofitting boundary tags after `web` has accidentally imported a Nest service is a much bigger cleanup than starting correctly. | Boundary lint rule ships in Milestone 0, before any feature code.                                                                                                                                        |
+| 9   | **Framework version drift between design time and implementation time** (Next 16, NestJS 11, current Expo SDK, Prisma 7, Zod 4 all move fast).                                                                                                                                              | This document may be read months after being written.                                                                             | Each milestone that first installs a given framework begins by checking that framework's current official docs rather than trusting this document's version numbers verbatim.                            |
+| 10  | **Notification volume** for a popular account (many likes/comments/follows in a burst) could generate a write storm if notifications are created synchronously in the request path.                                                                                                         | Latency spikes on `like`/`comment`/`follow` endpoints.                                                                            | Notification creation is enqueued via BullMQ (same worker as media), not written synchronously in the triggering request.                                                                                |
+
+## 13. Open Questions (deferred, not blocking design)
+
+- Deployment target (Vercel for web + containers for API vs. all-container) is left
+  unspecified — nothing in this architecture assumes one, since apps only need to know
+  their own env vars and a reachable API URL / DATABASE_URL.
+- Email delivery provider for production (Maildev is dev-only) is deferred to the
+  Account Settings / password-reset milestone.
+- Content moderation / reporting is out of scope for the listed MVP feature set and not
+  designed here; if required later it would be a new `reports` domain module, not a
+  change to existing ones.
