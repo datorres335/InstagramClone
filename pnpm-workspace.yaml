@@ -12,3 +12,7 @@ allowBuilds:
   esbuild: true
   prisma: true
   argon2: true
+  # scarf's postinstall is purely an anonymous-telemetry beacon (used by
+  # some class-validator/class-transformer-adjacent tooling) — denied, not
+  # needed for functionality.
+  '@scarf/scarf': false

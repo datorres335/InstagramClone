@@ -29,7 +29,12 @@
       "@instagram-clone/types": ["./packages/types/src/index.ts"],
       "@instagram-clone/validation": ["./packages/validation/src/index.ts"],
       "@instagram-clone/config": ["./packages/config/src/index.ts"],
-      "@instagram-clone/api-client": ["./packages/api-client/src/index.ts"]
+      "@instagram-clone/api-client": ["./packages/api-client/src/index.ts"],
+      // The generated Prisma Client (`prisma generate`, gitignored — see
+      // prisma/schema.prisma's generator block) — Prisma 7's TypeScript
+      // generator emits real .ts source, not prebuilt .js+.d.ts, so this
+      // alias just points straight at it rather than a package.json "main".
+      "@instagram-clone/prisma-client": ["./prisma/generated/prisma/client.ts"]
     }
   },
   "exclude": ["node_modules", "tmp", "dist"]

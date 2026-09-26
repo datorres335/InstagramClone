@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Infrastructure
-**Current Milestone:** Milestone 3 — Shared Types & Validation (Base)
+**Current Milestone:** Milestone 4 — API Bootstrap
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -17,11 +17,12 @@ shared packages, the Prisma toolchain, and local Docker infrastructure are all
 scaffolded and passing validation (Milestone 0, with Docker infra/Milestone 1 landing
 as a side effect of it). The first real database models — `User` and `RefreshToken` —
 are implemented, migrated, and seeded (Milestone 2). `packages/types` and
-`packages/validation` now carry real, tested content for everything auth needs
-(Milestone 3) — the single source of truth register/login/refresh/logout/session will
-be validated against once Milestone 5 (Auth) implements the actual endpoints. No
-product features (endpoints, UI) have been implemented — every app still shows
-framework-default or placeholder content, exactly as scoped.
+`packages/validation` carry real, tested content for everything auth needs
+(Milestone 3). `apps/api` now has a real DI graph — a Prisma-backed database
+connection, a global Zod validation pipe actually consuming Milestone 3's schemas, an
+RFC 7807 error format, and live OpenAPI docs — proven by a real `GET /api/v1/health`
+endpoint that queries the live Postgres end-to-end (Milestone 4). No product _feature_
+endpoints exist yet (register/login/posts/etc.) — those start with Milestone 5.
 
 ---
 
@@ -92,6 +93,50 @@ framework-default or placeholder content, exactly as scoped.
       the original draft left open (see "Architectural Decisions Made" below)
 - [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11 projects)
 
+### Milestone 4 — API Bootstrap
+
+- [x] `apps/api/src/config/config.module.ts` — a `@Global()` `ConfigModule` providing
+      the validated env via an `API_ENV` DI token, so services inject config instead
+      of each re-parsing `process.env` (`main.ts` still calls `loadEnv()` directly too,
+      for bootstrap-time concerns like port/CORS that run before the DI container exists)
+- [x] `apps/api/src/prisma/{prisma.service,prisma.module}.ts` — a `@Global()`
+      `PrismaModule`; `PrismaService extends` the generated `@instagram-clone/
+    prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
+      `@prisma/adapter-pg`, connects/disconnects via `OnModuleInit`/`OnModuleDestroy`
+- [x] `apps/api/src/common/filters/http-exception.filter.ts` — a global `@Catch()`
+      filter (registered via `APP_FILTER`) turning `ZodValidationException`, any Nest
+      `HttpException`, and unhandled errors alike into the RFC 7807 shape `docs/API.md`
+      §1 specifies, with a status→slug map for the `docs/API.md` §14 error catalog
+- [x] Global `ZodValidationPipe` (`nestjs-zod`, registered via `APP_PIPE`) — validates
+      `createZodDto`-wrapped `packages/validation` schemas; not exercised by a real
+      endpoint yet (no controller has a body/query DTO until Milestone 5), proven
+      instead by a direct unit test against a real Milestone 3 schema
+      (`common/zod-dto-integration.spec.ts`)
+- [x] `@nestjs/swagger` + `nestjs-zod`'s `cleanupOpenApiDoc` wired in `main.ts` —
+      `GET /api/docs` (interactive UI) and `GET /api/docs-json` (raw document), both
+      gated to non-production
+- [x] `GET /api/v1/health` (`apps/api/src/health/`) — a real "deep" check: queries
+      Postgres via the new `PrismaService` (`SELECT 1`), returns `503` (via the new
+      exception filter) if the database is unreachable, not just "is the process alive"
+- [x] Removed the Milestone-0 placeholder `AppController`/`AppService` (`GET /api/v1`
+      → `{ message: 'Hello API' }`) now that a real endpoint exists
+- [x] `express`, `@types/express`, and `zod` added as explicit `apps/api` dependencies
+      (previously phantom/transitive — pnpm's strict `node_modules` correctly refused
+      to resolve them until declared); `nestjs-zod@5.5.0` and `@nestjs/swagger@11.4.7`
+      added, pinned to the NestJS-11-compatible line (see Deviations below)
+- [x] `apps/api`'s `build`/`test` targets now explicitly `dependsOn` `prisma:generate`
+      (`implicitDependencies: ["prisma"]` + per-target `dependsOn` in `project.json`) —
+      confirmed this actually orders the task graph correctly, not just declared
+- [x] 13 new unit tests (`http-exception.filter.spec.ts`, `health.service.spec.ts`,
+      `zod-dto-integration.spec.ts`) + 4 new `apps/api-e2e` integration tests
+      (`health.spec.ts`, `openapi.spec.ts`, `problem-details.spec.ts`) against the real
+      Dockerized Postgres and a real running Nest server
+- [x] `docs/API.md` gained §16 (Health & OpenAPI) and a corrected §15 (the actual
+      `cleanupOpenApiDoc` API, and that `openapi.json`-as-a-build-artifact is deferred
+      to Milestone 6); `docs/ARCHITECTURE.md` §5.2 corrected to match
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
+      projects) + `api-e2e:e2e` (4/4) against the live Dockerized Postgres
+
 ---
 
 ## Validation Performed
@@ -156,6 +201,32 @@ pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 36 new schema tests (`packages/validation`) + 2 new type-shape tests (`packages/types`),
 all passing. No Docker/Postgres interaction needed for this milestone — pure
 TypeScript/Zod, no runtime service dependency.
+
+### Milestone 4
+
+```bash
+# Verified the ESM-vs-CJS risk empirically before building anything else — see
+# "Bugs Found" below for why this specific check mattered:
+pnpm exec nx run api:build --skip-nx-cache   # with just a bare PrismaService stub
+node dist/apps/api/main.js                    # booted correctly (Nest app started;
+                                               # only failed on a port already in use
+                                               # from a stray earlier process)
+
+pnpm exec nx run-many -t lint typecheck test build -p api --skip-nx-cache
+# ^ found and fixed, in order: a missing `express` dependency (TS2307), a
+#   `getZodError(): unknown` type gap in nestjs-zod's own declarations
+#   (TS2571 — needed an explicit `as ZodError` cast), and a missing `zod`
+#   dependency (TS2307 again) — apps/api had never directly imported zod's
+#   types before. See "Bugs Found" below for the full detail on each.
+
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ 4/4 passing against the real Dockerized Postgres — logs confirmed
+#   "PrismaService: Connected to the database" and the health/openapi/
+#   problem-details routes all registered and responded correctly.
+
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+```
 
 ---
 
@@ -253,11 +324,37 @@ milestone. Both are now decided and recorded in `docs/API.md` §3:
 Neither decision changes anything in `docs/DATABASE.md` — both are
 request-validation-layer concerns, not schema changes.
 
+### Milestone 4
+
+- **`@nestjs/swagger` is pinned to `11.4.7`, not the `12.x` line.** Same situation as
+  the NestJS-11 deviation above: `@nestjs/swagger@12.0.2`'s `latest` dist-tag requires
+  `@nestjs/core ^12.0.0`, which this repo doesn't run. `11.4.7` is the actual latest
+  release compatible with our NestJS 11.2.5. `nestjs-zod@5.5.0` (no such conflict —
+  its peer range already covers Nest 11) was installed alongside it.
+- **`openapi.json` is not yet a literal Nx build-output file.** `docs/ARCHITECTURE.md`
+  §5.2 and `docs/API.md` §15 originally described it as a build artifact; it's
+  currently served over HTTP (`/api/docs-json`) from a running server instead. Making
+  it a real on-disk artifact (so `api:build` alone, without booting the HTTP server,
+  produces it) is deferred to Milestone 6, once `packages/api-client`'s actual
+  consumption pattern exists to design the mechanism against — inventing that
+  mechanism now, with no consumer, would be guessing. Both docs updated to say so
+  explicitly rather than describe unbuilt behavior as done.
+- **`class-validator`/`class-transformer` were deliberately not installed**, despite
+  being listed as peer dependencies of `@nestjs/swagger`. They're only needed if a DTO
+  uses their decorators; `nestjs-zod`'s whole purpose is making that unnecessary. pnpm
+  emits no hard error for the unmet peers (only satisfied by nestjs-zod's own
+  operation), and the full build/test/e2e suite confirms nothing actually needs them.
+
+None of Milestone 4's changes touch `docs/DATABASE.md` or `docs/FEATURES.md` — this
+milestone is bootstrap plumbing, not schema or product-feature work.
+
 ---
 
-## Bugs Found and Fixed During Scaffolding
+## Bugs Found and Fixed
 
 Worth recording since they'd otherwise resurface identically for the next person:
+
+### Milestone 0
 
 1. **`NODE_ENV` must never be set in the shared `.env`.** Nx loads the workspace
    root `.env` into every task's process environment, including `next build`, which
@@ -302,6 +399,32 @@ of null (reading 'useContext')` on every route. Removed from `.env.example`;
    because an unrelated `package-lock.json` exists in the machine's home directory,
    above this repo. Pinned explicitly via `turbopack.root` in `apps/web/next.config.js`.
 
+### Milestone 4
+
+9. **A real risk that turned out fine, worth recording so nobody re-litigates it**:
+   Prisma 7's generated client (`prisma/generated/prisma/client.ts`) uses
+   `import.meta.url` — ESM-only syntax — while `apps/api` builds to CommonJS. This
+   looked like it could force a much bigger architectural change (ESM output for the
+   whole API app). Verified empirically before writing any real code: webpack
+   transforms `import.meta.url` correctly regardless of target module format, and the
+   built bundle runs with zero `import.meta` references left in it. No workaround
+   needed.
+10. **Three missing dependencies, one per compile attempt**: `express` (needed for
+    `Request`/`Response` types in the exception filter — was only ever a transitive
+    dependency of `@nestjs/platform-express`, and pnpm's strict `node_modules`
+    correctly refused to resolve it), then `zod` (apps/api had never directly imported
+    Zod's types before, only Zod-derived schemas from `packages/validation`). Both
+    added as explicit `apps/api` dependencies (real npm packages, not
+    `@instagram-clone/*` workspace packages — no risk of the Milestone-0 externals bug).
+11. **`nestjs-zod@5.5.0`'s own type declarations type `getZodError(): unknown`**
+    (deliberately, to stay agnostic between Zod 3/4's slightly different `ZodError`
+    shapes) — `ts-jest` didn't catch this (its type-checking is looser than the
+    webpack/`tsc` build path), so unit tests passed while `nx run api:build` failed
+    with `TS2571`. Fixed with an explicit `as ZodError` cast, documented inline as to
+    why it's needed given this repo is pinned to Zod 4. Worth remembering: **passing
+    unit tests do not guarantee the build passes** — `nx run-many -t ... build` (not
+    just `test`) is part of every milestone's validation for exactly this reason.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -332,38 +455,57 @@ of null (reading 'useContext')` on every route. Removed from `.env.example`;
   integration tests only. Obvious and low-stakes today with only 3 seed users and no
   auth endpoints yet; worth a reminder once Milestone 5 (Auth) makes these accounts
   actually log-in-able, so nobody mistakes this for a real credential scheme.
+- **The generated Prisma Client logs `◇ injected env (N) from .env` on every import**,
+  independent of and in addition to `apps/api`'s own `import 'dotenv/config'`. Harmless
+  (it finds nothing left to inject, hence usually `(0)`) but slightly noisy console
+  output on every boot; nothing to fix on our side — it's Prisma's generated code, not
+  ours, and there's no documented way to suppress it.
+- `nx run-many -t ... build` occasionally logs `Nx detected a flaky task: api:build`
+  when run twice in a row with `--skip-nx-cache`. Every run has still succeeded
+  (confirmed by re-running); this looks like Nx's flakiness heuristic reacting to
+  non-deterministic content in the webpack output hash (timestamps, or the Prisma
+  console noise above) rather than an actual intermittent failure. Not investigated
+  further — it's an Nx Cloud upsell nudge, not a build failure, and this repo doesn't
+  use Nx Cloud.
 
 ---
 
 ## Architectural Decisions Pending
 
 None. Milestone 3 resolved the two decisions `docs/IMPLEMENTATION_PLAN.md` and
-`docs/FEATURES.md` had explicitly deferred to it (password policy, logout body shape —
-see "Milestone 3 — Architectural Decisions Made" above). Everything else recorded in
-this file (Milestone 0 and Milestone 2 alike) is implementation-detail-level —
-versions, ports, a webpack externals list, one deferred column, one simplified index,
-two deferred extensions — with rationale in `docs/DATABASE.md` and `docs/ARCHITECTURE.md`
-where it touches those docs. None of it changes anything either document asserts at the
-design level.
+`docs/FEATURES.md` had explicitly deferred to it (password policy, logout body shape).
+Milestone 4 made no new open-ended decisions — its two deviations (`@nestjs/swagger`
+version, `openapi.json`-as-file deferred) are both externally forced or explicitly
+deferred to a specific future milestone, not undecided. Everything else recorded in
+this file is implementation-detail-level — versions, ports, a webpack externals list,
+one deferred column, one simplified index, two deferred extensions — with rationale in
+`docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
+changes anything either document asserts at the design level.
 
 ---
 
 ## Next Milestone
 
-**Milestone 4 — API Bootstrap**: per `docs/IMPLEMENTATION_PLAN.md`, most of the
-generic bootstrap work (Nest app generation, `ConfigModule`/`packages/config` wiring,
-`helmet`, CORS, URI versioning, `apps/api-e2e`) already landed in Milestone 0 — what's
-actually left is: a DI-provided `PrismaModule`/`PrismaService` wrapping the
-`@prisma/client`+`@prisma/adapter-pg` setup from Milestone 2 (with `OnModuleInit`/
-`OnModuleDestroy` connect/disconnect); a global `ZodValidationPipe` (via `nestjs-zod`)
-that finally makes `apps/api` consume the schemas this milestone (M3) built, instead of
-them sitting unused; a global exception filter producing the RFC 7807 Problem Details
-shape `docs/API.md` §1 specifies; `@nestjs/swagger` wired to emit `openapi.json`
-(needed by Milestone 6's `packages/api-client` codegen pipeline — see
-`docs/ARCHITECTURE.md` risk #2); and an explicit `GET /api/v1/health` endpoint.
+**Milestone 5 — Authentication**: per `docs/IMPLEMENTATION_PLAN.md`, a real
+`AuthModule` under `apps/api/src/modules/auth/` (the first _domain_ module, per
+`docs/ARCHITECTURE.md` §5.2's directory convention) implementing all five endpoints
+`docs/API.md` §3 and `packages/validation`'s auth schemas (Milestone 3) already
+specify: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh` (rotation +
+reuse-detection family revocation, per `docs/ARCHITECTURE.md` §7), `POST
+/auth/logout`, `GET /auth/session`. Argon2id password hashing (the `argon2` dependency
+already exists — added in Milestone 2 for `prisma/seed.ts`). JWT access tokens
+carrying the `tokenVersion` claim (`docs/DATABASE.md` §3.1). `@nestjs/throttler`
+(Redis-backed — Redis already exists in `docker-compose.yml`) applied to `/auth/*`.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 4 section and
-`docs/ARCHITECTURE.md` §5.2 (API module structure). Confirm current `nestjs-zod` and
-`@nestjs/swagger` versions/APIs against their docs before wiring them in — both are
-exactly the kind of "framework moves fast" dependency `docs/ARCHITECTURE.md` risk #9
-warns about, and neither has been installed yet in this repo.
+This is the milestone where the global `ZodValidationPipe` and `HttpExceptionFilter`
+wired in Milestone 4 finally get exercised by real HTTP traffic instead of direct unit
+tests, and where the three seed users (`alice`/`bob`/`carol`, Milestone 2, password
+`Password123!`) become actually log-in-able — worth re-reading the seed-password note
+under "Known Issues" above before treating them as anything but local dev fixtures.
+
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 5 section,
+`docs/ARCHITECTURE.md` §7 (auth architecture) in full, and `docs/DATABASE.md` §3.2
+(`RefreshToken`) for the exact reuse-detection field semantics
+(`familyId`/`replacedByTokenHash`). Confirm `@nestjs/throttler`'s current version/API
+against its docs before installing — same "framework moves fast" caution as Milestone
+4's `nestjs-zod`/`@nestjs/swagger` pins, and it hasn't been installed yet.

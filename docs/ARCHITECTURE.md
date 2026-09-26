@@ -211,19 +211,31 @@ large-file proxy.
   Prisma-facing layer), and `*.module.ts`. Controllers stay HTTP-only concerns
   (status codes, DTO mapping); business rules live in services so they're unit-testable
   without an HTTP layer.
-- Global concerns, each its own module: `ConfigModule` (wraps `packages/config`),
-  `PrismaModule` (provides a single `PrismaClient` via DI, `onModuleDestroy` disconnect),
-  `AuthModule` (JWT strategy, refresh rotation), `ThrottlerModule` (`@nestjs/throttler`,
-  Redis storage), a global `HttpExceptionFilter` producing RFC 7807 Problem Details, and
-  a global `ZodValidationPipe` (via `nestjs-zod`) so every DTO is validated against a
-  schema imported from `packages/validation` — **not** re-declared with `class-validator`
-  decorators, to keep one validation source of truth across API/web/mobile.
+- Global concerns, each its own module under `apps/api/src/{config,prisma,health}`
+  (siblings of `src/app`, not under `src/modules/<domain>` — they aren't domain
+  features): `ConfigModule` (wraps `packages/config`, provides the validated env via
+  an `API_ENV` DI token), `PrismaModule` (provides a single `PrismaClient` via DI,
+  `onModuleInit`/`onModuleDestroy` connect/disconnect) — both implemented Milestone 4.
+  `AuthModule` (JWT strategy, refresh rotation) and `ThrottlerModule`
+  (`@nestjs/throttler`, Redis storage) land with Milestone 5. A global
+  `HttpExceptionFilter` (`apps/api/src/common/filters`) producing RFC 7807 Problem
+  Details, and a global `ZodValidationPipe` (via `nestjs-zod`, registered through
+  `APP_PIPE`) so every DTO is validated against a schema imported from
+  `packages/validation` — **not** re-declared with `class-validator` decorators, to
+  keep one validation source of truth across API/web/mobile — are also implemented
+  (Milestone 4).
 - API versioning via Nest's built-in URI versioning (`/api/v1/...`); every controller is
   explicitly versioned from day one even though only `v1` exists, so a `v2` migration
   later is additive, not a breaking refactor.
-- OpenAPI: `@nestjs/swagger` decorated from the same Zod schemas (`nestjs-zod`'s
-  `zodToOpenAPI`) generates `openapi.json` as a build artifact, served at `/api/docs`
-  in non-production and exported for `packages/api-client` codegen (§6.3).
+- OpenAPI: `@nestjs/swagger` (pinned to the 11.x line — see the NestJS-11 deviation in
+  `docs/PROGRESS.md`; its `12.x` requires NestJS 12) generates the document from the
+  same Zod-derived DTOs, passed through `nestjs-zod`'s `cleanupOpenApiDoc` (the
+  function nestjs-zod actually ships for this — not `zodToOpenAPI`, this document's
+  original guess) before `SwaggerModule.setup`. Served at `/api/docs` (interactive UI)
+  and `/api/docs-json` (raw document) in non-production; exported as a literal
+  `openapi.json` build artifact for `packages/api-client` codegen (§6.3) is deferred to
+  Milestone 6, once that package's actual consumption contract exists to design it
+  against — implemented Milestone 4.
 - Background jobs run **in-process** in `apps/api` for the MVP (a `BullMQ` `Processor`
   registered in the relevant module, e.g. `MediaModule` processes image-variant jobs) —
   see the risk register (§16) for when this should be split into a separate worker app.

@@ -4,7 +4,11 @@
   "sourceRoot": "apps/api/src",
   "projectType": "application",
   "tags": ["scope:api", "type:app"],
+  "implicitDependencies": ["prisma"],
   "targets": {
+    "build": {
+      "dependsOn": ["^build", "prisma:generate"]
+    },
     "prune-lockfile": {
       "dependsOn": ["build"],
       "cache": true,
@@ -61,6 +65,7 @@
       }
     },
     "test": {
+      "dependsOn": ["prisma:generate"],
       "options": {
         "passWithNoTests": true
       }

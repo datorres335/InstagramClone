@@ -70,6 +70,7 @@ Credentials: true`) enabled since the refresh cookie requires it.
 | Explore          | `/api/v1/explore`                                                                                           |
 | Notifications    | `/api/v1/notifications`                                                                                     |
 | Account settings | `/api/v1/me`                                                                                                |
+| Health           | `/api/v1/health`                                                                                            |
 
 ## 3. Auth
 
@@ -210,7 +211,12 @@ WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
 
 ## 15. Client Codegen Workflow
 
-1. `apps/api` builds → emits `openapi.json` (Nx target output).
+1. `apps/api`, at boot, generates the OpenAPI document (`@nestjs/swagger` +
+   `nestjs-zod`'s `cleanupOpenApiDoc`, wired in Milestone 4 — see §16) and serves it
+   at `/api/docs-json`. **Not yet** a literal Nx build-output file (`openapi.json` on
+   disk, produced by `api:build` without booting the server) — that's deferred to
+   Milestone 6, once `packages/api-client`'s actual consumption contract (does it fetch
+   from a running server, or read a committed file?) is decided alongside it.
 2. `packages/api-client`'s `build` target (`dependsOn: ["api:build"]`) runs
    `openapi-typescript` against that spec to produce request/response **types**.
 3. The hand-written transport layer in `packages/api-client` (fetch wrapper, auth-refresh
@@ -220,3 +226,17 @@ WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
 4. Both `web` and `mobile` import only from `packages/api-client` — no app makes a raw
    `fetch` call to the API directly, which keeps auth-refresh and error handling
    consistent everywhere.
+
+## 16. Health & OpenAPI (implemented Milestone 4)
+
+| Method & path        | Auth | Response                                                                                                                   |
+| -------------------- | ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/v1/health` | none | `200` → `{ status: 'ok', database: 'up' }`. `503` (Problem Details, `service-unavailable`) if the database is unreachable. |
+
+Not versioned/prefixed like the rest of the API by convention — it just happens to
+also land under `/api/v1` because URI versioning and the global prefix apply
+workspace-wide (`docs/ARCHITECTURE.md` §5.2) — but a health check is infrastructure,
+not a resource, and isn't listed as a feature in `docs/FEATURES.md`.
+
+`GET /api/docs` (interactive Swagger UI) and `GET /api/docs-json` (the raw OpenAPI
+document) are also live, gated to non-production via `NODE_ENV` — see §15.
