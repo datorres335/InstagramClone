@@ -10,6 +10,8 @@ import type { Request, Response } from 'express';
 import { ZodValidationException } from 'nestjs-zod';
 import type { ZodError } from 'zod';
 
+import { HttpProblemException } from '../exceptions/http-problem.exception';
+
 /** RFC 7807 Problem Details (docs/API.md §1). */
 interface ProblemDetails {
   type: string;
@@ -23,11 +25,12 @@ interface ProblemDetails {
 const PROBLEM_BASE_URL = 'https://api.instagram-clone.dev/errors';
 
 /**
- * Maps an HTTP status to the error-catalog slug docs/API.md §14 documents.
+ * Maps an HTTP status to the error-catalog slug docs/API.md §14 documents,
+ * for plain Nest `HttpException`s that don't need a more specific slug.
  * Business-specific slugs (`refresh-token-reused`, `media-not-ready`, ...)
- * aren't listed here — those exceptions don't exist yet (they land with the
- * milestones that implement them) and will carry their own `type` via a
- * dedicated exception class rather than this generic status-code fallback.
+ * are carried by a `HttpProblemException` subclass instead (checked first,
+ * below) — one per business exception, defined in the domain module that
+ * throws it (e.g. `modules/auth/exceptions.ts`).
  */
 const STATUS_TYPE_SLUGS: Record<number, string> = {
   [HttpStatus.BAD_REQUEST]: 'validation-failed',
@@ -95,6 +98,19 @@ export class HttpExceptionFilter implements ExceptionFilter {
           path: issue.path.join('.'),
           message: issue.message,
         })),
+      };
+    }
+
+    // Checked before the generic `HttpException` branch below, since
+    // `HttpProblemException` extends it — a business exception's own
+    // `problemType`/`problemTitle` must win over the generic status mapping.
+    if (exception instanceof HttpProblemException) {
+      return {
+        type: `${PROBLEM_BASE_URL}/${exception.problemType}`,
+        title: exception.problemTitle,
+        status: exception.getStatus(),
+        detail: exception.message,
+        instance,
       };
     }
 

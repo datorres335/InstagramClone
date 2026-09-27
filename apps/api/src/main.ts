@@ -9,6 +9,7 @@ import 'dotenv/config';
 import { Logger, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { cleanupOpenApiDoc } from 'nestjs-zod';
 
@@ -25,6 +26,10 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   app.use(helmet());
+  // Needed to read the refresh-token cookie (docs/ARCHITECTURE.md §7) off
+  // incoming requests — setting a cookie needs no extra middleware, but
+  // reading `req.cookies` does.
+  app.use(cookieParser());
   app.enableCors({
     origin: env.CORS_ORIGINS.length > 0 ? env.CORS_ORIGINS : true,
     credentials: true,

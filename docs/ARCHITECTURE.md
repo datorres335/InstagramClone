@@ -216,8 +216,10 @@ large-file proxy.
   features): `ConfigModule` (wraps `packages/config`, provides the validated env via
   an `API_ENV` DI token), `PrismaModule` (provides a single `PrismaClient` via DI,
   `onModuleInit`/`onModuleDestroy` connect/disconnect) — both implemented Milestone 4.
-  `AuthModule` (JWT strategy, refresh rotation) and `ThrottlerModule`
-  (`@nestjs/throttler`, Redis storage) land with Milestone 5. A global
+  `AuthModule` (custom JWT guard, `argon2id` hashing, refresh rotation with reuse
+  detection — see §7) and `ThrottlerModule` (`@nestjs/throttler`, **in-memory**
+  storage, not Redis — see the Milestone 5 deviation in `docs/PROGRESS.md`) are
+  implemented as of Milestone 5. A global
   `HttpExceptionFilter` (`apps/api/src/common/filters`) producing RFC 7807 Problem
   Details, and a global `ZodValidationPipe` (via `nestjs-zod`, registered through
   `APP_PIPE`) so every DTO is validated against a schema imported from
@@ -316,11 +318,15 @@ transport layer — see the risk register for what happens if this pipeline brea
 
 ## 7. Authentication & Session Architecture
 
-- **Access token**: short-lived JWT (target lifetime: 15 minutes), signed by the API
-  (asymmetric, e.g. `RS256`/`EdDSA`, so the public key could later verify tokens outside
-  the API process if needed), containing `sub` (user id), `iat`, `exp`, and a token
-  version claim used to invalidate all access tokens for a user (e.g. after a password
-  change) without an allowlist.
+- **Access token**: short-lived JWT (15 minutes), signed with `HS256` (symmetric —
+  implemented Milestone 5; the original draft here specified an asymmetric algorithm
+  such as `RS256`/`EdDSA` so a public key could later verify tokens outside the API
+  process. Only one process ever verifies access tokens today — a custom `JwtAuthGuard`
+  in the same `apps/api`, not a separate resource server — so asymmetric signing would
+  buy nothing yet; revisit if a second verifying service appears). Payload is
+  `{ sub, tokenVersion }` plus the standard `iat`/`exp` claims; `tokenVersion` is checked
+  against the `User` row on every request so bumping it (e.g. after a password change)
+  invalidates all of that user's outstanding access tokens without an allowlist.
 - **Refresh token**: opaque, high-entropy random string (not a JWT — nothing to decode,
   so a leaked DB doesn't hand out a forgeable format), sent to the client once, and
   stored **hashed** (e.g. SHA-256, since it's already high-entropy — no need for a slow

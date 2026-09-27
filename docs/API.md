@@ -45,9 +45,12 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
 - **Idempotent toggles use `PUT`/`DELETE`, not `POST`**, for follow/like/save, so a
   retried request is safe: `PUT` = ensure the relationship exists, `DELETE` = ensure it
   doesn't. Both return `204 No Content` whether or not the call changed state.
-- **Rate limiting**: `@nestjs/throttler` (Redis-backed) applied globally (e.g. 100
-  req/min/IP) with stricter per-route limits on `/auth/*` (e.g. 10 req/min/IP on
-  login/register) to slow credential-stuffing/enumeration.
+- **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP) with
+  stricter per-route limits on `/auth/register`, `/auth/login`, `/auth/refresh`
+  (10 req/min/IP) to slow credential-stuffing/enumeration — implemented Milestone 5.
+  In-memory storage, not Redis (see the deviation in `docs/PROGRESS.md`): correct for
+  the single-process API this is today, revisit if `apps/api` is ever horizontally
+  scaled.
 - **CORS**: allow-list of known web origins only; credentials (`Access-Control-Allow-
 Credentials: true`) enabled since the refresh cookie requires it.
 - **OpenAPI**: generated at build time from the same Zod schemas (`nestjs-zod`),
@@ -78,18 +81,24 @@ Request/response shapes below are the literal Zod schemas in `packages/validatio
 (`src/lib/auth.ts`, `src/lib/user.ts`) — implemented in Milestone 3; those schemas are
 the single source of truth, this table just mirrors them.
 
-| Method & path         | Auth\*                                                     | Body                                                              | Response                                                                                                                                                                              |
-| --------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /auth/register` | none                                                       | `RegisterInputSchema`: `{ email, username, password, fullName? }` | `201` → `AuthResponseSchema`: `{ user, accessToken, accessTokenExpiresAt, refreshToken? }` + sets the refresh cookie (web)                                                            |
-| `POST /auth/login`    | none                                                       | `LoginInputSchema`: `{ emailOrUsername, password }`               | `200` → `AuthResponseSchema` (same shape as register)                                                                                                                                 |
-| `POST /auth/refresh`  | refresh cookie (web) or `RefreshInputSchema` body (mobile) | `RefreshInputSchema`: `{ refreshToken? }`                         | `200` → `RefreshResponseSchema`: `{ accessToken, accessTokenExpiresAt, refreshToken? }`, rotated cookie (web). `401` + full family revocation if a reused/expired token is presented. |
-| `POST /auth/logout`   | refresh cookie (web) or `LogoutInputSchema` body (mobile)  | `LogoutInputSchema`: `{ refreshToken?, allDevices? }`             | `204` — revokes the presented token's family (or all of the user's families if `allDevices`)                                                                                          |
-| `GET /auth/session`   | access token                                               | —                                                                 | `200` → `SessionResponseSchema`: `{ user }` — cheap "am I logged in / who am I" check used by SSR                                                                                     |
+| Method & path         | Auth\*                                                     | Body                                                              | Response                                                                                                                                                                                                                                                                                                                                                                  |
+| --------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /auth/register` | none                                                       | `RegisterInputSchema`: `{ email, username, password, fullName? }` | `201` → `AuthResponseSchema`: `{ user, accessToken, accessTokenExpiresAt, refreshToken? }` + sets the refresh cookie (web)                                                                                                                                                                                                                                                |
+| `POST /auth/login`    | none                                                       | `LoginInputSchema`: `{ emailOrUsername, password }`               | `200` → `AuthResponseSchema` (same shape as register)                                                                                                                                                                                                                                                                                                                     |
+| `POST /auth/refresh`  | refresh cookie (web) or `RefreshInputSchema` body (mobile) | `RefreshInputSchema`: `{ refreshToken? }`                         | `200` → `RefreshResponseSchema`: `{ accessToken, accessTokenExpiresAt, refreshToken? }`, rotated cookie (web). `401 unauthenticated` if the token is unknown or naturally expired (no family revocation — expiry alone isn't suspicious). `401 refresh-token-reused` (§14), **with the whole token family revoked**, only when an already-rotated-away token is replayed. |
+| `POST /auth/logout`   | refresh cookie (web) or `LogoutInputSchema` body (mobile)  | `LogoutInputSchema`: `{ refreshToken?, allDevices? }`             | `204` — revokes the presented token's family (or all of the user's families if `allDevices`)                                                                                                                                                                                                                                                                              |
+| `GET /auth/session`   | access token                                               | —                                                                 | `200` → `SessionResponseSchema`: `{ user }` — cheap "am I logged in / who am I" check used by SSR                                                                                                                                                                                                                                                                         |
 
 \* `refreshToken` is optional in `RefreshInputSchema`/`LogoutInputSchema` because it's
 only ever sent by mobile clients — web relies on the httpOnly cookie exclusively and
-sends no body at all for these two routes. `AuthResponseSchema`/`RefreshResponseSchema`
-mirror this: `refreshToken` is present in the response body only for mobile.
+sends no body at all for these two routes. In the other direction, `AuthResponseSchema`/
+`RefreshResponseSchema`'s `refreshToken` field is always populated in the response body
+(Milestone 5) — the API has no reliable way to tell a browser client from a mobile
+client apart at register/login time, so rather than guess it returns the token both
+ways: mobile reads it from the body since it has no cookie jar, and web is expected to
+rely on the httpOnly cookie and simply ignore the body field. A dedicated client-type
+signal to suppress it for browsers is deferred until an actual web client (Milestone 6)
+exists to design that mechanism against.
 
 `UserResponseSchema` (used as `user` above) is the _own-user_ shape returned from auth
 endpoints — id, username, email, fullName, bio, websiteUrl, isPrivate, createdAt, never

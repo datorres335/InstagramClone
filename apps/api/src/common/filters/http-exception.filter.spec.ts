@@ -1,7 +1,12 @@
-import { type ArgumentsHost, NotFoundException } from '@nestjs/common';
+import {
+  type ArgumentsHost,
+  HttpStatus,
+  NotFoundException,
+} from '@nestjs/common';
 import { createZodDto, ZodValidationPipe } from 'nestjs-zod';
 import { z } from 'zod';
 
+import { HttpProblemException } from '../exceptions/http-problem.exception';
 import { HttpExceptionFilter } from './http-exception.filter';
 
 function createMockHost(url = '/api/v1/whatever') {
@@ -63,6 +68,30 @@ describe('HttpExceptionFilter', () => {
         title: 'NotFound',
         status: 404,
         instance: '/api/v1/missing',
+      }),
+    );
+  });
+
+  it('formats a HttpProblemException with its own type/title, overriding the generic status slug', () => {
+    const { host, response } = createMockHost('/api/v1/auth/refresh');
+    filter.catch(
+      new HttpProblemException(
+        'refresh-token-reused',
+        'Refresh Token Reused',
+        HttpStatus.UNAUTHORIZED,
+        'This refresh token has already been used.',
+      ),
+      host,
+    );
+
+    expect(response.status).toHaveBeenCalledWith(401);
+    expect(response.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'https://api.instagram-clone.dev/errors/refresh-token-reused',
+        title: 'Refresh Token Reused',
+        status: 401,
+        detail: 'This refresh token has already been used.',
+        instance: '/api/v1/auth/refresh',
       }),
     );
   });

@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Infrastructure
-**Current Milestone:** Milestone 4 — API Bootstrap
+**Current Milestone:** Milestone 5 — Authentication
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -18,11 +18,16 @@ scaffolded and passing validation (Milestone 0, with Docker infra/Milestone 1 la
 as a side effect of it). The first real database models — `User` and `RefreshToken` —
 are implemented, migrated, and seeded (Milestone 2). `packages/types` and
 `packages/validation` carry real, tested content for everything auth needs
-(Milestone 3). `apps/api` now has a real DI graph — a Prisma-backed database
-connection, a global Zod validation pipe actually consuming Milestone 3's schemas, an
-RFC 7807 error format, and live OpenAPI docs — proven by a real `GET /api/v1/health`
-endpoint that queries the live Postgres end-to-end (Milestone 4). No product _feature_
-endpoints exist yet (register/login/posts/etc.) — those start with Milestone 5.
+(Milestone 3). `apps/api` has a real DI graph — a Prisma-backed database connection, a
+global Zod validation pipe, an RFC 7807 error format, and live OpenAPI docs — proven by
+a real `GET /api/v1/health` endpoint (Milestone 4). `apps/api` now has its first real
+_feature_ module: `AuthModule` implements all five `docs/API.md` §3 endpoints
+(register/login/refresh/logout/session) against real HTTP traffic and the live
+Postgres — `argon2id` password hashing, JWT access tokens carrying a `tokenVersion`
+claim, opaque refresh tokens with rotation + reuse-detection family revocation, and
+`@nestjs/throttler` on the credential-facing routes (Milestone 5). The three seed users
+(`alice`/`bob`/`carol`, Milestone 2) are now actually log-in-able. No other product
+feature endpoints exist yet (posts/follows/etc.) — those start with Milestone 6 onward.
 
 ---
 
@@ -101,7 +106,7 @@ endpoints exist yet (register/login/posts/etc.) — those start with Milestone 5
       for bootstrap-time concerns like port/CORS that run before the DI container exists)
 - [x] `apps/api/src/prisma/{prisma.service,prisma.module}.ts` — a `@Global()`
       `PrismaModule`; `PrismaService extends` the generated `@instagram-clone/
-    prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
+  prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
       `@prisma/adapter-pg`, connects/disconnects via `OnModuleInit`/`OnModuleDestroy`
 - [x] `apps/api/src/common/filters/http-exception.filter.ts` — a global `@Catch()`
       filter (registered via `APP_FILTER`) turning `ZodValidationException`, any Nest
@@ -136,6 +141,64 @@ endpoints exist yet (register/login/posts/etc.) — those start with Milestone 5
       to Milestone 6); `docs/ARCHITECTURE.md` §5.2 corrected to match
 - [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
       projects) + `api-e2e:e2e` (4/4) against the live Dockerized Postgres
+
+### Milestone 5 — Authentication
+
+- [x] `apps/api/src/modules/auth/` — the first domain module (`docs/ARCHITECTURE.md`
+      §5.2's directory convention): `auth.controller.ts`, `auth.service.ts`,
+      `tokens.service.ts`, `password.service.ts`, `jwt-auth.guard.ts`, plus small
+      single-purpose files (`auth.dto.ts`, `auth.exceptions.ts`, `jwt-payload.ts`,
+      `current-user.decorator.ts`, `refresh-cookie.ts`, `request-meta.ts`,
+      `user-response.mapper.ts`)
+- [x] All five `docs/API.md` §3 endpoints, wired to Milestone 3's Zod schemas via
+      `createZodDto`: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`,
+      `POST /auth/logout`, `GET /auth/session`
+- [x] `PasswordService` — `argon2id` hashing/verification (`argon2`, already a
+      dependency since Milestone 2's `prisma/seed.ts`)
+- [x] `TokensService` — issues JWT access tokens (`{ sub, tokenVersion }` payload, 15m
+      TTL) and opaque refresh tokens (32 random bytes, SHA-256-hashed at rest, 30d TTL,
+      per `docs/DATABASE.md` §3.2's `RefreshToken` fields); `rotate()` implements
+      rotation-with-reuse-detection exactly as `docs/ARCHITECTURE.md` §7 specifies —
+      an unknown or naturally-expired token is a plain `401`, but a token that's
+      already been rotated away (`revokedAt` set) triggers full `familyId` revocation
+      plus a distinct `refresh-token-reused` error type
+- [x] `JwtAuthGuard` — a small custom guard (no `@nestjs/passport`/`passport-jwt`,
+      since there's only one auth strategy) that verifies the JWT, re-checks the user
+      still exists/isn't soft-deleted, and compares `tokenVersion` against the current
+      DB value so a password change (or any future "log out everywhere") invalidates
+      already-issued access tokens without an allowlist
+- [x] Timing-safe login: a wrong password and a nonexistent user both take the
+      `argon2.verify` path (against a fixed dummy hash when no user is found) and
+      return the identical generic `401`, closing the username-enumeration
+      timing/response side-channel
+- [x] `HttpProblemException` (`apps/api/src/common/exceptions/`) — a small base class
+      letting a domain module attach its own RFC 7807 `type`/`title` (e.g.
+      `refresh-token-reused`) without `common/`'s exception filter importing from
+      domain modules; `HttpExceptionFilter` and its tests updated to check for it
+      ahead of the generic `HttpException` status→slug mapping
+- [x] `@nestjs/throttler` — global default (100 req/min) via `APP_GUARD`, tightened to
+      10 req/min on `/auth/register`, `/auth/login`, `/auth/refresh` specifically
+- [x] `cookie-parser` wired in `main.ts`; refresh token delivered as an
+      httpOnly/`SameSite=Lax` cookie scoped to `/api/v1/auth` (`secure` in production
+      only, so local HTTP dev still works) **and** always present in the JSON response
+      body (see Deviations — mobile needs the body, web is expected to prefer the
+      cookie)
+- [x] 39 new/updated unit tests across `password.service.spec.ts`,
+      `tokens.service.spec.ts` (rotation, reuse-detection, logout, both revocation
+      paths), `jwt-auth.guard.spec.ts`, `auth.service.spec.ts`, and an added case in
+      `http-exception.filter.spec.ts`
+- [x] 7 new `apps/api-e2e` integration tests (`auth-flow.spec.ts`,
+      `refresh-reuse.spec.ts`, `refresh-expiry.spec.ts`) against the real Dockerized
+      Postgres and a real running Nest server: the full
+      register→login→session→refresh→logout lifecycle, duplicate-registration
+      conflict, wrong-password/nonexistent-user parity, unauthenticated `/session`,
+      full reuse-detection (replaying both the original and the token it was rotated
+      into), and a backdated-row expiry scenario proving expiry alone never revokes a
+      family
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
+      projects) + `api-e2e:e2e` (6/6 suites, 11/11 tests) against the live Dockerized
+      Postgres, plus a full manual curl walkthrough of every flow before the automated
+      suite was written (see "Validation Performed" below)
 
 ---
 
@@ -223,6 +286,48 @@ pnpm exec nx run api-e2e:e2e --skip-nx-cache
 # ^ 4/4 passing against the real Dockerized Postgres — logs confirmed
 #   "PrismaService: Connected to the database" and the health/openapi/
 #   problem-details routes all registered and responded correctly.
+
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+```
+
+### Milestone 5
+
+```bash
+pnpm exec nx run api:test --skip-nx-cache
+# ^ found the @nestjs/jwt ESM/CJS incompatibility on the first run — see "Bugs Found"
+#   below. After downgrading to 11.0.2: 7/7 suites, 39/39 tests passing.
+
+pnpm exec nx run api:build --skip-nx-cache   # re-verified after the jwt downgrade — webpack still compiles cleanly
+```
+
+**Manual end-to-end verification against the real server + real Dockerized Postgres**,
+done deliberately _before_ writing the automated `api-e2e` suite (this milestone's
+rotation/reuse-detection logic was the trickiest thing built so far and warranted
+seeing it work against a live database first): booted `nx run api:serve` in the
+background and drove every flow with `curl` + a cookie jar —
+register/login/session/refresh/logout, refresh-token rotation, **reuse detection and
+family revocation** (replaying both an old rotated-away token and the token it was
+rotated into, confirming both correctly return `refresh-token-reused` only after the
+family is actually revoked), duplicate-registration conflict (`409`),
+wrong-password/nonexistent-user parity (`401`, `password.verify` still invoked either
+way), validation errors (`400`), rate limiting (`429` after 5–6 requests in the 10/60s
+window), and cross-milestone integration (seed user `alice`, password `Password123!`,
+logs in through the new endpoints). One apparent anomaly during this pass (a
+post-logout refresh returning "invalid token" instead of "reused") turned out to be the
+test script itself overwriting its own cookie file on the logout call, not a bug —
+confirmed by re-presenting the raw token value directly and seeing the correct
+`refresh-token-reused` response. Manually-created test users were deleted from Postgres
+afterward; only the Milestone 2 seed users (`alice`/`bob`/`carol`) remain.
+
+```bash
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ 6/6 suites, 11/11 tests passing against the live Dockerized Postgres — the new
+#   auth-flow.spec.ts, refresh-reuse.spec.ts, and refresh-expiry.spec.ts all passed on
+#   the first run once the manual walkthrough above had already validated the behavior.
+#   refresh-expiry.spec.ts reaches into Postgres directly (a raw PrismaClient in
+#   apps/api-e2e/src/support/db.ts) to backdate a token's expiresAt, since the API has
+#   no route that can fast-forward the real 30-day TTL.
 
 pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
 pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
@@ -348,6 +453,45 @@ request-validation-layer concerns, not schema changes.
 None of Milestone 4's changes touch `docs/DATABASE.md` or `docs/FEATURES.md` — this
 milestone is bootstrap plumbing, not schema or product-feature work.
 
+### Milestone 5
+
+- **`@nestjs/jwt` is pinned to `11.0.2`, not the `12.x` line.** Same root cause as the
+  NestJS-11/`@nestjs/swagger`-11 deviations above (`12.x` needs `@nestjs/core ^12.0.0`),
+  compounded by `12.x` also being pure ESM with no CommonJS build at all — see "Bugs
+  Found" below. `11.0.2` is CJS and Jest-compatible.
+- **Access tokens are signed `HS256` (symmetric), not an asymmetric algorithm.**
+  `docs/ARCHITECTURE.md` §7 originally specified `RS256`/`EdDSA` so a public key could
+  verify tokens outside the API process. Nothing outside `apps/api` verifies access
+  tokens today — `JwtAuthGuard` is the only verifier, in the same process that signs —
+  so asymmetric signing has no current benefit, only extra key-management complexity.
+  Revisit if a second service (e.g. a separate media-processing worker) ever needs to
+  verify tokens independently. `docs/ARCHITECTURE.md` §7 updated to describe this.
+- **`ThrottlerModule` uses in-memory storage, not Redis**, despite Redis already
+  existing in `docker-compose.yml`. `@nestjs/throttler`'s default in-memory storage is
+  correct for a single-process API (true today) and is the simplest thing that
+  satisfies "`@nestjs/throttler` applied to `/auth/*`" as literally stated in
+  `docs/IMPLEMENTATION_PLAN.md` M5. A Redis-backed store only matters once `apps/api`
+  runs as more than one instance behind a load balancer, which isn't the case yet —
+  revisit alongside any future horizontal-scaling milestone. `docs/ARCHITECTURE.md`
+  §5.2 updated to record this explicitly rather than silently diverge from the original
+  "Redis-backed" wording.
+- **A custom (non-Passport) `JwtAuthGuard`, not `@nestjs/passport` + `passport-jwt`.**
+  There is exactly one auth strategy (Bearer JWT); Passport's strategy-registry
+  abstraction earns its keep with multiple strategies (OAuth, sessions, etc.), not one.
+  A ~30-line guard doing `verifyAsync` + a Prisma lookup is simpler to read and test
+  than wiring up a `PassportStrategy` subclass, a `PassportModule`, and Passport's own
+  request-augmentation, for identical runtime behavior.
+- **`AuthResponseSchema`/`RefreshResponseSchema`'s `refreshToken` is always present in
+  the response body**, not only for mobile as `docs/API.md` §3 originally implied. See
+  the corrected wording there (§3, footnote) for the full rationale: the API has no
+  reliable client-type signal at register/login time, so it returns the token both ways
+  rather than guess; web is expected to prefer the httpOnly cookie. Revisit once
+  Milestone 6 gives an actual web client to design a suppression signal against.
+
+None of Milestone 5's changes touch `docs/DATABASE.md` or `docs/FEATURES.md` — the
+`RefreshToken` schema and the auth feature scope were both already fully specified by
+Milestones 2 and 3 respectively; this milestone only implements against them.
+
 ---
 
 ## Bugs Found and Fixed
@@ -425,6 +569,29 @@ of null (reading 'useContext')` on every route. Removed from `.env.example`;
     unit tests do not guarantee the build passes** — `nx run-many -t ... build` (not
     just `test`) is part of every milestone's validation for exactly this reason.
 
+### Milestone 5
+
+12. **`@nestjs/jwt@12.0.2` is pure ESM with no CommonJS build at all**
+    (`"type": "module"`, `exports` only offering an `import` condition). The webpack
+    build (`nx run api:build`) compiled fine regardless — webpack handles ESM
+    dependencies natively — but `ts-jest`'s CJS-based runtime failed every suite that
+    transitively imported it (`tokens.service.spec.ts`, `auth.service.spec.ts`,
+    `jwt-auth.guard.spec.ts`) with `SyntaxError: Cannot use import statement outside a
+module`. The inverse of bug #11 above: this time the **build** passed while
+    **tests** failed, underscoring the same lesson from the other direction — build and
+    test can fail independently of each other, so both are required, every milestone.
+    Fixed by pinning to `11.0.2` (CJS, Jest-era build), the same resolution pattern
+    already established for `@nestjs/swagger` in Milestone 4.
+13. **`docs/API.md` §3's `/auth/refresh` row conflated reuse with plain expiry**,
+    reading "`401` + full family revocation if a reused/expired token is presented" —
+    but the actual (and correct, `docs/ARCHITECTURE.md` §7-aligned) behavior only
+    revokes the family on genuine reuse (a token already marked `revokedAt`); a token
+    that's merely past its `expiresAt` is not suspicious and must not trigger
+    revocation, or an ordinary idle session would look identical to an attack. Caught
+    while writing `tokens.service.spec.ts`'s expiry test and confirmed against
+    `tokens.service.ts`'s actual `rotate()` branching. Fixed the wording in
+    `docs/API.md` §3 rather than the code — the code was already right.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -452,9 +619,10 @@ of null (reading 'useContext')` on every route. Removed from `.env.example`;
   agent-run one — see the guard's own message for why.
 - `prisma/seed.ts`'s dev password (`Password123!`, hashed with `argon2id` before
   storage — never stored in plaintext) is fixture data for local development and
-  integration tests only. Obvious and low-stakes today with only 3 seed users and no
-  auth endpoints yet; worth a reminder once Milestone 5 (Auth) makes these accounts
-  actually log-in-able, so nobody mistakes this for a real credential scheme.
+  integration tests only. As of Milestone 5 these accounts (`alice`/`bob`/`carol`) are
+  now actually log-in-able through the real `/auth/login` endpoint — worth remembering
+  this is still a shared, publicly-known dev password, not a real credential scheme, if
+  this repo is ever exposed anywhere beyond a local machine.
 - **The generated Prisma Client logs `◇ injected env (N) from .env` on every import**,
   independent of and in addition to `apps/api`'s own `import 'dotenv/config'`. Harmless
   (it finds nothing left to inject, hence usually `(0)`) but slightly noisy console
@@ -476,9 +644,13 @@ None. Milestone 3 resolved the two decisions `docs/IMPLEMENTATION_PLAN.md` and
 `docs/FEATURES.md` had explicitly deferred to it (password policy, logout body shape).
 Milestone 4 made no new open-ended decisions — its two deviations (`@nestjs/swagger`
 version, `openapi.json`-as-file deferred) are both externally forced or explicitly
-deferred to a specific future milestone, not undecided. Everything else recorded in
-this file is implementation-detail-level — versions, ports, a webpack externals list,
-one deferred column, one simplified index, two deferred extensions — with rationale in
+deferred to a specific future milestone, not undecided. Milestone 5's five deviations
+(`@nestjs/jwt` version, `HS256` vs asymmetric signing, in-memory vs Redis throttler
+storage, a custom guard instead of Passport, `refreshToken` always in the response
+body) are each decided and recorded above with rationale and an explicit revisit
+trigger, not left open. Everything else recorded in this file is
+implementation-detail-level — versions, ports, a webpack externals list, one deferred
+column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
 changes anything either document asserts at the design level.
 
@@ -486,26 +658,35 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 5 — Authentication**: per `docs/IMPLEMENTATION_PLAN.md`, a real
-`AuthModule` under `apps/api/src/modules/auth/` (the first _domain_ module, per
-`docs/ARCHITECTURE.md` §5.2's directory convention) implementing all five endpoints
-`docs/API.md` §3 and `packages/validation`'s auth schemas (Milestone 3) already
-specify: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh` (rotation +
-reuse-detection family revocation, per `docs/ARCHITECTURE.md` §7), `POST
-/auth/logout`, `GET /auth/session`. Argon2id password hashing (the `argon2` dependency
-already exists — added in Milestone 2 for `prisma/seed.ts`). JWT access tokens
-carrying the `tokenVersion` claim (`docs/DATABASE.md` §3.1). `@nestjs/throttler`
-(Redis-backed — Redis already exists in `docker-compose.yml`) applied to `/auth/*`.
+**Milestone 6 — Web Bootstrap + Auth UI**: per `docs/IMPLEMENTATION_PLAN.md`, generate
+`apps/web` for real via `@nx/next` conventions already established (App Router, Next
+16 — the shell has existed since Milestone 0, this is where it gets actual pages) and
+create `packages/api-client` for real (currently a Milestone-0 placeholder). This is
+the milestone that stands up and proves, end-to-end, the OpenAPI-codegen pipeline
+`docs/ARCHITECTURE.md` §6.2/§6.3 and `docs/API.md` §15 describe but nothing has
+exercised yet:
 
-This is the milestone where the global `ZodValidationPipe` and `HttpExceptionFilter`
-wired in Milestone 4 finally get exercised by real HTTP traffic instead of direct unit
-tests, and where the three seed users (`alice`/`bob`/`carol`, Milestone 2, password
-`Password123!`) become actually log-in-able — worth re-reading the seed-password note
-under "Known Issues" above before treating them as anything but local dev fixtures.
+1. `apps/api`'s already-served OpenAPI document (`/api/docs-json`, Milestone 4) feeds
+   `openapi-typescript` (`packages/api-client`'s `build` target, `dependsOn:
+["api:build"]`) to generate request/response types for exactly the five auth
+   endpoints Milestone 5 just implemented.
+2. A hand-written transport layer in `packages/api-client` on top of those generated
+   types: a `fetch` wrapper, an auth-refresh interceptor (401 → call `/auth/refresh` →
+   retry once), Problem Details error unwrapping, and — per `docs/ARCHITECTURE.md` §7's
+   storage-per-client note — a storage-adapter interface designed now even though only
+   the web (cookie) adapter is implemented yet, so Milestone 7 doesn't need to change
+   the interface shape for the mobile (`expo-secure-store`) adapter.
+3. Web auth pages (register, login, a logout action, a minimal authenticated shell)
+   using Server Actions calling `api-client` — the first real UI in this repo.
+4. **Tests**: unit tests for `api-client`'s fetch/refresh-retry logic (mocked HTTP);
+   the first real `apps/web-e2e` Playwright test, covering register → login → land on
+   the authenticated shell → logout against the real API from Milestone 5.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 5 section,
-`docs/ARCHITECTURE.md` §7 (auth architecture) in full, and `docs/DATABASE.md` §3.2
-(`RefreshToken`) for the exact reuse-detection field semantics
-(`familyId`/`replacedByTokenHash`). Confirm `@nestjs/throttler`'s current version/API
-against its docs before installing — same "framework moves fast" caution as Milestone
-4's `nestjs-zod`/`@nestjs/swagger` pins, and it hasn't been installed yet.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 6 section and
+`docs/ARCHITECTURE.md` §6 (Shared Packages) in full — §6.2 in particular, since this is
+the milestone that turns its "why REST + hand-written client instead of tRPC-style
+inference" reasoning into actual code for the first time. Also worth noting before
+designing the storage adapter: `AuthResponseSchema`'s `refreshToken` is always present
+in the response body now (Milestone 5 deviation, above) specifically so this milestone
+doesn't need a client-type signal invented for it — the web adapter can simply ignore
+that field and rely on the cookie the API already sets.
