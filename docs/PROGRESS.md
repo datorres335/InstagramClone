@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Infrastructure
-**Current Milestone:** Milestone 6 — Web Bootstrap + Auth UI
+**Current Milestone:** Milestone 7 — Mobile Bootstrap + Auth UI
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -26,16 +26,19 @@ module, `AuthModule`, implements all five `docs/API.md` §3 endpoints
 Postgres — `argon2id` password hashing, JWT access tokens carrying a `tokenVersion`
 claim, opaque refresh tokens with rotation + reuse-detection family revocation, and
 `@nestjs/throttler` on the credential-facing routes (Milestone 5). `packages/api-client`
-is now real too: an OpenAPI-codegen pipeline (`apps/api`'s routes → a generated
+is real too: an OpenAPI-codegen pipeline (`apps/api`'s routes → a generated
 `openapi.json` → generated TS types) proven end-to-end, and a hand-written,
 storage-adapter-agnostic transport layer (`HttpClient`/`AuthClient`) with a real
 auth-refresh-and-retry interceptor. `apps/web` has its first real pages — register,
 login, and a minimal authenticated `/home` shell — built as Server Components/Actions
 calling `api-client`, with its own httpOnly session cookie and a `proxy.ts` that keeps
-it fresh (Milestone 6). The three seed users (`alice`/`bob`/`carol`, Milestone 2) can
-now log in through the actual web UI, not just `curl`. No other product feature
-endpoints or pages exist yet (posts/follows/feed/etc.) — those start with Milestone 8
-onward, once Milestone 7 gives `apps/mobile` the same auth treatment.
+it fresh (Milestone 6). `apps/mobile` now has the same treatment: register, login, and
+a minimal authenticated tab shell, backed by an `expo-secure-store` `TokenStorage`
+adapter that proved out the storage-adapter abstraction on its second, structurally
+different implementation with zero changes to the shared transport (Milestone 7). The
+three seed users (`alice`/`bob`/`carol`, Milestone 2) can now log in through either real
+UI, not just `curl`. No other product feature endpoints or pages exist yet
+(posts/follows/feed/etc.) — those start with Milestone 8.
 
 ---
 
@@ -264,6 +267,52 @@ prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
       projects) + `api-e2e:e2e` (6/6 suites) + `web-e2e:e2e` (4/4, Chromium) against
       the live Dockerized Postgres and real running `api`/`web` servers
 
+### Milestone 7 — Mobile Bootstrap + Auth UI
+
+- [x] `expo-secure-store` installed via `pnpm exec expo install` (per `CLAUDE.md`),
+      which also registered its config plugin in `apps/mobile/app.json` automatically
+- [x] `apps/mobile/src/lib/mobile-token-storage.ts` — a `TokenStorage` implementation
+      (docs/ARCHITECTURE.md §7, risk #5) storing both tokens together as one
+      JSON-serialized SecureStore item, keyed `session` — the straightforward design
+      the architecture doc originally described for both platforms, since mobile has
+      none of `apps/web`'s "cookies are only writable from a Server Action" constraint
+- [x] `apps/mobile/src/lib/api-client.ts` — a module-level `apiClient` singleton (built
+      once at load, unlike `apps/web`'s per-request client) wired to the SecureStore
+      adapter; confirmed `HttpClient`/`AuthClient` needed **zero** changes to support
+      it, the actual test of whether Milestone 6's storage-adapter design was real
+- [x] `apps/mobile/src/lib/auth-context.tsx` — a plain React context (no Server
+      Components/Actions on-device) checking `apiClient.auth.session()` once on mount;
+      screens read `user`/`loading` from it and call `setUser`/`logout` after their own
+      `apiClient.auth.*` calls
+- [x] Mobile auth screens replacing the Milestone-0 placeholder: `(auth)/login`,
+      `(auth)/register` (plain `TextInput`/`Pressable` forms, no server-driven form
+      state library — there's no on-device equivalent to `useActionState`), a
+      `(tabs)/home` stub shell (matching `apps/web`'s `/home` scope exactly), and a
+      root `index.tsx` that shows a loading spinner during the initial session check
+      then `<Redirect>`s to whichever screen is appropriate
+- [x] `apps/mobile/src/lib/env.ts` — `packages/config`'s `mobileEnvSchema`/`loadEnv()`
+      wired in for the first time, with `EXPO_PUBLIC_API_URL` referenced as its own
+      literal `process.env.EXPO_PUBLIC_...` expression (not passed through generically)
+      so Expo's babel-time inlining actually replaces it in on-device bundles — passing
+      the whole `process.env` object through, the way `apps/web`'s equivalent does,
+      would silently produce an empty config outside of Jest/Node (see Deviations below)
+- [x] 24 new unit tests: 8 pure-logic (`mobile-token-storage.spec.ts` — mocked
+      `expo-secure-store`; `auth-error-message.spec.ts`, mirroring `apps/web`'s) and 16
+      component tests (`login.spec.tsx`, `register.spec.tsx`, `home.spec.tsx`, all under
+      `src/__tests__/` — see Bugs Found below for why not co-located under `src/app/`)
+      covering the success path, an inline error on failure, and that `setUser`/
+      navigation are never called when the API call fails
+- [x] Manually verified the built web export actually boots (headless Chromium against
+      `expo start --web`'s real dev server and a real running `api`): confirmed
+      `expo-secure-store` has no web implementation at runtime (`getValueWithKeyAsync is
+    not a function`) — expected, not a bug, since `apps/mobile`'s supported targets
+      are iOS/Android only (`docs/ARCHITECTURE.md` §5.3); `apps/web` is the real,
+      already-working web surface. iOS/Android bundling itself was confirmed via
+      `nx run mobile:build`'s successful Hermes bytecode output for both platforms —
+      an actual device/simulator run is outside what this environment can do
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
+      projects) against the live Dockerized Postgres
+
 ---
 
 ## Validation Performed
@@ -452,6 +501,55 @@ pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 Background processes (the manually-started `api:serve`, and Playwright's own managed
 `web:dev`) were both confirmed stopped afterward — no stray Node processes left
 listening on 3000/4200.
+
+### Milestone 7
+
+```bash
+pnpm exec expo install expo-secure-store   # run from apps/mobile, per CLAUDE.md
+# ^ resolved the SDK-56-compatible version (56.0.4) automatically and registered
+#   its config plugin in app.json — no manual version pinning needed.
+
+pnpm exec nx run mobile:test --skip-nx-cache
+# ^ first run failed all 3 suites touching @instagram-clone/api-client with
+#   "Cannot find module" — apps/mobile's jest.config.cts uses the jest-expo preset
+#   directly (needed for the RN environment/transforms) rather than layering on
+#   Nx's own jest preset the way apps/api's config does, so it never got the
+#   tsconfig-paths-derived moduleNameMapper other projects have. Added explicit
+#   entries for all four @instagram-clone/* packages (same fix apps/web's
+#   vitest.config.mts already needed, for the same underlying reason — see
+#   docs/ARCHITECTURE.md §6). 16/16 passing afterward.
+
+pnpm exec nx run mobile:lint --skip-nx-cache
+pnpm exec nx run mobile:build --skip-nx-cache
+# ^ first run failed: Metro tried to bundle *.spec.tsx files co-located under
+#   src/app/ as if they were routes (Expo Router treats every file under its app
+#   root as a route — the exact Milestone-0 bug that moved the original placeholder
+#   test out of src/app/ in the first place, reintroduced by co-locating the new
+#   screen tests there). Moved all three under src/__tests__/ instead, matching the
+#   established precedent. Passing afterward — real Hermes bytecode bundles
+#   produced for web/iOS/Android.
+
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+
+# Manual verification against a real running server (same practice as Milestones
+# 5/6): started api:serve against the live Dockerized Postgres and
+# `nx run mobile:serve` (expo start --web), then drove the web-exported bundle
+# with a throwaway headless-Chromium script (not part of the committed test
+# suite — apps/web-e2e's Playwright install, reused directly):
+node .tmp-verify-mobile.mjs
+# ^ found expo-secure-store has no web implementation at runtime
+#   ("ExpoSecureStore.default.getValueWithKeyAsync is not a function") — confirmed
+#   this is expected (see Bugs Found below), not something to fix, and not a signal
+#   to distrust the unit test suite's coverage of the actual auth logic. Script
+#   deleted afterward — it existed only to answer "does the exported bundle even
+#   boot," not to become a permanent e2e suite (mobile's test scope per
+#   docs/IMPLEMENTATION_PLAN.md M7 is unit tests only).
+
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+```
+
+Both background dev servers (`api:serve`, `mobile:serve`) confirmed stopped
+afterward — no stray processes left listening on 3000/8081.
 
 ---
 
@@ -674,6 +772,33 @@ milestone; `docs/FEATURES.md` didn't need changes either, since "register/login/
 UI" was already implicit in the auth feature it already describes, not a new scope
 decision.
 
+### Milestone 7
+
+- **Both tokens are stored together as one SecureStore item, not two separate
+  keys.** `docs/ARCHITECTURE.md` §7's original wording ("both access and refresh
+  tokens stored via `expo-secure-store`") didn't specify one item vs two; one JSON
+  value mirrors `apps/web`'s own `session-cookie.ts` design (Milestone 6) and means a
+  single read/write/delete covers the whole session instead of coordinating three
+  independent SecureStore calls that could partially fail.
+- **`apiClient` is a module-level singleton on mobile, not built per-call.**
+  `apps/web` has to construct a fresh client per request because Next's `cookies()`
+  is only valid within a request scope; `expo-secure-store` has no equivalent
+  restriction, so building it once at module load (the simpler, more obvious design)
+  is correct here rather than something to avoid out of misplaced consistency with
+  web's adapter.
+- **`apps/mobile`'s web export target doesn't support the auth flow at all** —
+  `expo-secure-store` has no web implementation. Not treated as a gap to fill (e.g.
+  with a `Platform.OS === 'web'` fallback to `localStorage`): `apps/mobile`'s
+  supported targets are iOS/Android only (`docs/ARCHITECTURE.md` §5.3 never claimed
+  web), and `apps/web` already is the real, secure web surface — adding a second,
+  less-secure browser-storage path for mobile's incidental web export would be net
+  new complexity solving a problem nobody has. Recorded here rather than left
+  silently broken.
+
+None of Milestone 7's changes touch `docs/DATABASE.md` or `docs/API.md` — no schema
+or endpoint work; `docs/FEATURES.md` needed no changes for the same reason as
+Milestone 6.
+
 ---
 
 ## Bugs Found and Fixed
@@ -803,10 +928,10 @@ module`. The inverse of bug #11 above: this time the **build** passed while
     (completely normal, unbuilt TypeScript), and Turbopack treats that as a hard
     conflict rather than inferring from content. First fix attempted, `transpilePackages`
     in `next.config.js` (the standard Next.js mechanism for "these workspace packages
-    need my own compiler"), did **not** help — it appears to key off node_modules
+    need my own compiler"), did **not** help — it appears to key off node*modules
     package resolution, which the tsconfig path aliases bypass entirely. Setting
     `"type": "module"` instead of removing it was tried next and immediately broke a
-    _different_ thing: `apps/api`'s new `ts-node`-run `generate-openapi.ts` started
+    \_different* thing: `apps/api`'s new `ts-node`-run `generate-openapi.ts` started
     failing with `ERR_REQUIRE_ESM`, since `ts-node`'s CJS `require()` can't load a
     package that now declares itself ESM. The fix that actually worked and broke
     nothing else: remove the `"type"` field **entirely** from
@@ -820,6 +945,34 @@ module`. The inverse of bug #11 above: this time the **build** passed while
     reintroduced elsewhere. Worth remembering if a future package.json edit
     re-adds an explicit `"type"` field here "for clarity": it will break one of these
     two apps depending on which value is chosen.
+
+### Milestone 7
+
+16. **`apps/mobile`'s Jest config never got the `@instagram-clone/*` module mapping
+    other projects have.** `jest.config.cts` sets `preset: 'jest-expo'` directly
+    (required for the React Native test environment/transforms) instead of extending
+    `jest.preset.js` the way `apps/api`'s config does — so it never picked up
+    Nx's tsconfig-paths-derived `moduleNameMapper`, and every test importing
+    `@instagram-clone/api-client` failed with "Cannot find module." Same underlying
+    cause as `apps/web`'s Milestone-0 `vitest.config.mts` needing explicit aliases
+    (bare-specifier resolution for these packages goes through `node_modules`, which
+    points at unbuilt `dist/` output). Fixed with explicit `moduleNameMapper` entries
+    for all four `@instagram-clone/*` packages.
+17. **Co-locating the new screen tests under `src/app/` reintroduced the exact bug
+    Milestone 0 already fixed once** (see bug #3 above): Expo Router treats every
+    file under its app root as a route, so `*.spec.tsx` files there get bundled as
+    screens, pulling in `@testing-library/react-native` → Node's `console` module,
+    which Metro can't resolve, breaking `expo export` entirely. Moved all three new
+    spec files to `src/__tests__/` instead, matching the precedent the original fix
+    already established — worth remembering as a standing rule for this app, not
+    just a one-time fix: **no test files under `apps/mobile/src/app/`, ever.**
+18. **`expo-secure-store` has no web implementation** — confirmed empirically (not
+    assumed) via a real headless-browser run against the web-exported bundle, which
+    threw `ExpoSecureStore.default.getValueWithKeyAsync is not a function` the moment
+    a screen tried to read the session. Not a bug to fix (see the Deviations entry
+    above) — recorded here so the _symptom_ is recognizable if it resurfaces, since
+    the error message alone doesn't obviously point at "this platform isn't
+    supported" without this context.
 
 ---
 
@@ -885,6 +1038,20 @@ module`. The inverse of bug #11 above: this time the **build** passed while
   in Milestone 6's scope (`docs/IMPLEMENTATION_PLAN.md` M19, Account Settings, is where
   session management as a _feature_ belongs); noted here only so it isn't mistaken for
   an oversight in the auth architecture itself.
+- **`apps/mobile`'s web export target is not a functional surface** — `expo-secure-
+store` has no web implementation (Milestone 7, confirmed empirically). This is
+  expected and not planned to be fixed: `apps/mobile`'s supported targets are
+  iOS/Android only, and `apps/web` already covers the web surface properly. Worth
+  knowing if anyone ever runs `nx run mobile:serve`/`start --web` expecting the auth
+  screens to work in a browser — they won't, by design.
+- **Mobile auth screens were verified by unit tests (mocked SecureStore/API) and a
+  one-off manual run against the web export only** — no real iOS/Android
+  simulator/device run happened this milestone, since this environment can't drive
+  one. `expo export`'s successful Hermes bytecode output for both platforms is real
+  signal that the JS bundle is structurally sound, but genuine on-device SecureStore
+  behavior (Keychain/Keystore prompts, permission handling) remains unverified
+  beyond what the mocked unit tests assert. Worth a real device/simulator pass before
+  treating mobile auth as production-ready.
 
 ---
 
@@ -903,7 +1070,11 @@ of sharing the API's, caching the access token alongside it, `proxy.ts`'s
 refresh-only-when-expired design, typing `api-client` against `validation` instead of
 the generated OpenAPI types, gitignoring both codegen artifacts instead of committing
 them, and removing the shared packages' `"type"` field) are likewise each decided and
-recorded above with rationale, not left open. Everything else recorded in this file is
+recorded above with rationale, not left open. Milestone 7's three deviations
+(one combined SecureStore item instead of two, a module-level `apiClient` singleton
+instead of web's per-request pattern, and deliberately not fixing the unsupported web
+export target) are equally settled, not open questions. Everything else recorded in
+this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -913,32 +1084,37 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 7 — Mobile Bootstrap + Auth UI**: per `docs/IMPLEMENTATION_PLAN.md`,
-generate `apps/mobile` for real via `@nx/expo` (Expo Router) conventions already
-established (the shell has existed since Milestone 0; `expo-secure-store` and real
-screens are new). This is the milestone that proves `api-client`'s `TokenStorage`
-interface (`docs/ARCHITECTURE.md` §7/risk #5) really is storage-adapter-agnostic —
-Milestone 6 designed and used it for web, but a second, structurally different
-implementation is the actual test of whether the abstraction holds:
+**Milestone 8 — User Profiles (read + edit, no photo upload yet)**: per
+`docs/IMPLEMENTATION_PLAN.md`, the first _product_ feature endpoints — everything
+through Milestone 7 has been infrastructure and auth. `User` (Milestone 2) and the
+auth plumbing (Milestones 5–7) already carry everything this milestone needs; no new
+tables.
 
-1. A `expo-secure-store`-backed `TokenStorage` implementation — unlike web's adapter
-   (Milestone 6), mobile has no "can only write cookies from a Server Action" analog,
-   so it can persist both tokens straightforwardly, the way `docs/ARCHITECTURE.md` §7
-   originally described for both platforms before Milestone 6's web-specific
-   complications.
-2. Mobile auth screens (register, login, logout, a minimal authenticated tab shell)
-   calling the same `packages/api-client` `AuthClient` web already uses — `HttpClient`/
-   `AuthClient` themselves should need zero changes; if they do, that's a sign the
-   interface wasn't actually storage-agnostic and is worth flagging explicitly rather
-   than patching around.
-3. **Tests**: Jest + React Native Testing Library unit tests for the auth screens/forms
-   and the SecureStore adapter (mocked SecureStore, same pattern as
-   `apps/web`'s mocked-`fetch` `api-client` tests).
+1. API: `GET /users/:username` (public profile — `docs/API.md` §4's wider schema than
+   auth's own `UserResponseSchema`: avatar, follower counts, `isFollowedByMe` — the
+   last two are placeholder-shaped until Follows (Milestone 10) is real, so decide
+   explicitly whether they're `0`/`false` stubs or omitted; don't guess silently),
+   `GET /users/:username/posts` (returns empty — `Post` doesn't exist until Milestone
+   11), `PATCH /me` (edit own profile: `fullName`/`bio`/`websiteUrl`/`isPrivate`).
+2. Web + mobile: a profile view screen and an edit-profile form. `isPrivate`'s toggle
+   is present but inert — it has no follow-approval effect yet (`docs/FEATURES.md`
+   #17 cites its actual scope note under Feature 5, Follow/Unfollow — re-read that
+   before wiring the toggle up) — don't build private-post visibility gating this
+   milestone, that's not what "inert" is asking for.
+3. **Tests**: integration tests for profile read/update, including that a
+   private-field update attempted by a non-owner is rejected (`403`); Playwright
+   (`apps/web-e2e`) covers viewing and editing your own profile, extending the
+   register→login pattern Milestone 6 already established rather than inventing a new
+   one.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 7 section and
-`docs/ARCHITECTURE.md` §5.3 (`apps/mobile`) and §7 in full. Worth noting going in:
-`apps/web`'s adapter (`apps/web/src/lib/web-token-storage.ts`) ended up shaped by a
-Next.js-specific constraint (cookies only writable from Server Actions/Route Handlers)
-that has no mobile equivalent — don't carry that shape over by default; design mobile's
-adapter against what `expo-secure-store` actually needs, and let `TokenStorage`'s
-interface (not either adapter's internal choices) be what's shared.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 8 section,
+`docs/API.md` §4 (Users & Profiles) in full, and `docs/FEATURES.md` #17's exact
+wording on the private-account toggle's current scope. Worth noting going in: this is
+the first milestone since Auth to touch `apps/web` and `apps/mobile` together for a
+non-auth feature — `packages/api-client`'s `auth` namespace (Milestones 6–7) is the
+template for a new `users` namespace (`AuthClient`'s shape — typed against
+`packages/validation`, not the generated OpenAPI types, per the Milestone 6 deviation
+above — is the pattern to repeat, not reinvent). Also worth checking before designing
+the edit form: `PATCH /me` needs a guard requiring a valid access token
+(`JwtAuthGuard`, Milestone 5) — this is the first non-auth endpoint to need one, so
+it's the first real proof that guard generalizes past the one route it was built for.

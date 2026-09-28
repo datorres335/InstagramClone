@@ -1,18 +1,21 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Redirect } from 'expo-router';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-// Placeholder root route. Replaced by the real auth/feed screens in the
-// milestones that implement those features (see docs/IMPLEMENTATION_PLAN.md).
+import { useAuth } from '../lib/auth-context';
+
+/** Root route — bounces to whichever of (auth)/login or (tabs)/home is appropriate. */
 export default function IndexScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title} testID="heading" role="heading">
-        Instagram Clone
-      </Text>
-      <Text style={styles.subtitle}>
-        Mobile app scaffold — infrastructure milestone
-      </Text>
-    </View>
-  );
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator testID="loading-indicator" />
+      </View>
+    );
+  }
+
+  return <Redirect href={user ? '/(tabs)/home' : '/(auth)/login'} />;
 }
 
 const styles = StyleSheet.create({
@@ -21,14 +24,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#ffffff',
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '600',
-  },
-  subtitle: {
-    marginTop: 8,
-    fontSize: 14,
-    color: '#6b7280',
   },
 });
