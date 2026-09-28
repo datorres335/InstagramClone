@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Infrastructure
-**Current Milestone:** Milestone 5 — Authentication
+**Current Milestone:** Milestone 6 — Web Bootstrap + Auth UI
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -20,14 +20,22 @@ are implemented, migrated, and seeded (Milestone 2). `packages/types` and
 `packages/validation` carry real, tested content for everything auth needs
 (Milestone 3). `apps/api` has a real DI graph — a Prisma-backed database connection, a
 global Zod validation pipe, an RFC 7807 error format, and live OpenAPI docs — proven by
-a real `GET /api/v1/health` endpoint (Milestone 4). `apps/api` now has its first real
-_feature_ module: `AuthModule` implements all five `docs/API.md` §3 endpoints
+a real `GET /api/v1/health` endpoint (Milestone 4). `apps/api`'s first real _feature_
+module, `AuthModule`, implements all five `docs/API.md` §3 endpoints
 (register/login/refresh/logout/session) against real HTTP traffic and the live
 Postgres — `argon2id` password hashing, JWT access tokens carrying a `tokenVersion`
 claim, opaque refresh tokens with rotation + reuse-detection family revocation, and
-`@nestjs/throttler` on the credential-facing routes (Milestone 5). The three seed users
-(`alice`/`bob`/`carol`, Milestone 2) are now actually log-in-able. No other product
-feature endpoints exist yet (posts/follows/etc.) — those start with Milestone 6 onward.
+`@nestjs/throttler` on the credential-facing routes (Milestone 5). `packages/api-client`
+is now real too: an OpenAPI-codegen pipeline (`apps/api`'s routes → a generated
+`openapi.json` → generated TS types) proven end-to-end, and a hand-written,
+storage-adapter-agnostic transport layer (`HttpClient`/`AuthClient`) with a real
+auth-refresh-and-retry interceptor. `apps/web` has its first real pages — register,
+login, and a minimal authenticated `/home` shell — built as Server Components/Actions
+calling `api-client`, with its own httpOnly session cookie and a `proxy.ts` that keeps
+it fresh (Milestone 6). The three seed users (`alice`/`bob`/`carol`, Milestone 2) can
+now log in through the actual web UI, not just `curl`. No other product feature
+endpoints or pages exist yet (posts/follows/feed/etc.) — those start with Milestone 8
+onward, once Milestone 7 gives `apps/mobile` the same auth treatment.
 
 ---
 
@@ -106,7 +114,7 @@ feature endpoints exist yet (posts/follows/etc.) — those start with Milestone 
       for bootstrap-time concerns like port/CORS that run before the DI container exists)
 - [x] `apps/api/src/prisma/{prisma.service,prisma.module}.ts` — a `@Global()`
       `PrismaModule`; `PrismaService extends` the generated `@instagram-clone/
-  prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
+prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
       `@prisma/adapter-pg`, connects/disconnects via `OnModuleInit`/`OnModuleDestroy`
 - [x] `apps/api/src/common/filters/http-exception.filter.ts` — a global `@Catch()`
       filter (registered via `APP_FILTER`) turning `ZodValidationException`, any Nest
@@ -199,6 +207,62 @@ feature endpoints exist yet (posts/follows/etc.) — those start with Milestone 
       projects) + `api-e2e:e2e` (6/6 suites, 11/11 tests) against the live Dockerized
       Postgres, plus a full manual curl walkthrough of every flow before the automated
       suite was written (see "Validation Performed" below)
+
+### Milestone 6 — Web Bootstrap + Auth UI
+
+- [x] **OpenAPI codegen pipeline stood up end-to-end** (`docs/ARCHITECTURE.md` §6.2,
+      risk #2): `nx run api:generate-openapi` — a new script
+      (`apps/api/src/generate-openapi.ts`) that boots `AppModule` with
+      `abortOnError: false` and builds the same Swagger document `main.ts` serves live,
+      writing it to a gitignored `apps/api/openapi.json` **without** needing a
+      reachable Postgres (verified by running it against a deliberately-bad
+      `DATABASE_URL`) — feeds `nx run api-client:generate-types`, which runs
+      `openapi-typescript` against it to produce a gitignored
+      `packages/api-client/src/generated/openapi-types.ts`. `main.ts` refactored to
+      share the document-building/versioning logic with the new script
+      (`openapi-document.ts`, `app/configure-app.ts`) instead of duplicating it.
+- [x] `packages/api-client` implemented for real (was a Milestone-0 placeholder):
+      `HttpClient` (fetch wrapper, auth-refresh-and-retry-once-on-401 interceptor,
+      RFC 7807 error unwrapping into a typed `ApiError`), a `TokenStorage` interface
+      (the storage-adapter abstraction risk #5 called for), and `AuthClient`
+      (register/login/logout/session) built on top of both — typed directly against
+      `packages/validation`'s existing schemas, not the generated OpenAPI types (see
+      Deviations below for why)
+- [x] `apps/web`'s first real pages, replacing the Milestone-0 generator placeholder:
+      `(auth)/register`, `(auth)/login` (both Server Actions + a `useActionState`
+      client form for inline error display), a stub authenticated `(app)/home` shell,
+      and a root `/` that redirects to whichever of those two is appropriate — route
+      groups matching `docs/ARCHITECTURE.md` §5.1's convention
+- [x] `apps/web`'s own session: a single httpOnly/Secure/SameSite=Lax cookie on
+      `apps/web`'s own origin (`lib/session-cookie.ts`, `lib/web-token-storage.ts`),
+      **not** a shared cookie with the API — see the Deviations entry below for why the
+      original cross-origin-cookie design in `docs/ARCHITECTURE.md` §5.1/§7 couldn't
+      actually work as drafted, and what replaced it
+- [x] `apps/web/src/proxy.ts` (Next 16's renamed `middleware.ts`) — proactively
+      refreshes the session's access token on protected routes when it's actually
+      expired, which is what keeps a real (non-instant) session from tripping refresh-
+      token reuse-detection the next time a Server Component needs to read it (see
+      Deviations below for the full mechanics)
+- [x] `packages/config`'s `webEnvSchema`/`loadEnv()` wired into `apps/web` for real for
+      the first time (`lib/env.ts`) — fails fast on a missing `NEXT_PUBLIC_API_URL`
+- [x] Removed the Milestone-0 placeholder page content (`page.module.css`, the
+      `/api/hello` route, the generator's default homepage markup) now that real pages
+      exist
+- [x] 28 new unit tests: 19 in `packages/api-client` (`http-client.spec.ts`,
+      `auth-client.spec.ts`, plus `openapi-contract.spec.ts` — a compile-time-only
+      drift detector between the generated OpenAPI types and the routes this client
+      actually wraps) and 9 in `apps/web` (`session-cookie.spec.ts`,
+      `auth-error-message.spec.ts` — pure-logic tests; Server Component auth/redirect
+      logic isn't meaningfully unit-testable and is covered by the e2e suite instead)
+- [x] 4 new `apps/web-e2e` Playwright tests (`auth-flow.spec.ts`) against the real
+      running `web` dev server **and** a real running `api` server/Postgres: the full
+      register → land on `/home` → (already-authenticated `/login` bounces back to
+      `/home`) → logout → (`/home` now bounces to `/login`) lifecycle, logging back in
+      as the same user, a wrong-password error shown inline without leaving the page,
+      and an unauthenticated visit to `/home` redirecting to `/login`
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
+      projects) + `api-e2e:e2e` (6/6 suites) + `web-e2e:e2e` (4/4, Chromium) against
+      the live Dockerized Postgres and real running `api`/`web` servers
 
 ---
 
@@ -332,6 +396,62 @@ pnpm exec nx run api-e2e:e2e --skip-nx-cache
 pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
 pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 ```
+
+### Milestone 6
+
+```bash
+pnpm exec nx run api:generate-openapi --skip-nx-cache
+# ^ first attempt used `tsx` — failed with an esbuild "Parameter decorators only
+#   work when experimental decorators are enabled" error, then (after fixing that)
+#   an `UndefinedDependencyException` for TokensService's PrismaService param.
+#   Root cause: esbuild doesn't implement `emitDecoratorMetadata` at all, which
+#   Nest's DI relies on for constructor-injection reflection — no flag fixes this,
+#   it's a structural esbuild limitation. Switched to `ts-node` (already a root
+#   devDependency) + `tsconfig-paths/register`, which uses the real TypeScript
+#   compiler and works correctly. See "Bugs Found" below.
+
+DATABASE_URL="postgresql://baduser:badpass@localhost:1/nonexistent" \
+  pnpm exec nx run api:generate-openapi --skip-nx-cache
+# ^ deliberately broke DB connectivity to verify the `abortOnError: false` claim
+#   empirically rather than trust it by inspection — succeeded, confirming
+#   openapi.json generation is genuinely decoupled from Postgres being reachable.
+
+pnpm exec nx run api-client:generate-types --skip-nx-cache
+pnpm exec nx run-many -t lint typecheck test build -p api-client --skip-nx-cache
+# ^ caught a real @nx/dependency-checks failure on the first pass: my new spec
+#   files explicitly `import { ... } from 'vitest'`, but no other package in this
+#   repo does that (they rely on vitest's `globals: true` instead) — vitest was
+#   never declared as this package's own dependency. Removed the explicit imports
+#   to match house style rather than add the dependency; `vi`/`describe`/`it`/
+#   `expect` are globally injected the same as everywhere else. 19/19 tests passing.
+
+pnpm exec nx run web:build --skip-nx-cache
+# ^ found a real, repo-first bug: apps/web is the first project to import
+#   `@instagram-clone/*` packages through Turbopack (apps/api uses webpack, which
+#   never hit this). See "Bugs Found" below for the full diagnosis and fix.
+
+pnpm exec nx run-many -t lint typecheck test build -p api,api-client,web,types,validation,config --skip-nx-cache
+# ^ re-verified every touched project together after the package.json fix, not
+#   just web in isolation — 6/6 projects clean.
+
+# Manual, real-server verification before trusting the Playwright suite (same
+# practice as Milestone 5's curl walkthrough): started `api:serve` in the
+# background against the live Dockerized Postgres, then:
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 4/4 passing on the first real run: register → /home → already-authenticated
+#   /login redirect → logout → /login → unauthenticated /home redirect; a second
+#   test logging back in as the same user; a third showing the inline error for a
+#   wrong password without leaving the page. Confirmed `proxy.ts` actually ran
+#   (visible in the dev-server request log: "proxy.ts: Nms" on every /home request)
+#   and stayed fast on the common (not-yet-expired) path.
+
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+```
+
+Background processes (the manually-started `api:serve`, and Playwright's own managed
+`web:dev`) were both confirmed stopped afterward — no stray Node processes left
+listening on 3000/4200.
 
 ---
 
@@ -485,12 +605,74 @@ milestone is bootstrap plumbing, not schema or product-feature work.
   the response body**, not only for mobile as `docs/API.md` §3 originally implied. See
   the corrected wording there (§3, footnote) for the full rationale: the API has no
   reliable client-type signal at register/login time, so it returns the token both ways
-  rather than guess; web is expected to prefer the httpOnly cookie. Revisit once
-  Milestone 6 gives an actual web client to design a suppression signal against.
+  rather than guess. **Update, Milestone 6**: this turned out to be exactly what `web`
+  needed too, not just mobile — see that milestone's entry below for why `apps/web`
+  ended up reading the body field instead of the API's own cookie after all.
 
 None of Milestone 5's changes touch `docs/DATABASE.md` or `docs/FEATURES.md` — the
 `RefreshToken` schema and the auth feature scope were both already fully specified by
 Milestones 2 and 3 respectively; this milestone only implements against them.
+
+### Milestone 6
+
+- **`apps/web` keeps its own session cookie; it never reads the API's refresh cookie.**
+  The original `docs/ARCHITECTURE.md` §5.1/§7 draft described the Next server reading
+  the API's httpOnly cookie via `cookies()`. That can't actually work as drafted: `web`
+  and `api` are different origins (different ports in dev; would need a shared parent
+  domain in production), and even granting that, the cookie's `Path=/api/v1/auth`
+  means the browser only attaches it to requests under that exact path — a Server
+  Action POST goes to whatever page it's called from, never `/api/v1/auth/*`, so the
+  cookie would never reach `apps/web`'s server regardless of domain sharing. Resolved
+  by having `apps/web` call the API server-to-server exactly the way `mobile` will (an
+  explicit `refreshToken` in the request body — the Milestone 5 "always include it"
+  decision, above, turned out to be load-bearing for exactly this), and keeping its own
+  separate session cookie on its own origin. `docs/ARCHITECTURE.md` §5.1/§7 rewritten
+  to describe this rather than the unworkable original design.
+- **That session cookie stores the access token too, not just the refresh token.**
+  `docs/ARCHITECTURE.md` §7's original draft said the access token lives "in memory ...
+  only." Next's `cookies()` can only be _written_ from a Server Action or Route
+  Handler — never a plain Server Component render — so a design that never persists
+  the access token would force a refresh on every single page load that reads session
+  state, including plain renders that structurally can't persist the _rotated refresh
+  token_ that refresh produces. The next request would then present a refresh token
+  the API has already rotated away, tripping reuse-detection (§7) and wrongly
+  force-logging out a real user doing nothing wrong. Caching the access token (and its
+  expiry) in the same cookie means a plain render can reuse it directly in the common
+  case and never needs to write anything.
+- **`apps/web/src/proxy.ts` (Next 16's renamed `middleware.ts`) exists specifically to
+  keep that cached access token from going stale.** It only refreshes when the cached
+  token is actually expired, not on every request — rotating on every request would
+  create a real race: two near-simultaneous requests (e.g. a prefetch alongside a
+  navigation) reading the same not-yet-rotated cookie value would both try to rotate
+  it, and the second to reach the API would see the first's rotation and get flagged
+  as reuse. Refreshing only near the token's real ~15-minute expiry reduces this to the
+  same rare edge case every refresh-rotation system has (two requests racing in the
+  exact instant of expiry) rather than making it happen on every page load.
+- **`packages/api-client`'s hand-written transport is typed against
+  `packages/validation`'s existing types, not the generated `openapi-types.ts`.** See
+  the `docs/API.md` §15 rewrite for the full reasoning — both describe the same shapes
+  (the OpenAPI doc is itself derived from those same Zod schemas), so typing the client
+  against a second, generated copy would duplicate types for no benefit `web`/`mobile`
+  don't already get from depending on `validation` directly. The generated types are
+  still genuinely used, just differently: as a compile-time contract check
+  (`openapi-contract.spec.ts`) that fails to typecheck if `apps/api` ever stops serving
+  a route this client wraps.
+- **`openapi.json` and `openapi-types.ts` are both gitignored, regenerated-on-demand
+  build artifacts**, not committed files with a CI staleness check as
+  `docs/ARCHITECTURE.md` risk #2's original mitigation proposed. Matches the existing
+  `prisma/generated/` precedent in this repo, and is simpler: a file that's always
+  regenerated fresh can't drift from what generates it, so there's nothing for a
+  staleness check to actually catch.
+- **`packages/config`/`validation`/`api-client`/`types`' `package.json` no longer
+  declares `"type": "commonjs"` at all** (was explicit; now just absent, which is
+  CommonJS by Node's own default — a deliberate, narrow fix, not a stray edit). See
+  "Bugs Found" below for why this was necessary and why setting it to `"module"`
+  instead (the more obvious-looking fix) was tried first and reverted.
+
+None of Milestone 6's changes touch `docs/DATABASE.md` — no schema work this
+milestone; `docs/FEATURES.md` didn't need changes either, since "register/login/logout
+UI" was already implicit in the auth feature it already describes, not a new scope
+decision.
 
 ---
 
@@ -592,6 +774,53 @@ module`. The inverse of bug #11 above: this time the **build** passed while
     `tokens.service.ts`'s actual `rotate()` branching. Fixed the wording in
     `docs/API.md` §3 rather than the code — the code was already right.
 
+### Milestone 6
+
+14. **`esbuild` (and therefore `tsx`) doesn't implement `emitDecoratorMetadata`.**
+    `generate-openapi.ts` first tried running under `tsx` — it failed first with
+    "Parameter decorators only work when experimental decorators are enabled" (fixed
+    by pointing `tsx --tsconfig` at `apps/api/tsconfig.app.json`, which actually has
+    that option), then, once that parsed, with a NestJS
+    `UndefinedDependencyException` for `TokensService`'s `PrismaService` constructor
+    param — the class reference itself was `undefined` at runtime. Root cause: Nest's
+    DI resolves constructor-injected types via TypeScript's `emitDecoratorMetadata`
+    (`design:paramtypes` reflection), which esbuild structurally does not implement —
+    no flag fixes this, since esbuild never type-checks and that metadata comes from
+    the type checker. Switched the script's runner from `tsx` to `ts-node` (already a
+    root devDependency, unused until now) + `tsconfig-paths/register` for path-alias
+    resolution — `ts-node` uses the real TypeScript compiler, so decorator metadata
+    emits correctly. Worth remembering for any future "run a NestJS-DI-aware script
+    directly" need in this repo: `tsx`/esbuild cannot do it, `ts-node` can.
+15. **Turbopack rejects `apps/web`'s import of any `@instagram-clone/*` package**,
+    with "Specified module format (CommonJs) is not matching the module format of the
+    source code (EcmaScript Modules)." `apps/api`'s webpack build never hit this
+    (`ts-loader` transpiles to CJS before webpack's own module-format detection runs),
+    but Turbopack resolves straight to these packages' `.ts` **source** via the
+    `tsconfig.base.json` path aliases (docs/ARCHITECTURE.md §6) and, uniquely among
+    this repo's build tools, checks the resolved file's package.json `"type"` field
+    against what the source actually looks like — every one of these packages
+    declared `"type": "commonjs"` while their source uses `import`/`export` syntax
+    (completely normal, unbuilt TypeScript), and Turbopack treats that as a hard
+    conflict rather than inferring from content. First fix attempted, `transpilePackages`
+    in `next.config.js` (the standard Next.js mechanism for "these workspace packages
+    need my own compiler"), did **not** help — it appears to key off node_modules
+    package resolution, which the tsconfig path aliases bypass entirely. Setting
+    `"type": "module"` instead of removing it was tried next and immediately broke a
+    _different_ thing: `apps/api`'s new `ts-node`-run `generate-openapi.ts` started
+    failing with `ERR_REQUIRE_ESM`, since `ts-node`'s CJS `require()` can't load a
+    package that now declares itself ESM. The fix that actually worked and broke
+    nothing else: remove the `"type"` field **entirely** from
+    `packages/{config,validation,api-client,types}/package.json` rather than setting
+    it to either value — Node's own default (`"commonjs"` when unspecified) satisfies
+    `ts-node`, and Turbopack, with nothing explicit to conflict against, correctly
+    infers ESM from the source and stops erroring. Verified by rebuilding **both**
+    `apps/api` (`generate-openapi`, `build`, `test`) and `apps/web` (`build`, `test`)
+    together afterward, not just the one that was failing at the time — this is
+    exactly the kind of cross-project ripple a narrower fix could have silently
+    reintroduced elsewhere. Worth remembering if a future package.json edit
+    re-adds an explicit `"type"` field here "for clarity": it will break one of these
+    two apps depending on which value is chosen.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -635,6 +864,27 @@ module`. The inverse of bug #11 above: this time the **build** passed while
   console noise above) rather than an actual intermittent failure. Not investigated
   further — it's an Nx Cloud upsell nudge, not a build failure, and this repo doesn't
   use Nx Cloud.
+- **`apps/web-e2e:e2e` needs `apps/api` running against the live Dockerized Postgres**,
+  same as `apps/api-e2e:e2e` — Playwright's own `webServer` config only manages
+  `web:dev` automatically. Start `nx run api:serve` first (or have it already running)
+  before running the web e2e suite; there's no CI pipeline yet to automate this
+  (explicitly scoped to Milestone 20, per the note under Milestone 2 above).
+- **`proxy.ts`'s refresh-on-expiry still has a narrow, inherent race window**: two
+  requests arriving in the exact instant a session's access token expires could both
+  read the same not-yet-refreshed cookie and both attempt to refresh, and the second to
+  reach the API would see the first's rotation and get flagged as reuse, logging that
+  user out. This is a known characteristic of refresh-token rotation in general (not
+  specific to this implementation) and is now a rare edge case rather than the
+  every-request occurrence an earlier design would have had (see the Milestone 6
+  deviation above) — revisit only if real usage shows this happening in practice; a
+  short server-side grace period on the immediately-prior token is the standard fix if
+  so, and isn't implemented today.
+- **Web session cookies are per-browser, not per-device-and-revocable-individually
+  from the UI** — logging out revokes via the API (which does support "all devices"),
+  but there's no account-settings surface yet to list/revoke individual sessions. Not
+  in Milestone 6's scope (`docs/IMPLEMENTATION_PLAN.md` M19, Account Settings, is where
+  session management as a _feature_ belongs); noted here only so it isn't mistaken for
+  an oversight in the auth architecture itself.
 
 ---
 
@@ -648,7 +898,12 @@ deferred to a specific future milestone, not undecided. Milestone 5's five devia
 (`@nestjs/jwt` version, `HS256` vs asymmetric signing, in-memory vs Redis throttler
 storage, a custom guard instead of Passport, `refreshToken` always in the response
 body) are each decided and recorded above with rationale and an explicit revisit
-trigger, not left open. Everything else recorded in this file is
+trigger, not left open. Milestone 6's six deviations (web's own session cookie instead
+of sharing the API's, caching the access token alongside it, `proxy.ts`'s
+refresh-only-when-expired design, typing `api-client` against `validation` instead of
+the generated OpenAPI types, gitignoring both codegen artifacts instead of committing
+them, and removing the shared packages' `"type"` field) are likewise each decided and
+recorded above with rationale, not left open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -658,35 +913,32 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 6 — Web Bootstrap + Auth UI**: per `docs/IMPLEMENTATION_PLAN.md`, generate
-`apps/web` for real via `@nx/next` conventions already established (App Router, Next
-16 — the shell has existed since Milestone 0, this is where it gets actual pages) and
-create `packages/api-client` for real (currently a Milestone-0 placeholder). This is
-the milestone that stands up and proves, end-to-end, the OpenAPI-codegen pipeline
-`docs/ARCHITECTURE.md` §6.2/§6.3 and `docs/API.md` §15 describe but nothing has
-exercised yet:
+**Milestone 7 — Mobile Bootstrap + Auth UI**: per `docs/IMPLEMENTATION_PLAN.md`,
+generate `apps/mobile` for real via `@nx/expo` (Expo Router) conventions already
+established (the shell has existed since Milestone 0; `expo-secure-store` and real
+screens are new). This is the milestone that proves `api-client`'s `TokenStorage`
+interface (`docs/ARCHITECTURE.md` §7/risk #5) really is storage-adapter-agnostic —
+Milestone 6 designed and used it for web, but a second, structurally different
+implementation is the actual test of whether the abstraction holds:
 
-1. `apps/api`'s already-served OpenAPI document (`/api/docs-json`, Milestone 4) feeds
-   `openapi-typescript` (`packages/api-client`'s `build` target, `dependsOn:
-["api:build"]`) to generate request/response types for exactly the five auth
-   endpoints Milestone 5 just implemented.
-2. A hand-written transport layer in `packages/api-client` on top of those generated
-   types: a `fetch` wrapper, an auth-refresh interceptor (401 → call `/auth/refresh` →
-   retry once), Problem Details error unwrapping, and — per `docs/ARCHITECTURE.md` §7's
-   storage-per-client note — a storage-adapter interface designed now even though only
-   the web (cookie) adapter is implemented yet, so Milestone 7 doesn't need to change
-   the interface shape for the mobile (`expo-secure-store`) adapter.
-3. Web auth pages (register, login, a logout action, a minimal authenticated shell)
-   using Server Actions calling `api-client` — the first real UI in this repo.
-4. **Tests**: unit tests for `api-client`'s fetch/refresh-retry logic (mocked HTTP);
-   the first real `apps/web-e2e` Playwright test, covering register → login → land on
-   the authenticated shell → logout against the real API from Milestone 5.
+1. A `expo-secure-store`-backed `TokenStorage` implementation — unlike web's adapter
+   (Milestone 6), mobile has no "can only write cookies from a Server Action" analog,
+   so it can persist both tokens straightforwardly, the way `docs/ARCHITECTURE.md` §7
+   originally described for both platforms before Milestone 6's web-specific
+   complications.
+2. Mobile auth screens (register, login, logout, a minimal authenticated tab shell)
+   calling the same `packages/api-client` `AuthClient` web already uses — `HttpClient`/
+   `AuthClient` themselves should need zero changes; if they do, that's a sign the
+   interface wasn't actually storage-agnostic and is worth flagging explicitly rather
+   than patching around.
+3. **Tests**: Jest + React Native Testing Library unit tests for the auth screens/forms
+   and the SecureStore adapter (mocked SecureStore, same pattern as
+   `apps/web`'s mocked-`fetch` `api-client` tests).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 6 section and
-`docs/ARCHITECTURE.md` §6 (Shared Packages) in full — §6.2 in particular, since this is
-the milestone that turns its "why REST + hand-written client instead of tRPC-style
-inference" reasoning into actual code for the first time. Also worth noting before
-designing the storage adapter: `AuthResponseSchema`'s `refreshToken` is always present
-in the response body now (Milestone 5 deviation, above) specifically so this milestone
-doesn't need a client-type signal invented for it — the web adapter can simply ignore
-that field and rely on the cookie the API already sets.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 7 section and
+`docs/ARCHITECTURE.md` §5.3 (`apps/mobile`) and §7 in full. Worth noting going in:
+`apps/web`'s adapter (`apps/web/src/lib/web-token-storage.ts`) ended up shaped by a
+Next.js-specific constraint (cookies only writable from Server Actions/Route Handlers)
+that has no mobile equivalent — don't carry that shape over by default; design mobile's
+adapter against what `expo-secure-store` actually needs, and let `TokenStorage`'s
+interface (not either adapter's internal choices) be what's shared.

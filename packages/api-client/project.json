@@ -5,8 +5,22 @@
   "projectType": "library",
   "tags": ["scope:shared", "type:feature"],
   "targets": {
+    "test": {
+      "dependsOn": ["generate-types"]
+    },
+    "generate-types": {
+      "executor": "nx:run-commands",
+      "dependsOn": ["api:generate-openapi"],
+      "inputs": ["{workspaceRoot}/apps/api/openapi.json"],
+      "outputs": ["{projectRoot}/src/generated"],
+      "options": {
+        "command": "openapi-typescript apps/api/openapi.json -o packages/api-client/src/generated/openapi-types.ts",
+        "cwd": "{workspaceRoot}"
+      }
+    },
     "build": {
       "executor": "@nx/js:tsc",
+      "dependsOn": ["generate-types"],
       "outputs": ["{options.outputPath}"],
       "options": {
         "outputPath": "dist/packages/api-client",

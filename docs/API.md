@@ -218,23 +218,40 @@ WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
 | 429    | `rate-limited`         | Throttler rejection                                                    |
 | 500    | `internal-error`       | Unhandled exception (never leaks internals in `detail`)                |
 
-## 15. Client Codegen Workflow
+## 15. Client Codegen Workflow (implemented Milestone 6)
 
-1. `apps/api`, at boot, generates the OpenAPI document (`@nestjs/swagger` +
-   `nestjs-zod`'s `cleanupOpenApiDoc`, wired in Milestone 4 — see §16) and serves it
-   at `/api/docs-json`. **Not yet** a literal Nx build-output file (`openapi.json` on
-   disk, produced by `api:build` without booting the server) — that's deferred to
-   Milestone 6, once `packages/api-client`'s actual consumption contract (does it fetch
-   from a running server, or read a committed file?) is decided alongside it.
-2. `packages/api-client`'s `build` target (`dependsOn: ["api:build"]`) runs
-   `openapi-typescript` against that spec to produce request/response **types**.
-3. The hand-written transport layer in `packages/api-client` (fetch wrapper, auth-refresh
-   interceptor, pagination cursor helpers, Problem Details error unwrapping) is typed
-   against those generated types — one method per endpoint listed above, e.g.
-   `apiClient.posts.create(input)`, `apiClient.follows.follow(username)`.
+1. `nx run api:generate-openapi` builds the same OpenAPI document `@nestjs/swagger` +
+   `nestjs-zod`'s `cleanupOpenApiDoc` produce for the live `/api/docs-json` endpoint
+   (§16), but writes it to a real, gitignored build artifact — `apps/api/openapi.json`
+   — **without booting an HTTP listener**. It uses `NestFactory.create(AppModule,
+{ abortOnError: false })`: the document only reads controller/DTO metadata
+   assembled during module compilation, before any lifecycle hook runs, so it doesn't
+   need `PrismaService`'s live `$connect()` to have succeeded — verified empirically by
+   running it against a deliberately-unreachable `DATABASE_URL`. `main.ts` does **not**
+   use this flag; a real server should still fail fast on bad DB connectivity.
+2. `nx run api-client:generate-types` (`dependsOn: ["api:generate-openapi"]`) runs
+   `openapi-typescript` against that file to produce request/response **types** at
+   `packages/api-client/src/generated/openapi-types.ts` (also gitignored — a build
+   artifact, not a file to keep in sync by hand, same as `prisma/generated/`).
+   `api-client:build` depends on this target, satisfying the letter of the original
+   "`api-client:build` depends on `api:build`" risk-#2 mitigation via an intermediate
+   target rather than the literal name — webpack-bundling `apps/api` first isn't
+   actually needed to introspect its routes, and skipping it keeps this step fast.
+3. The hand-written transport layer in `packages/api-client` (`HttpClient`: fetch
+   wrapper, auth-refresh interceptor with retry-once-on-401, Problem Details error
+   unwrapping) is typed against **`packages/validation`'s existing Zod-inferred types**
+   (`RegisterInput`, `AuthResponse`, etc.), not step 2's generated ones — both describe
+   the same shapes since the OpenAPI doc is itself derived from those same Zod schemas
+   via `nestjs-zod`, so typing the client against the generated copy a second time would
+   duplicate types for zero benefit (`web`/`mobile` already depend on
+   `packages/validation` directly per §6's package table). The generated types still
+   earn their keep as a compile-time contract check instead
+   (`packages/api-client/src/lib/openapi-contract.spec.ts`): if `apps/api` ever stops
+   serving a route this client wraps, that file fails to typecheck.
 4. Both `web` and `mobile` import only from `packages/api-client` — no app makes a raw
    `fetch` call to the API directly, which keeps auth-refresh and error handling
-   consistent everywhere.
+   consistent everywhere. One namespace per resource exists so far: `apiClient.auth.*`
+   (register/login/logout/session) — more are added as the endpoints they wrap land.
 
 ## 16. Health & OpenAPI (implemented Milestone 4)
 

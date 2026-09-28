@@ -6,16 +6,17 @@
 
 import 'dotenv/config';
 
-import { Logger, VersioningType } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
-import { cleanupOpenApiDoc } from 'nestjs-zod';
 
 import { apiEnvSchema, loadEnv } from '@instagram-clone/config';
 
 import { AppModule } from './app/app.module';
+import { configureApp } from './app/configure-app';
+import { buildOpenApiDocument } from './openapi-document';
 
 async function bootstrap() {
   // Fail fast on a misconfigured environment rather than starting the
@@ -37,30 +38,16 @@ async function bootstrap() {
 
   // Every route is versioned from the start (see docs/API.md §1) so a future
   // v2 is additive rather than a breaking refactor of existing routes.
-  app.enableVersioning({ type: VersioningType.URI, defaultVersion: '1' });
-  app.setGlobalPrefix('api');
+  configureApp(app);
 
   // OpenAPI, generated from the same Zod-derived DTOs the global
-  // ZodValidationPipe validates against (docs/ARCHITECTURE.md §5.2).
-  // `cleanupOpenApiDoc` is required by nestjs-zod to get correct output —
-  // without it, Zod-derived schemas render incorrectly in the document.
-  // The interactive UI is dev/test-only; the raw JSON (served at
-  // `/api/docs-json` by SwaggerModule's own default) is what Milestone 6's
-  // `packages/api-client` codegen will consume — see docs/ARCHITECTURE.md
-  // risk #2. A dedicated `nx run api:openapi`-style target that writes this
-  // to a file as a true build artifact (rather than an HTTP endpoint) is
-  // deferred to that milestone, once its actual consumption contract exists.
-  const openApiDocument = cleanupOpenApiDoc(
-    SwaggerModule.createDocument(
-      app,
-      new DocumentBuilder()
-        .setTitle('Instagram Clone API')
-        .setDescription('See docs/API.md for the full, authoritative contract.')
-        .setVersion('1')
-        .addBearerAuth()
-        .build(),
-    ),
-  );
+  // ZodValidationPipe validates against (docs/ARCHITECTURE.md §5.2). The
+  // interactive UI is dev/test-only; the raw JSON is also served at
+  // `/api/docs-json` by SwaggerModule's own default. `packages/api-client`'s
+  // codegen (Milestone 6) reads a static `apps/api/openapi.json` instead,
+  // produced by `nx run api:generate-openapi` (see `generate-openapi.ts`),
+  // which builds this exact same document without booting an HTTP listener.
+  const openApiDocument = buildOpenApiDocument(app);
   if (env.NODE_ENV !== 'production') {
     SwaggerModule.setup('api/docs', app, openApiDocument);
   }
