@@ -113,15 +113,24 @@ Password policy (`passwordSchema`): 8–128 characters, no mandated character cl
 following NIST SP 800-63B guidance that complexity rules push users toward predictable
 substitutions without meaningfully improving guessability; length is what matters.
 
-## 4. Users & Profiles
+## 4. Users & Profiles (`GET`/`PATCH /me` implemented Milestone 8)
 
 | Method & path                | Auth     | Notes                                                                                                            |
 | ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
 | `GET /users/:username`       | optional | Public profile: bio, avatar, post/follower/following counts, `isFollowedByMe` (only computed when authenticated) |
-| `GET /users/:username/posts` | optional | Paginated post grid for that user                                                                                |
+| `GET /users/:username/posts` | optional | Paginated post grid for that user — **always an empty page until Milestone 11** (`Post` doesn't exist yet)       |
 | `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                      |
-| `PATCH /me/avatar`           | required | Body `{ mediaId }` — must reference the caller's own `READY` `AVATAR`-purpose media                              |
-| `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families                                  |
+| `PATCH /me/avatar`           | required | Body `{ mediaId }` — must reference the caller's own `READY` `AVATAR`-purpose media — **Milestone 9**            |
+| `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **Milestone 19**               |
+
+`GET /users/:username`'s `avatarUrl` is always `null` (`Media`/avatars land Milestone 9) and `postsCount`/`followersCount`/`followingCount` are always `0` (`Post`/`Follow`
+land Milestones 10–11) — the response schema (`PublicProfileResponseSchema`,
+`packages/validation`) already has the shape those milestones will fill in, so this
+isn't a breaking change later. `isFollowedByMe` is `null` for an unauthenticated
+viewer, `false` for an authenticated one (never `true` yet — no `Follow` table to make
+it true). Auth is genuinely optional here (`OptionalAuthGuard`,
+`apps/api/src/modules/auth/`): a missing/invalid token is never rejected, just treated
+as an anonymous viewer.
 
 ## 5. Follows
 
@@ -250,8 +259,12 @@ WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
    serving a route this client wraps, that file fails to typecheck.
 4. Both `web` and `mobile` import only from `packages/api-client` — no app makes a raw
    `fetch` call to the API directly, which keeps auth-refresh and error handling
-   consistent everywhere. One namespace per resource exists so far: `apiClient.auth.*`
-   (register/login/logout/session) — more are added as the endpoints they wrap land.
+   consistent everywhere. One namespace per resource: `apiClient.auth.*`
+   (register/login/logout/session, Milestone 5) and `apiClient.users.*`
+   (getProfile/getPosts/updateProfile, Milestone 8) exist so far — more are added as
+   the endpoints they wrap land. `getProfile`/`getPosts` use a third `HttpClient` call
+   shape, `optionallyAuthorizedRequest` (attaches a token if one exists, never
+   requires one), mirroring the API's own `OptionalAuthGuard`.
 
 ## 16. Health & OpenAPI (implemented Milestone 4)
 

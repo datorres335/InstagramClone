@@ -224,7 +224,10 @@ large-file proxy.
   `AuthModule` (custom JWT guard, `argon2id` hashing, refresh rotation with reuse
   detection — see §7) and `ThrottlerModule` (`@nestjs/throttler`, **in-memory**
   storage, not Redis — see the Milestone 5 deviation in `docs/PROGRESS.md`) are
-  implemented as of Milestone 5. A global
+  implemented as of Milestone 5. `UsersModule` (`GET /users/:username`,
+  `GET /users/:username/posts`, `PATCH /me`) is implemented as of Milestone 8 — the
+  first domain module besides `auth` to exist, and the first to import `AuthModule`
+  for its guards rather than define its own (see §7's `OptionalAuthGuard` note). A global
   `HttpExceptionFilter` (`apps/api/src/common/filters`) producing RFC 7807 Problem
   Details, and a global `ZodValidationPipe` (via `nestjs-zod`, registered through
   `APP_PIPE`) so every DTO is validated against a schema imported from
@@ -347,6 +350,17 @@ transport layer — see the risk register for what happens if this pipeline brea
   `{ sub, tokenVersion }` plus the standard `iat`/`exp` claims; `tokenVersion` is checked
   against the `User` row on every request so bumping it (e.g. after a password change)
   invalidates all of that user's outstanding access tokens without an allowlist.
+- **Optional auth** (`OptionalAuthGuard`, implemented Milestone 8): for routes that
+  behave differently when authenticated but don't require it (`GET /users/:username`
+  — `docs/API.md` §4) — shares `JwtAuthGuard`'s own token-verification logic
+  (`resolve-authenticated-user.ts`) but never rejects the request; a missing or
+  invalid token just means an anonymous viewer. `AuthModule` exports both guards for
+  other domain modules to `@UseGuards()` with — exporting the guard classes alone
+  wasn't enough for this to work cross-module: Nest constructs a guard fresh in the
+  _consuming_ module's injector, so `JwtModule` (which both guards depend on for
+  `JwtService`) had to be exported from `AuthModule` too, not just the guards
+  themselves. First surfaced, and fixed, when `UsersModule` became the first module
+  besides `auth` to use either guard.
 - **Refresh token**: opaque, high-entropy random string (not a JWT — nothing to decode,
   so a leaked DB doesn't hand out a forgeable format), sent to the client once, and
   stored **hashed** (e.g. SHA-256, since it's already high-entropy — no need for a slow

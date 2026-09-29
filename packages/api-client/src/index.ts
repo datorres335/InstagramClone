@@ -3,3 +3,4 @@ export * from './lib/api-error';
 export * from './lib/auth-client';
 export * from './lib/http-client';
 export * from './lib/token-storage';
+export * from './lib/users-client';

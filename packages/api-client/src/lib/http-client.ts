@@ -81,6 +81,29 @@ export class HttpClient {
     }
   }
 
+  /**
+   * For routes that behave differently when authenticated but don't require
+   * it (`GET /users/:username`, docs/API.md §4 — mirrors the API's own
+   * `OptionalAuthGuard`): attaches a valid access token if a session exists,
+   * proceeds without one otherwise. Never throws `NotAuthenticatedError`.
+   * No retry-on-401 (unlike `authorizedRequest`) — an optionally-authed
+   * route never rejects for auth reasons, so a 401 here would mean
+   * something else is wrong and should surface as-is.
+   */
+  async optionallyAuthorizedRequest<TResponse, TBody = undefined>(
+    method: string,
+    path: string,
+    body?: TBody,
+  ): Promise<TResponse> {
+    let accessToken: string | undefined;
+    try {
+      accessToken = await this.ensureAccessToken();
+    } catch (error) {
+      if (!(error instanceof NotAuthenticatedError)) throw error;
+    }
+    return this.send<TResponse, TBody>(method, path, { body, accessToken });
+  }
+
   /** Mints a fresh access token from the stored refresh token and persists the result. */
   async refresh(): Promise<string> {
     const stored = await this.storage.read();

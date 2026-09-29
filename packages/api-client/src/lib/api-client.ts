@@ -1,8 +1,10 @@
 import { type AuthClient, createAuthClient } from './auth-client';
 import { HttpClient, type HttpClientConfig } from './http-client';
+import { createUsersClient, type UsersClient } from './users-client';
 
 export interface ApiClient {
   auth: AuthClient;
+  users: UsersClient;
 }
 
 /**
@@ -19,5 +21,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
   const http = new HttpClient(config);
   return {
     auth: createAuthClient(http),
+    users: createUsersClient(http),
   };
 }

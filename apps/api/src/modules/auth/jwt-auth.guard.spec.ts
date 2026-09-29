@@ -27,7 +27,7 @@ describe('JwtAuthGuard', () => {
     const { context } = createContext();
 
     await expect(guard.canActivate(context)).rejects.toThrow(
-      'Missing bearer token.',
+      'Invalid or expired access token.',
     );
   });
 
@@ -36,7 +36,7 @@ describe('JwtAuthGuard', () => {
     const { context } = createContext({ authorization: 'Basic something' });
 
     await expect(guard.canActivate(context)).rejects.toThrow(
-      'Missing bearer token.',
+      'Invalid or expired access token.',
     );
   });
 

@@ -1,4 +1,5 @@
 import { redirect } from 'next/navigation';
+import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { logoutAction } from './actions';
@@ -19,6 +20,7 @@ export default async function HomePage() {
   return (
     <main>
       <h1>Welcome, {user.username}</h1>
+      <Link href={`/${user.username}`}>View profile</Link>
       <form action={logoutAction}>
         <button type="submit">Log out</button>
       </form>

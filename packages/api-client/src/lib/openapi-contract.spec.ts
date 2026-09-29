@@ -17,6 +17,9 @@ type _LoginRoute = paths['/api/v1/auth/login']['post'];
 type _RefreshRoute = paths['/api/v1/auth/refresh']['post'];
 type _LogoutRoute = paths['/api/v1/auth/logout']['post'];
 type _SessionRoute = paths['/api/v1/auth/session']['get'];
+type _ProfileRoute = paths['/api/v1/users/{username}']['get'];
+type _UserPostsRoute = paths['/api/v1/users/{username}/posts']['get'];
+type _UpdateProfileRoute = paths['/api/v1/me']['patch'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

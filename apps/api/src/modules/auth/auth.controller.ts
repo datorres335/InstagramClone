@@ -33,7 +33,7 @@ import {
   setRefreshCookie,
 } from './refresh-cookie';
 import { extractRequestMeta } from './request-meta';
-import { toUserResponse } from './user-response.mapper';
+import { toUserResponse } from '../../common/mappers/user-response.mapper';
 
 /**
  * `/auth/*` — docs/API.md §3. Every route here is versioned/prefixed

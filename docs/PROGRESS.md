@@ -8,8 +8,8 @@ It should be updated after every completed milestone or meaningful development s
 
 ## Current Status
 
-**Phase:** Infrastructure
-**Current Milestone:** Milestone 7 — Mobile Bootstrap + Auth UI
+**Phase:** Core Features
+**Current Milestone:** Milestone 8 — User Profiles
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -32,13 +32,20 @@ storage-adapter-agnostic transport layer (`HttpClient`/`AuthClient`) with a real
 auth-refresh-and-retry interceptor. `apps/web` has its first real pages — register,
 login, and a minimal authenticated `/home` shell — built as Server Components/Actions
 calling `api-client`, with its own httpOnly session cookie and a `proxy.ts` that keeps
-it fresh (Milestone 6). `apps/mobile` now has the same treatment: register, login, and
-a minimal authenticated tab shell, backed by an `expo-secure-store` `TokenStorage`
+it fresh (Milestone 6). `apps/mobile` has the same treatment: register, login, and a
+minimal authenticated tab shell, backed by an `expo-secure-store` `TokenStorage`
 adapter that proved out the storage-adapter abstraction on its second, structurally
 different implementation with zero changes to the shared transport (Milestone 7). The
 three seed users (`alice`/`bob`/`carol`, Milestone 2) can now log in through either real
-UI, not just `curl`. No other product feature endpoints or pages exist yet
-(posts/follows/feed/etc.) — those start with Milestone 8.
+UI, not just `curl`. Milestone 8 is `apps/api`'s second domain module and this repo's
+first genuine _product_ feature (everything before it was infrastructure or auth):
+`UsersModule` implements `GET /users/:username` (public, optionally-authenticated
+profile view), `GET /users/:username/posts` (always empty until Milestone 11), and
+`PATCH /me` (edit own profile) — with real profile-view and edit-profile screens on
+both `web` and `mobile`, and a new `OptionalAuthGuard` (docs/ARCHITECTURE.md §7) proven
+out as the first thing besides `JwtAuthGuard` that other domain modules import from
+`AuthModule`. No Follow/Post/Media features exist yet — profile counts and avatars are
+honest, schema-stable stubs until Milestones 9–11 land them for real.
 
 ---
 
@@ -305,13 +312,80 @@ prisma-client` (a new tsconfig path alias, `tsconfig.base.json`), wired to
 - [x] Manually verified the built web export actually boots (headless Chromium against
       `expo start --web`'s real dev server and a real running `api`): confirmed
       `expo-secure-store` has no web implementation at runtime (`getValueWithKeyAsync is
-    not a function`) — expected, not a bug, since `apps/mobile`'s supported targets
+not a function`) — expected, not a bug, since `apps/mobile`'s supported targets
       are iOS/Android only (`docs/ARCHITECTURE.md` §5.3); `apps/web` is the real,
       already-working web surface. iOS/Android bundling itself was confirmed via
       `nx run mobile:build`'s successful Hermes bytecode output for both platforms —
       an actual device/simulator run is outside what this environment can do
 - [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
       projects) against the live Dockerized Postgres
+
+### Milestone 8 — User Profiles
+
+- [x] `apps/api/src/modules/auth/resolve-authenticated-user.ts` — extracted the
+      shared verify-token-and-look-up-user logic behind both `JwtAuthGuard` (rejects
+      on failure) and the new `OptionalAuthGuard` (proceeds either way), so the two
+      can't silently drift on what "a valid token" means
+- [x] `OptionalAuthGuard` + `@OptionalCurrentUser()` (`apps/api/src/modules/auth/`) —
+      for routes that behave differently when authenticated but don't require it;
+      never throws. `AuthModule` now exports `JwtModule` itself alongside both guards
+      — exporting only the guard classes wasn't enough for cross-module reuse to work
+      (see Bugs Found below)
+- [x] `packages/validation`'s `src/lib/profile.ts` — `publicProfileResponseSchema`
+      (the wider public-profile shape `docs/API.md` §3's own note already promised:
+      avatar/counts/`isFollowedByMe`, never `email`), `updateProfileInputSchema` (a
+      real PATCH shape — every field optional and independently nullable, so `null`
+      clears a field and `undefined`/omitted leaves it untouched), and
+      `userPostsResponseSchema` (`data: z.array(z.never())` — honest at the type
+      level that this endpoint can only ever return an empty page today)
+- [x] `packages/validation`'s `src/lib/pagination.ts` — `paginationQuerySchema`
+      (`cursor`/`limit`, defaults/max matching `docs/API.md` §1), the first
+      genuinely shared pagination schema, ready for every future list endpoint
+- [x] `apps/api/src/modules/users/` — `UsersModule` (`UsersController` for
+      `/users/*`, `MeController` for `/me/*`, split because they're different
+      resource bases per `docs/API.md` §2 even though both live in this module),
+      `UsersService`, DTOs, and a `profile-response.mapper.ts` mirroring auth's own
+      `user-response.mapper.ts` (moved to `common/mappers/` this milestone, now that
+      two domain modules share it)
+- [x] All three endpoints wired: `GET /users/:username` (public profile, optional
+      auth), `GET /users/:username/posts` (always an empty page — `Post` doesn't
+      exist until Milestone 11), `PATCH /me` (edit own profile, required auth)
+- [x] `packages/api-client`'s `users` namespace (`getProfile`/`getPosts`/
+      `updateProfile`) and a new `HttpClient.optionallyAuthorizedRequest` call shape
+      mirroring the API's own `OptionalAuthGuard` — attaches a token if one exists,
+      never requires one, no retry-on-401 (this class of route can't reject for auth
+      reasons, so a 401 here would mean something else is genuinely wrong)
+- [x] `apps/web`: `(app)/[username]/page.tsx` (profile view — the same page for your
+      own profile and anyone else's, differing only in whether "Edit profile"
+      renders) and `(app)/profile/edit/page.tsx` (a Server Action + `useActionState`
+      form, matching Milestone 6's auth-form pattern exactly); a "View profile" link
+      added to `/home`
+- [x] `apps/mobile`: `app/profile/[username].tsx` (the same shared-view-screen
+      pattern as web), `app/profile/edit.tsx`, and a new `(tabs)/profile` tab that's
+      just a thin `<Redirect>` to `/profile/<your own username>` — reusing the one
+      view screen for "my profile" instead of maintaining a second copy
+- [x] Deliberately **no Follow/Unfollow button** on the profile view yet, on either
+      platform — `docs/FEATURES.md` #3 describes one, but `Follow` doesn't exist
+      until Milestone 10; adding a button with nothing behind it would be dead UI,
+      not a feature
+- [x] 51 new/updated unit tests: 20 in `packages/validation` (`profile.spec.ts`,
+      `pagination.spec.ts`), 14 in `apps/api` (`optional-auth.guard.spec.ts`,
+      `users.service.spec.ts`), 7 in `packages/api-client` (`users-client.spec.ts`),
+      and 10 in `apps/mobile` (`profile-view.spec.tsx`, `profile-tab.spec.tsx`,
+      `profile-edit.spec.tsx`, under `src/__tests__/` — never `src/app/`, see Bugs
+      Found in Milestone 7's entry for why)
+- [x] 21 `apps/api-e2e` integration tests total (10 new in `users/profile.spec.ts`,
+      sharing 3 registered users across the whole file via `beforeAll` rather than
+      one per test — see Bugs Found below for why that matters) and 10
+      `apps/web-e2e` Playwright tests total (6 new in `profile.spec.ts`): viewing an
+      empty-state own profile, editing and persisting every field including a
+      full-page reload to prove it's server-side, pre-fill on a second visit,
+      redirect-to-login for an unauthenticated edit attempt, read-only viewing of
+      someone else's profile with no edit link, and a real `404` for an unknown
+      username
+- [x] Full validation passing: `nx run-many -t lint typecheck test build` (11/11
+      projects) + `api-e2e:e2e` (7/7 suites) + `web-e2e:e2e` (10/10, Chromium)
+      against the live Dockerized Postgres and real running `api`/`web` servers
 
 ---
 
@@ -550,6 +624,69 @@ pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
 
 Both background dev servers (`api:serve`, `mobile:serve`) confirmed stopped
 afterward — no stray processes left listening on 3000/8081.
+
+### Milestone 8
+
+```bash
+pnpm exec nx run validation:test --skip-nx-cache   # new profile.ts/pagination.ts schemas, 20 new tests, passing first try
+
+pnpm exec nx run api:build --skip-nx-cache && pnpm exec nx run api:lint --skip-nx-cache
+# ^ both clean on the first pass.
+
+# Manual verification against the real running server + live Dockerized Postgres
+# (same practice as every milestone since M5) — booted api:serve, then curl'd:
+# register → GET /users/:username unauthenticated (isFollowedByMe: null) →
+# GET /users/:username authenticated as a second user (isFollowedByMe: false) →
+# GET /users/:username/posts (empty) → GET /users/does-not-exist (404) →
+# PATCH /me with real values → unauthenticated PATCH /me (401) → PATCH /me with an
+# invalid websiteUrl (400) → PATCH /me with bio: null (clears it) → re-fetched the
+# public profile to confirm every change actually persisted, not just echoed back.
+# This is what caught the OptionalAuthGuard/JwtModule cross-module DI bug below —
+# the unit tests (which construct guards directly, bypassing Nest's module
+# resolution) couldn't have caught it; only booting the real app could.
+
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ first run: 3 of 7 suites failed with 429 (Too Many Requests) — the existing auth
+#   suites and the new 10-registration profile.spec.ts were all competing for the
+#   same 10-req/min-per-IP throttle on /auth/register (docs/API.md §1). Rewrote
+#   profile.spec.ts to share 3 users across the whole file via beforeAll instead of
+#   registering fresh per test (10 registrations → 3). 7/7 suites, 21/21 tests
+#   passing afterward, confirmed stable across two consecutive full runs.
+
+pnpm exec nx run web:build --skip-nx-cache   # new /[username] and /profile/edit routes both compiled as dynamic (ƒ) routes, as expected
+pnpm exec nx run-many -t lint test -p web,web-e2e --skip-nx-cache
+# ^ one lint error: an inline `import('@playwright/test').Page` type annotation in
+#   profile.spec.ts tripped @typescript-eslint/consistent-type-imports. Fixed with a
+#   top-level `import { type Page } from '@playwright/test'` instead.
+
+pnpm exec nx run api:serve --configuration=development   # backgrounded
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 10/10 passing on the first real run once the lint fix landed.
+
+pnpm exec nx run mobile:test --skip-nx-cache
+# ^ first run: 25/26 passing, one failure — a mocked `Link` component returning its
+#   children as a bare string (`({children}) => children`) instead of wrapping them
+#   in `<Text>`, so React Native Testing Library's `getByText` couldn't find "Edit
+#   profile" in the tree even though it was visibly there in the debug output. Fixed
+#   by wrapping the mock's return in `<Text>` (`jest.requireActual('react-native')`
+#   inside the mock factory, since `jest.mock()` factories can't close over
+#   top-of-file imports). 26/26 passing afterward.
+
+pnpm exec nx run mobile:lint --skip-nx-cache
+# ^ one warning: an eslint-disable comment for a rule that isn't configured in this
+#   project (`react/no-unstable-nested-components`) — removed the unnecessary directive.
+
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # 11/11 projects, whole workspace
+pnpm exec prettier --write "**/*.{ts,tsx,js,jsx,json,md,yml,yaml}"
+pnpm exec nx run-many -t lint typecheck test build --skip-nx-cache   # re-verified 11/11 clean after the formatting pass
+pnpm exec nx run api-e2e:e2e --skip-nx-cache        # re-verified 7/7 suites, 21/21 tests
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # re-verified 10/10
+```
+
+Both background dev servers (`api:serve`, `web:dev`) confirmed stopped afterward — no
+stray processes left listening on 3000/4200.
 
 ---
 
@@ -799,6 +936,54 @@ None of Milestone 7's changes touch `docs/DATABASE.md` or `docs/API.md` — no s
 or endpoint work; `docs/FEATURES.md` needed no changes for the same reason as
 Milestone 6.
 
+### Milestone 8
+
+- **`postsCount`/`followersCount`/`followingCount`/`avatarUrl` are hardcoded stubs
+  (`0`/`0`/`0`/`null`), not omitted from the response.** `docs/API.md` §4 already
+  specified these fields as part of `GET /users/:username`'s contract before this
+  milestone existed to implement it — `Post`/`Follow`/`Media` don't exist yet
+  (Milestones 9–11), so there's nothing real to compute. Shipping the honest-zero
+  values now, with the final response _shape_ already correct, avoids a breaking
+  API-contract change later when those tables land; the alternative (omitting the
+  fields until they're meaningful) would mean `apps/web`/`apps/mobile` need a second
+  round of changes just to add fields that were always going to exist. Each stub is
+  commented in place (`toPublicProfileResponse`) pointing at the milestone that
+  replaces it.
+- **`isFollowedByMe` is `null` for an anonymous viewer, `false` (not `null`) for an
+  authenticated one.** `docs/API.md` §4's original wording — "only computed when
+  authenticated" — was ambiguous about _how_ an unauthenticated response should
+  represent "not applicable" vs. "computed to be false." Resolved as: `null` means
+  "there was no viewer to compute this for," `false` means "computed, and it's
+  false" — semantically distinct, and a pattern later `*ByMe` fields (e.g. posts'
+  `isLikedByMe`) can follow rather than each re-deciding this ambiguity.
+- **No Follow/Unfollow button on the profile view, on either platform.**
+  `docs/FEATURES.md` #3 describes one ("viewing another user's profile shows a
+  Follow/Unfollow button"), but `Follow` doesn't exist until Milestone 10 — a button
+  with no endpoint behind it would be dead UI. `docs/FEATURES.md` itself wasn't
+  edited: it correctly describes the _complete_ feature, and Milestone 10 is where
+  the rest of it lands: this is a milestone-sequencing gap, not a wrong spec.
+- **`PATCH /me` is tested for "never touches another user's row," not "403 for a
+  non-owner update."** `docs/IMPLEMENTATION_PLAN.md` M8's test scope literally asks
+  for the latter, but `PATCH /me` has no `:username`/target parameter for a
+  non-owner to even attempt targeting someone else with — the caller is always
+  `req.user.id`, structurally. Redesigning the endpoint to take a target id just to
+  manufacture a 403 case would be strictly worse API design (a parameter whose only
+  valid value is "must equal the caller" adds an authorization check with nothing
+  real to check). Implemented the equivalent, meaningful property instead: one
+  user's update is proven to never affect another's row.
+- **`toUserResponse` moved from `apps/api/src/modules/auth/` to
+  `apps/api/src/common/mappers/`.** It's needed by `PATCH /me`'s response now, not
+  just auth's own endpoints — `common/` already holds the other cross-module
+  infrastructure (`HttpProblemException`, `HttpExceptionFilter`), so this is
+  consistent with the existing convention, not a new one.
+- **`AuthModule` now exports `JwtModule` itself, not just the guard classes.** See
+  the `OptionalAuthGuard` bug entry below — this is both a deviation from the
+  Milestone 5 comment claiming guard-class exports alone were sufficient, and the
+  fix for the bug that comment's assumption caused.
+
+None of Milestone 8's changes touch `docs/DATABASE.md` — no schema changes; `User`
+already had every column this milestone reads or writes.
+
 ---
 
 ## Bugs Found and Fixed
@@ -974,6 +1159,54 @@ module`. The inverse of bug #11 above: this time the **build** passed while
     the error message alone doesn't obviously point at "this platform isn't
     supported" without this context.
 
+### Milestone 8
+
+19. **Exporting `JwtAuthGuard`/`OptionalAuthGuard` from `AuthModule` wasn't enough
+    for `UsersModule` to use them.** `nx run api:serve` crashed on startup:
+    `UnknownDependenciesException: Nest can't resolve dependencies of the
+OptionalAuthGuard (?, PrismaService)... JwtService... is available in the
+UsersModule module`. `PrismaService` resolved fine (`PrismaModule` is
+    `@Global()`); `JwtService` didn't, because Nest constructs a guard referenced via
+    `@UseGuards(SomeClass)` fresh, scoped to the _consuming_ module's injector — not
+    by reusing the already-built singleton from wherever it was originally
+    `provider`-registered. Milestone 5's own comment ("exported so those modules
+    don't need to re-import JwtModule") assumed the opposite and was never actually
+    exercised cross-module until this milestone. Fixed by also exporting the
+    already-configured `JwtModule` instance from `AuthModule` (`docs/ARCHITECTURE.md`
+    §7 now documents this explicitly). Caught by the manual curl walkthrough against
+    the real server, not by any unit test — the guards' own unit tests construct them
+    directly (`new OptionalAuthGuard(jwt, prisma)`), which never exercises Nest's
+    module-resolution graph at all. Worth remembering: **a guard/interceptor/pipe
+    class being `exports`-ed from its module is not sufficient proof it works from a
+    different module** — only actually booting the app (or an integration test that
+    does) proves that.
+20. **`apps/api-e2e`'s registration budget is a shared, whole-suite resource, not a
+    per-file one.** Adding `users/profile.spec.ts` (originally 10 fresh
+    `POST /auth/register` calls, one per test) pushed the _combined_ total across
+    all `api-e2e` spec files over the 10-req/min-per-IP throttle on `/auth/register`
+    (`docs/API.md` §1) — Jest runs test files in parallel by default, so multiple
+    files' registration bursts land in the same 60-second window regardless of file
+    boundaries. Not fixed by loosening the throttle (a real, deliberate
+    anti-credential-stuffing control from Milestone 5 — weakening it for test
+    convenience wasn't judged worth the trade-off) or by serializing Jest workers
+    (the whole suite finishes in ~1.5s regardless, well within one throttle window
+    either way) — fixed by sharing 3 registered users across the whole file via
+    `beforeAll` instead of registering fresh per test. Worth remembering for every
+    future milestone that adds `api-e2e` tests needing a fresh account: **register
+    the minimum number of users a file's tests actually need to stay independent,
+    not one per `it()` by default** — this budget only gets tighter as more test
+    files accumulate over the project's remaining milestones.
+21. **A mocked `Link` component returning bare text broke `getByText` in
+    React Native Testing Library**, even though the text was visibly present in the
+    rendered debug tree. `Link: ({children}) => children` returns a raw string as
+    `View`'s child, bypassing `<Text>` — `getByText` specifically queries `Text`
+    host-component nodes, not arbitrary text anywhere in the tree, and RN's real
+    renderer would have rejected this at runtime anyway ("Text strings must be
+    rendered within a `<Text>` component"). Fixed by wrapping the mock's return in
+    `<Text>` (sourced via `jest.requireActual('react-native')` inside the mock
+    factory, since `jest.mock()` factories are hoisted above top-of-file imports and
+    can't close over them).
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -1052,6 +1285,22 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   behavior (Keychain/Keystore prompts, permission handling) remains unverified
   beyond what the mocked unit tests assert. Worth a real device/simulator pass before
   treating mobile auth as production-ready.
+- **`apps/api-e2e`'s `/auth/register` throttle budget (10/min/IP) is shared across
+  the whole suite, not per file** (Milestone 8, bug #20 above) — every future
+  milestone that adds `api-e2e` tests needing fresh accounts should register the
+  minimum it actually needs (shared fixtures via `beforeAll`, not one per test) or
+  this will resurface, worse, as more test files accumulate. Not fixed at the
+  throttle-configuration level on purpose — see the Milestone 8 deviations entry for
+  why loosening it wasn't judged worth the trade-off.
+- **`profile.postsCount`/`followersCount`/`followingCount`/`avatarUrl` are hardcoded
+  stubs** (`0`/`0`/`0`/`null`) until `Post`/`Follow`/`Media` exist (Milestones 9–11).
+  The response _shape_ is already final (`docs/API.md` §4, the Milestone 8 deviation
+  above) — only the values inside `toPublicProfileResponse`
+  (`apps/api/src/modules/users/`) need to change when those land, not the schema or
+  any client code.
+- **No Follow/Unfollow button on the profile view yet** (either platform) —
+  `docs/FEATURES.md` #3 describes one; it lands with Milestone 10's `Follow` table.
+  Not an oversight, see the Milestone 8 deviations entry.
 
 ---
 
@@ -1073,8 +1322,12 @@ them, and removing the shared packages' `"type"` field) are likewise each decide
 recorded above with rationale, not left open. Milestone 7's three deviations
 (one combined SecureStore item instead of two, a module-level `apiClient` singleton
 instead of web's per-request pattern, and deliberately not fixing the unsupported web
-export target) are equally settled, not open questions. Everything else recorded in
-this file is
+export target) are equally settled, not open questions. Milestone 8's six deviations
+(hardcoded stub counts/avatar instead of omitting the fields, `isFollowedByMe`'s
+`null`-vs-`false` split, no Follow button yet, the `PATCH /me` non-owner test
+reinterpretation, moving `toUserResponse` to `common/`, and exporting `JwtModule`
+from `AuthModule`) are likewise each decided and recorded above with rationale, not
+left open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -1084,37 +1337,47 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 8 — User Profiles (read + edit, no photo upload yet)**: per
-`docs/IMPLEMENTATION_PLAN.md`, the first _product_ feature endpoints — everything
-through Milestone 7 has been infrastructure and auth. `User` (Milestone 2) and the
-auth plumbing (Milestones 5–7) already carry everything this milestone needs; no new
-tables.
+**Milestone 9 — Media Pipeline**: per `docs/IMPLEMENTATION_PLAN.md`, the first
+milestone touching new infrastructure since Milestone 5 — S3 (MinIO locally, already
+running in `docker-compose.yml` since Milestone 0), Redis + BullMQ (Redis also
+already running; this is the **first** milestone that actually uses it), and `sharp`
+for image processing. Meaningfully larger in scope than Milestones 6–8 — budget for
+it accordingly rather than assuming it's another thin CRUD module.
 
-1. API: `GET /users/:username` (public profile — `docs/API.md` §4's wider schema than
-   auth's own `UserResponseSchema`: avatar, follower counts, `isFollowedByMe` — the
-   last two are placeholder-shaped until Follows (Milestone 10) is real, so decide
-   explicitly whether they're `0`/`false` stubs or omitted; don't guess silently),
-   `GET /users/:username/posts` (returns empty — `Post` doesn't exist until Milestone
-   11), `PATCH /me` (edit own profile: `fullName`/`bio`/`websiteUrl`/`isPrivate`).
-2. Web + mobile: a profile view screen and an edit-profile form. `isPrivate`'s toggle
-   is present but inert — it has no follow-approval effect yet (`docs/FEATURES.md`
-   #17 cites its actual scope note under Feature 5, Follow/Unfollow — re-read that
-   before wiring the toggle up) — don't build private-post visibility gating this
-   milestone, that's not what "inert" is asking for.
-3. **Tests**: integration tests for profile read/update, including that a
-   private-field update attempted by a non-owner is rejected (`403`); Playwright
-   (`apps/web-e2e`) covers viewing and editing your own profile, extending the
-   register→login pattern Milestone 6 already established rather than inventing a new
-   one.
+1. Schema: a new `Media` migration (`docs/DATABASE.md` §3.3 —
+   `ownerId`/`purpose`/`status`/`storageKey`/`variants`(jsonb)/`width`/`height`/
+   `blurhash`/`byteSize`/`contentType`/`failureReason`) **plus** the `User.avatarMediaId`
+   nullable FK `docs/DATABASE.md` §3.1 explicitly deferred to this exact migration back
+   in Milestone 2 — don't forget it just because `User`'s own table already exists and
+   feels "done."
+2. API: `POST /media/presign` (validates size/type server-side before issuing a
+   presigned `PUT` URL — never trust client-declared limits), `POST /media/:id/complete`
+   (`HEAD`s the bucket to confirm the upload landed, then enqueues the variant-generation
+   job — doesn't process synchronously), `GET /media/:id` (poll status — `docs/API.md`
+   §6). `PATCH /me/avatar` (`docs/API.md` §4) wires the completed piece into
+   `UsersModule` from Milestone 8.
+3. A BullMQ processor (`docs/ARCHITECTURE.md` §8/risk #4 — in-process for the MVP, an
+   accepted, already-documented trade-off, not a new decision to make) generating
+   `thumbnail`/`feed` variants via `sharp` plus a blurhash, writing `Media.status` to
+   `READY` (or `FAILED` + `failureReason`).
+4. Web + mobile: a shared presign → direct-upload → poll-until-`READY` flow (platform
+   image-picker UI differs; the upload/poll logic shouldn't), wired into the profile
+   edit screens from Milestone 8 as an avatar "change photo" affordance (completes
+   `docs/FEATURES.md` #4).
+5. **Tests**: an integration test for the full presign→complete→(job completes)→`READY`
+   flow against the real MinIO/Redis already in Compose — not mocked, since the whole
+   point is proving the actual pipeline works; unit tests for the variant-generation
+   function in isolation (fixed input image → expected output dimensions).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 8 section,
-`docs/API.md` §4 (Users & Profiles) in full, and `docs/FEATURES.md` #17's exact
-wording on the private-account toggle's current scope. Worth noting going in: this is
-the first milestone since Auth to touch `apps/web` and `apps/mobile` together for a
-non-auth feature — `packages/api-client`'s `auth` namespace (Milestones 6–7) is the
-template for a new `users` namespace (`AuthClient`'s shape — typed against
-`packages/validation`, not the generated OpenAPI types, per the Milestone 6 deviation
-above — is the pattern to repeat, not reinvent). Also worth checking before designing
-the edit form: `PATCH /me` needs a guard requiring a valid access token
-(`JwtAuthGuard`, Milestone 5) — this is the first non-auth endpoint to need one, so
-it's the first real proof that guard generalizes past the one route it was built for.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 9 section,
+`docs/ARCHITECTURE.md` §8 (Media Storage Architecture) in full, and `docs/DATABASE.md`
+§3.3 (`Media`). Confirm the AWS SDK v3 S3 client + BullMQ/ioredis's current stable
+versions against their own docs before installing — same "framework moves fast"
+caution applied to `nestjs-zod`/`@nestjs/swagger`/`@nestjs/jwt` in earlier milestones,
+and none of these three has been installed yet. Also worth deciding explicitly (and
+documenting, not guessing) before writing the upload flow: whether `GET /media/:id`'s
+polling is genuinely polled by the client (setInterval-style) or whether Milestone 9 is
+where the code that will later matter for real-time features gets its first shape —
+`docs/ARCHITECTURE.md` §1 rules out WebSockets/SSE for the MVP entirely, so plain
+polling is almost certainly correct, but confirm against that section rather than
+assume.

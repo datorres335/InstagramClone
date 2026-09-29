@@ -7,6 +7,7 @@ import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { ConfigModule } from '../config/config.module';
 import { HealthModule } from '../health/health.module';
 import { AuthModule } from '../modules/auth/auth.module';
+import { UsersModule } from '../modules/users/users.module';
 import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
@@ -15,6 +16,7 @@ import { PrismaModule } from '../prisma/prisma.module';
     PrismaModule,
     HealthModule,
     AuthModule,
+    UsersModule,
     // A modest workspace-wide default (docs/API.md §1); AuthController
     // overrides this with stricter per-route limits via @Throttle().
     // In-memory storage (the default) — not the Redis-backed storage
