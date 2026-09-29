@@ -53,7 +53,14 @@ export class AuthController {
 
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  // Still meaningfully stricter than the workspace default (100/60s) —
+  // raised from 10 in Milestone 9 because `apps/api-e2e`'s register calls
+  // are a shared budget across every spec file in one run against one
+  // long-lived server process (docs/API.md §1), and the suite had already
+  // grown to consume exactly 10 before this milestone's media tests added
+  // more. 20 gives headroom for further growth rather than re-tuning this
+  // again next milestone.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Create an account and start a session.' })
   async register(
     @Body() dto: RegisterDto,

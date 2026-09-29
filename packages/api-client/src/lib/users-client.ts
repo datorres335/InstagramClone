@@ -1,4 +1,5 @@
 import type {
+  MediaResponse,
   PaginationQuery,
   PublicProfileResponse,
   UpdateProfileInput,
@@ -16,6 +17,8 @@ export interface UsersClient {
     query?: PaginationQuery,
   ): Promise<UserPostsResponse>;
   updateProfile(input: UpdateProfileInput): Promise<UserResponse>;
+  /** `PATCH /me/avatar` (docs/API.md §4) — `mediaId` must be the caller's own `READY` `AVATAR` media. */
+  updateAvatar(mediaId: string): Promise<MediaResponse>;
 }
 
 function buildQueryString(query?: PaginationQuery): string {
@@ -48,6 +51,14 @@ export function createUsersClient(http: HttpClient): UsersClient {
         'PATCH',
         '/me',
         input,
+      );
+    },
+
+    updateAvatar(mediaId) {
+      return http.authorizedRequest<MediaResponse, { mediaId: string }>(
+        'PATCH',
+        '/me/avatar',
+        { mediaId },
       );
     },
   };

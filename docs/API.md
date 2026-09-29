@@ -46,10 +46,13 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
   retried request is safe: `PUT` = ensure the relationship exists, `DELETE` = ensure it
   doesn't. Both return `204 No Content` whether or not the call changed state.
 - **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP) with
-  stricter per-route limits on `/auth/register`, `/auth/login`, `/auth/refresh`
-  (10 req/min/IP) to slow credential-stuffing/enumeration — implemented Milestone 5.
-  In-memory storage, not Redis (see the deviation in `docs/PROGRESS.md`): correct for
-  the single-process API this is today, revisit if `apps/api` is ever horizontally
+  stricter per-route limits on `/auth/login`, `/auth/refresh` (10 req/min/IP) and
+  `/auth/register` (20 req/min/IP, raised from 10 in Milestone 9 — `apps/api-e2e`'s
+  register calls are a shared per-run budget across every spec file against one
+  server process, and the suite outgrew 10 once the media pipeline tests were added)
+  to slow credential-stuffing/enumeration — implemented Milestone 5. In-memory
+  storage, not Redis (see the deviation in `docs/PROGRESS.md`): correct for the
+  single-process API this is today, revisit if `apps/api` is ever horizontally
   scaled.
 - **CORS**: allow-list of known web origins only; credentials (`Access-Control-Allow-
 Credentials: true`) enabled since the refresh cookie requires it.
@@ -115,16 +118,17 @@ substitutions without meaningfully improving guessability; length is what matter
 
 ## 4. Users & Profiles (`GET`/`PATCH /me` implemented Milestone 8)
 
-| Method & path                | Auth     | Notes                                                                                                            |
-| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
-| `GET /users/:username`       | optional | Public profile: bio, avatar, post/follower/following counts, `isFollowedByMe` (only computed when authenticated) |
-| `GET /users/:username/posts` | optional | Paginated post grid for that user — **always an empty page until Milestone 11** (`Post` doesn't exist yet)       |
-| `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                      |
-| `PATCH /me/avatar`           | required | Body `{ mediaId }` — must reference the caller's own `READY` `AVATAR`-purpose media — **Milestone 9**            |
-| `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **Milestone 19**               |
+| Method & path                | Auth     | Notes                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /users/:username`       | optional | Public profile: bio, avatar, post/follower/following counts, `isFollowedByMe` (only computed when authenticated)                                                                                                                                                                                                                                             |
+| `GET /users/:username/posts` | optional | Paginated post grid for that user — **always an empty page until Milestone 11** (`Post` doesn't exist yet)                                                                                                                                                                                                                                                   |
+| `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                                                                                                                                                                                                                                                                  |
+| `PATCH /me/avatar`           | required | Body `{ mediaId }` → `200` `MediaResponse` (§6) — must reference the caller's own `READY` `AVATAR`-purpose media (`403` if not the caller's own, `422 media-not-ready` — §14 — if wrong purpose or not `READY`). Returns the media resource, not `UserResponse`, since the latter deliberately never includes `avatarUrl` (§3) — **implemented Milestone 9** |
+| `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **Milestone 19**                                                                                                                                                                                                                                                           |
 
-`GET /users/:username`'s `avatarUrl` is always `null` (`Media`/avatars land Milestone 9) and `postsCount`/`followersCount`/`followingCount` are always `0` (`Post`/`Follow`
-land Milestones 10–11) — the response schema (`PublicProfileResponseSchema`,
+`GET /users/:username`'s `avatarUrl` resolves to a real URL once the user has a `READY`
+`AVATAR` media set (implemented Milestone 9); `postsCount`/`followersCount`/`followingCount`
+are still always `0` (`Post`/`Follow` land Milestones 10–11) — the response schema (`PublicProfileResponseSchema`,
 `packages/validation`) already has the shape those milestones will fill in, so this
 isn't a breaking change later. `isFollowedByMe` is `null` for an unauthenticated
 viewer, `false` for an authenticated one (never `true` yet — no `Follow` table to make
@@ -144,13 +148,15 @@ as an anonymous viewer.
 No approval/request step in the MVP even for `isPrivate` accounts — see
 `FEATURES.md` for the explicit scope decision and `DATABASE.md` §3.6.
 
-## 6. Media
+## 6. Media (implemented Milestone 9)
 
-| Method & path              | Auth     | Notes                                                                                                                                                                                                                    |
-| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `POST /media/presign`      | required | Body `{ purpose: 'AVATAR'\|'POST_IMAGE', contentType, byteSize }` → `{ mediaId, uploadUrl, expiresAt }`. Server enforces size/type limits (e.g. ≤ 8 MB, `image/jpeg`\|`image/png`\|`image/webp`) before issuing the URL. |
-| `POST /media/:id/complete` | required | Confirms the upload exists in the bucket, sets `status: PENDING → (queued for processing)`, enqueues the variant-generation job                                                                                          |
-| `GET /media/:id`           | required | Poll processing status: `{ status, variants? }` — used by clients to know when a just-uploaded image is ready to attach to a post                                                                                        |
+| Method & path              | Auth     | Notes                                                                                                                                                                                                                                                                                                                                                              |
+| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `POST /media/presign`      | required | Body `{ purpose: 'AVATAR'\|'POST_IMAGE', contentType, byteSize }` → `201` `{ mediaId, uploadUrl, expiresAt }`. Server enforces size/type limits (≤ 8 MB — `413 payload-too-large` if exceeded, §14 — `image/jpeg`\|`image/png`\|`image/webp`, `400` otherwise) before issuing the URL. Creates a `Media` row in `PENDING` status.                                  |
+| `POST /media/:id/complete` | required | `200` → `MediaResponse` (below). Confirms the upload exists in the bucket (`HEAD`), enqueues the variant-generation job. Idempotent: calling it again for an already-queued/processed media just returns its current state without re-enqueuing. `403` if `:id` isn't the caller's own media, `404` if it doesn't exist or the object was never actually uploaded. |
+| `GET /media/:id`           | required | `200` → `MediaResponse`. Poll processing status — used by clients to know when a just-uploaded image is ready to attach to a post or set as an avatar. `403`/`404` same as above.                                                                                                                                                                                  |
+
+`MediaResponse`: `{ id, purpose, status, variants, width, height, blurhash, failureReason, createdAt }`. `variants` is `null` until `status` is `READY`, then `{ thumbnail, feed }` — both resolved, publicly-fetchable URLs (`docs/ARCHITECTURE.md` §8 point 5), not storage keys. `width`/`height` describe the _original_ upload; `blurhash` is a placeholder string for progressive loading (not yet consumed by any client UI). `failureReason` is set only when `status` is `FAILED`.
 
 ## 7. Posts
 
@@ -257,14 +263,19 @@ WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
    earn their keep as a compile-time contract check instead
    (`packages/api-client/src/lib/openapi-contract.spec.ts`): if `apps/api` ever stops
    serving a route this client wraps, that file fails to typecheck.
-4. Both `web` and `mobile` import only from `packages/api-client` — no app makes a raw
-   `fetch` call to the API directly, which keeps auth-refresh and error handling
-   consistent everywhere. One namespace per resource: `apiClient.auth.*`
-   (register/login/logout/session, Milestone 5) and `apiClient.users.*`
-   (getProfile/getPosts/updateProfile, Milestone 8) exist so far — more are added as
-   the endpoints they wrap land. `getProfile`/`getPosts` use a third `HttpClient` call
-   shape, `optionallyAuthorizedRequest` (attaches a token if one exists, never
-   requires one), mirroring the API's own `OptionalAuthGuard`.
+4. Both `web` and `mobile` import only from `packages/api-client` for calls **to the
+   API** — no app makes a raw `fetch` call to an API route directly, which keeps
+   auth-refresh and error handling consistent everywhere. One namespace per resource:
+   `apiClient.auth.*` (register/login/logout/session, Milestone 5), `apiClient.users.*`
+   (getProfile/getPosts/updateProfile/updateAvatar, Milestones 8–9), and
+   `apiClient.media.*` (presign/complete/getById/waitUntilProcessed, Milestone 9) exist
+   so far — more are added as the endpoints they wrap land. `getProfile`/`getPosts` use
+   a third `HttpClient` call shape, `optionallyAuthorizedRequest` (attaches a token if
+   one exists, never requires one), mirroring the API's own `OptionalAuthGuard`. The one
+   deliberate exception to "no raw `fetch`": the actual direct-to-bucket upload
+   (`docs/ARCHITECTURE.md` §8 point 2, `MediaClient.uploadToPresignedUrl`) — that `PUT`
+   goes straight to the storage provider, never through the API, so it's not a call
+   "to the API" in the first place.
 
 ## 16. Health & OpenAPI (implemented Milestone 4)
 

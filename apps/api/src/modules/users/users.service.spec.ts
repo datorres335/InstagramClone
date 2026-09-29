@@ -13,6 +13,8 @@ const fakeUser = {
   isPrivate: false,
   tokenVersion: 0,
   emailVerifiedAt: null,
+  avatarMediaId: null,
+  avatarMedia: null,
   createdAt: new Date('2026-01-01T00:00:00.000Z'),
   updatedAt: new Date('2026-01-01T00:00:00.000Z'),
   deletedAt: null,
@@ -25,8 +27,12 @@ function createDeps() {
       update: jest.fn(),
     },
   };
-  const service = new UsersService(prisma as never);
-  return { service, prisma };
+  const mediaService = {
+    resolveAvatarUrl: jest.fn().mockReturnValue(null),
+    setAsAvatar: jest.fn(),
+  };
+  const service = new UsersService(prisma as never, mediaService as never);
+  return { service, prisma, mediaService };
 }
 
 describe('UsersService', () => {
@@ -39,6 +45,7 @@ describe('UsersService', () => {
 
       expect(prisma.user.findFirst).toHaveBeenCalledWith({
         where: { username: 'alice', deletedAt: null },
+        include: { avatarMedia: true },
       });
       expect(result).toEqual({
         id: 'user-1',
@@ -63,6 +70,22 @@ describe('UsersService', () => {
       const result = await service.getPublicProfile('alice', 'viewer-1');
 
       expect(result.isFollowedByMe).toBe(false);
+    });
+
+    it("resolves avatarUrl via MediaService from the user's avatarMedia relation", async () => {
+      const { service, prisma, mediaService } = createDeps();
+      const userWithAvatar = { ...fakeUser, avatarMedia: { id: 'media-1' } };
+      prisma.user.findFirst.mockResolvedValue(userWithAvatar);
+      mediaService.resolveAvatarUrl.mockReturnValue(
+        'http://minio.test/media-1/thumbnail.webp',
+      );
+
+      const result = await service.getPublicProfile('alice', undefined);
+
+      expect(mediaService.resolveAvatarUrl).toHaveBeenCalledWith(
+        userWithAvatar.avatarMedia,
+      );
+      expect(result.avatarUrl).toBe('http://minio.test/media-1/thumbnail.webp');
     });
 
     it('never leaks email in the public profile', async () => {
@@ -152,6 +175,32 @@ describe('UsersService', () => {
         id: 'user-1',
         email: 'alice@example.com',
       });
+    });
+  });
+
+  describe('setAvatar', () => {
+    it('delegates ownership/status validation and the User update to MediaService', async () => {
+      const { service, mediaService } = createDeps();
+      const mediaResponse = {
+        id: 'media-1',
+        purpose: 'AVATAR',
+        status: 'READY',
+        variants: { thumbnail: 'http://x/t.webp', feed: 'http://x/f.webp' },
+        width: 300,
+        height: 300,
+        blurhash: 'hash',
+        failureReason: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      };
+      mediaService.setAsAvatar.mockResolvedValue(mediaResponse);
+
+      const result = await service.setAvatar('user-1', 'media-1');
+
+      expect(mediaService.setAsAvatar).toHaveBeenCalledWith(
+        'user-1',
+        'media-1',
+      );
+      expect(result).toEqual(mediaResponse);
     });
   });
 });

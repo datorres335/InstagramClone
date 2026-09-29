@@ -42,11 +42,17 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `User`, `GET /users/:username`, `GET /users/:username/posts`
   (`API.md` §4).
 
-### 4. Profile Photos
+### 4. Profile Photos (implemented Milestone 9)
 
 - Upload/replace avatar via the presign → direct-upload → complete flow shared with post
-  images (`ARCHITECTURE.md` §8); square crop performed client-side before upload (both
-  web and mobile), server still stores/serves a generated set of variants.
+  images (`ARCHITECTURE.md` §8); server still stores/serves a generated set of variants
+  (`thumbnail`/`feed` + a `blurhash` placeholder).
+- **Client-side square crop, as implemented**: mobile uses `expo-image-picker`'s native
+  cropper (`allowsEditing`/`aspect: [1,1]`) before upload. Web has no comparable free
+  native crop widget, so it skips a client-side crop step entirely and relies on the
+  server's `sharp` center-crop (always applied to `thumbnail`, regardless of platform) to
+  guarantee a square result either way — a deliberate scoping decision (see
+  `docs/PROGRESS.md`), not a gap.
 - **Out of scope**: animated avatars, avatar frames/badges.
 - Entities/endpoints: `Media` with `purpose: AVATAR` (`DATABASE.md` §3.3),
   `POST /media/presign`, `POST /media/:id/complete`, `PATCH /me/avatar` (`API.md` §6, §4).

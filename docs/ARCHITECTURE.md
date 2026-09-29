@@ -414,7 +414,7 @@ transport layer — see the risk register for what happens if this pipeline brea
 - Password hashing: `argon2id` (via `argon2` package), not bcrypt, for new-project
   defaults in 2026.
 
-## 8. Media Storage Architecture
+## 8. Media Storage Architecture (implemented Milestone 9)
 
 1. Client requests an upload slot: `POST /api/v1/media/presign` with declared
    `contentType`, `byteSize`, and `purpose` (`AVATAR` | `POST_IMAGE`). The API validates
@@ -439,6 +439,38 @@ Locally, MinIO (S3 API-compatible) runs in Docker Compose with a bucket bootstra
 startup; production targets any S3-compatible provider (AWS S3, Cloudflare R2,
 Backblaze B2) by swapping endpoint/credentials in `packages/config` — the application
 code only ever uses the AWS SDK v3 S3 client with a configurable `endpoint`.
+
+**As implemented:**
+
+- The BullMQ processor (`MediaProcessor`, `apps/api/src/modules/media/media.processor.ts`)
+  runs **in-process** within `apps/api`, registered inside `MediaModule` itself, exactly
+  as this section's risk #4 anticipated — not a separate worker app. The variant-generation
+  step itself (`generateMediaVariants`, `media-variants.ts`) is a pure function with no
+  S3/Prisma/BullMQ knowledge, kept separate specifically so it can be unit-tested against a
+  fixed input buffer in isolation from the processor's I/O.
+- `thumbnail` (150×150) is always a square center-crop (`sharp`'s `fit: 'cover'`) —
+  applied uniformly regardless of `purpose`, not just for `AVATAR`. This is also what makes
+  the web upload path safe without a custom crop widget: `docs/FEATURES.md` #4's
+  "square crop performed client-side" only has a real implementation on mobile
+  (`expo-image-picker`'s native `allowsEditing`/`aspect: [1,1]`); web has no comparable
+  free native cropper, so it relies entirely on this server-side crop instead. `feed`
+  (capped at 1080px on its longest side, `fit: 'inside'`, never upscaled) preserves the
+  original aspect ratio.
+- A `blurhash` (via the `blurhash` package, computed from a 32×32 raw-pixel downsample) is
+  generated alongside the variants and stored on `Media.blurhash`, per `docs/DATABASE.md`
+  §3.3 — not yet consumed by any client UI (no progressive-loading placeholder exists
+  until posts/feed rendering lands).
+- `@nestjs/bullmq` (the official Nest wrapper, not raw `bullmq` driven directly) is used
+  for the queue/worker — consistent with this codebase's established preference for
+  official `@nestjs/*` wrappers (`@nestjs/throttler`, `@nestjs/jwt`, `@nestjs/swagger`).
+  Pinned to `12.0.0`, the latest version — unlike those other packages, `@nestjs/bullmq`'s
+  `12.x` peer range already includes `@nestjs/core ^11.0.0`, so (unusually) the latest
+  version needed no downgrade to stay on this repo's Nest 11 line.
+- `PATCH /me/avatar`'s response is the `Media` resource itself (`MediaResponse`), not
+  `UserResponse` — `docs/API.md` §3 explicitly documents `UserResponseSchema` as never
+  including `avatarUrl`, so returning the just-set media (with its resolved variant URLs)
+  avoids widening that schema's documented contract while still giving the client
+  everything it needs to update its UI immediately.
 
 ## 9. Local Development Environment
 
@@ -494,7 +526,7 @@ Risks are ordered roughly by how early they need a decision, not by severity.
 | 1   | **Prisma 7 is a major version with real breaking changes** (TypeScript query engine, mandatory driver adapters or explicit config in `prisma.config.ts`, explicit generated-client `output` path) relative to the Prisma most tutorials still show.                                         | Getting the schema/config wrong blocks every other milestone, since everything depends on `prisma`.                               | **Resolved (Milestone 0/2).** Pinned to `prisma`/`@prisma/client`/`@prisma/adapter-pg` 7.10.0 (the actual latest stable — npm's `latest` dist-tag pointed at an 8.0 RC). `prisma.config.ts` + the `@prisma/adapter-pg` driver adapter confirmed working against Postgres in Milestone 0; the first real migration (`User`/`RefreshToken`, including a hand-added `CREATE EXTENSION citext`) applied cleanly in Milestone 2 using `@default(uuid(7))` for ids. See `docs/PROGRESS.md`.                                                        |
 | 2   | **OpenAPI → `api-client` codegen pipeline is a build-order dependency**: `api-client`'s generated types require `api`'s `openapi.json`, which requires `api` to build/boot.                                                                                                                 | If this Nx `dependsOn` wiring is wrong, web/mobile silently build against stale types.                                            | **Resolved (Milestone 6).** `api-client:generate-types` → `api:generate-openapi` → `prisma:generate` is wired via Nx `dependsOn`, verified by an actual Nx run rather than just declared. Both artifacts are gitignored and regenerated fresh every run (like `prisma/generated/`) rather than committed-and-diff-checked — simpler, and can't go stale by definition, so the originally-proposed CI staleness check is unnecessary rather than deferred. See `docs/API.md` §15.                                                             |
 | 3   | **Feed fan-out strategy (read-time vs write-time)**: MVP uses fan-out-on-read (`WHERE authorId IN (following)`), which is simple and correct but degrades for accounts following thousands of people or being followed by many (hot-row contention on write, expensive `IN` scans on read). | Directly affects `Post`/`Follow` indexing decisions in `DATABASE.md` and the feed endpoint's query plan.                          | Documented explicitly as an MVP-scoped decision (see `DATABASE.md` §Scaling); revisit with a precomputed feed table + cache only if/when real usage demands it — do not build it speculatively.                                                                                                                                                                                                                                                                                                                                              |
-| 4   | **Background job execution model**: image-variant generation and notification fan-out run in-process inside `apps/api` for the MVP.                                                                                                                                                         | Simplicity now vs. a scaling ceiling later (CPU-bound `sharp` work competing with the HTTP event loop process).                   | Explicitly scoped to MVP; the job processors are written as isolated Nest providers so extracting them into a standalone `apps/worker` later is a move, not a rewrite. Flagged again in Milestone 10/17.                                                                                                                                                                                                                                                                                                                                     |
+| 4   | **Background job execution model**: image-variant generation and notification fan-out run in-process inside `apps/api` for the MVP.                                                                                                                                                         | Simplicity now vs. a scaling ceiling later (CPU-bound `sharp` work competing with the HTTP event loop process).                   | **First instance implemented (Milestone 9).** `MediaProcessor` (`@nestjs/bullmq`'s `@Processor`/`WorkerHost`) runs in-process inside `MediaModule`, confirming the pattern works: an isolated Nest provider, extractable into a standalone `apps/worker` later as a move, not a rewrite. Notification fan-out (the second anticipated consumer) still pending — Milestone 10/17.                                                                                                                                                             |
 | 5   | **Auth token storage differs by platform** (cookie on web vs SecureStore on mobile), so `api-client`'s refresh logic must be storage-adapter-agnostic from the start.                                                                                                                       | Getting this wrong means duplicating auth logic later instead of sharing it.                                                      | **Resolved (Milestone 6 web, Milestone 7 mobile).** `api-client`'s `TokenStorage` interface (`read`/`write`/`clear`) now has two real, structurally different implementations — `apps/web/src/lib/web-token-storage.ts` (per-request, cookie-backed, access token cached to work around a Next-specific write restriction — see §7) and `apps/mobile/src/lib/mobile-token-storage.ts` (a module-level singleton, SecureStore-backed, no such restriction) — with zero changes to `HttpClient`/`AuthClient` for either. The abstraction held. |
 | 6   | **Case-insensitive uniqueness for username/email** needs either Postgres `citext` or normalized lowercase columns + unique index.                                                                                                                                                           | Wrong choice now means a painful migration once real user data exists.                                                            | **Resolved (Milestone 2).** `citext` extension enabled in migration `0001_init_user_auth`; `User.username`/`User.email` are `@db.Citext`. See `docs/DATABASE.md` §1/§5.                                                                                                                                                                                                                                                                                                                                                                      |
 | 7   | **Search relevance** (`pg_trgm` similarity search) is adequate for MVP scale but not a real search engine.                                                                                                                                                                                  | Sets expectations for the "User search"/"Explore" features so nobody assumes Elasticsearch-quality ranking.                       | Documented as an explicit MVP limitation in `FEATURES.md`; revisit with a dedicated search service only post-MVP.                                                                                                                                                                                                                                                                                                                                                                                                                            |

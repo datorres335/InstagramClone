@@ -66,13 +66,18 @@ User ──1:N──▶ Notification (recipient); Notification ──N:1──�
 | tokenVersion                      | int         | not null, default `0` — bumped to invalidate all outstanding access tokens (e.g. on password change)                          |
 | emailVerifiedAt                   | timestamptz | nullable — column reserved; MVP does not require verification before login (see `FEATURES.md`)                                |
 | createdAt / updatedAt / deletedAt | timestamptz | see conventions                                                                                                               |
+| avatarMediaId                     | uuid        | nullable, **unique**, FK → `Media.id`, `onDelete: SetNull` — implemented Milestone 9, see below                               |
 
-**Deviation from the original design (Milestone 2):** `avatarMediaId` is _not_ part of
-the Milestone 2 migration. It's a nullable FK to `Media`, and `Media` doesn't exist
-until Milestone 9 (media pipeline) — adding the column now would mean either a fake/no-op
-FK or a dangling nullable column with no relation for seven milestones. It will be added
-in the same migration that creates `Media`, alongside the actual relation and index. No
-other milestone needs it (auth, profile viewing/editing don't touch avatars).
+**Deviation from the original design (Milestone 2, resolved Milestone 9):**
+`avatarMediaId` was not part of the Milestone 2 migration — it's a nullable FK to
+`Media`, and `Media` didn't exist until Milestone 9 (media pipeline); adding the column
+earlier would have meant either a fake/no-op FK or a dangling nullable column with no
+relation for seven milestones. It landed in the same migration that created `Media`
+(`prisma/migrations/..._0002_media`), alongside the actual relation and index, exactly
+as originally planned. One addition beyond the original plan: the column is `@unique`
+(a true one-to-one with `Media`) — a given media row being at most one user's avatar is
+a real invariant, not an incidental constraint, and Prisma's schema DSL requires a
+unique column on the defining side for a one-to-one relation to be expressible at all.
 
 Indexes: unique(`username`), unique(`email`), index(`deletedAt`). **Deviation:** this is
 a plain B-tree index, not the partial index (`WHERE deletedAt IS NULL`) originally
@@ -102,7 +107,7 @@ Backs the rotating-refresh-token auth design in `ARCHITECTURE.md` §7.
 Indexes: unique(`tokenHash`), index(`userId`, `familyId`), index(`expiresAt`) (for a
 periodic cleanup job removing long-expired rows).
 
-### 3.3 `Media`
+### 3.3 `Media` (implemented Milestone 9)
 
 A single generic asset table for **both** avatars and post images, rather than separate
 `Avatar`/`PostImage` tables — an avatar and a post image go through the identical

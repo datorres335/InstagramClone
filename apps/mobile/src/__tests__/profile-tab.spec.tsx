@@ -18,14 +18,12 @@ describe('ProfileTabScreen', () => {
   });
 
   it('shows a loading indicator while the session check is in flight', () => {
-    jest
-      .mocked(useAuth)
-      .mockReturnValue({
-        user: null,
-        loading: true,
-        setUser: jest.fn(),
-        logout: jest.fn(),
-      });
+    jest.mocked(useAuth).mockReturnValue({
+      user: null,
+      loading: true,
+      setUser: jest.fn(),
+      logout: jest.fn(),
+    });
 
     render(<ProfileTabScreen />);
 

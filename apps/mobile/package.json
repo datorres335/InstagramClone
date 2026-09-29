@@ -12,6 +12,7 @@
     "@testing-library/react-native": "*",
     "expo": "*",
     "expo-constants": "~56.0.26",
+    "expo-image-picker": "~56.0.25",
     "expo-linking": "~56.0.18",
     "expo-router": "~56.2.21",
     "expo-secure-store": "~56.0.4",

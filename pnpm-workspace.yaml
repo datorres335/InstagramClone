@@ -16,3 +16,9 @@ allowBuilds:
   # some class-validator/class-transformer-adjacent tooling) — denied, not
   # needed for functionality.
   '@scarf/scarf': false
+  # Native binary extension for msgpackr (bullmq/ioredis's serialization
+  # layer) — same category as sharp/argon2 above, needed for functionality.
+  msgpackr-extract: true
+minimumReleaseAgeExclude:
+  - '@aws-sdk/client-s3@3.1142.0'
+  - '@aws-sdk/s3-request-presigner@3.1142.0'

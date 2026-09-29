@@ -175,4 +175,43 @@ describe('UsersClient', () => {
       );
     });
   });
+
+  describe('updateAvatar', () => {
+    it('sends a PATCH /me/avatar with the mediaId and returns the media resource', async () => {
+      const mediaResponse = {
+        id: 'media-1',
+        purpose: 'AVATAR',
+        status: 'READY',
+        variants: {
+          thumbnail: 'http://minio.test/thumb.webp',
+          feed: 'http://minio.test/feed.webp',
+        },
+        width: 300,
+        height: 300,
+        blurhash: 'L6PZfSi_.AyE_3t7t7R**0o#DgR4',
+        failureReason: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      };
+      vi.mocked(fetch).mockResolvedValue(fakeResponse(200, mediaResponse));
+      const storage = createFakeTokenStorage({
+        accessToken: 'valid-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'refresh-token',
+      });
+      const client = createUsersClient(
+        new HttpClient({ baseUrl: 'http://api.test', storage }),
+      );
+
+      const result = await client.updateAvatar('media-1');
+
+      expect(result).toEqual(mediaResponse);
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/me/avatar',
+        expect.objectContaining({
+          method: 'PATCH',
+          body: JSON.stringify({ mediaId: 'media-1' }),
+        }),
+      );
+    });
+  });
 });

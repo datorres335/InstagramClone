@@ -4,6 +4,7 @@ import { useActionState } from 'react';
 
 import { initialAuthActionState } from '../../../../lib/auth-action-state';
 import { updateProfileAction } from './actions';
+import { AvatarUploader } from './avatar-uploader';
 
 interface EditProfileFormProps {
   initial: {
@@ -12,9 +13,13 @@ interface EditProfileFormProps {
     websiteUrl: string | null;
     isPrivate: boolean;
   };
+  currentAvatarUrl: string | null;
 }
 
-export function EditProfileForm({ initial }: EditProfileFormProps) {
+export function EditProfileForm({
+  initial,
+  currentAvatarUrl,
+}: EditProfileFormProps) {
   const [state, formAction, pending] = useActionState(
     updateProfileAction,
     initialAuthActionState,
@@ -22,6 +27,7 @@ export function EditProfileForm({ initial }: EditProfileFormProps) {
 
   return (
     <form action={formAction}>
+      <AvatarUploader currentAvatarUrl={currentAvatarUrl} />
       <div>
         <label htmlFor="fullName">Name</label>
         <input

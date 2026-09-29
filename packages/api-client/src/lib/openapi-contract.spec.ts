@@ -20,6 +20,10 @@ type _SessionRoute = paths['/api/v1/auth/session']['get'];
 type _ProfileRoute = paths['/api/v1/users/{username}']['get'];
 type _UserPostsRoute = paths['/api/v1/users/{username}/posts']['get'];
 type _UpdateProfileRoute = paths['/api/v1/me']['patch'];
+type _UpdateAvatarRoute = paths['/api/v1/me/avatar']['patch'];
+type _PresignMediaRoute = paths['/api/v1/media/presign']['post'];
+type _CompleteMediaRoute = paths['/api/v1/media/{id}/complete']['post'];
+type _GetMediaRoute = paths['/api/v1/media/{id}']['get'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

@@ -13,7 +13,7 @@ async function registerUser() {
 }
 
 // Registers a handful of users once for the whole file rather than per test
-// — `POST /auth/register` is throttled to 10/min/IP (docs/API.md §1), and
+// — `POST /auth/register` is throttled to 20/min/IP (docs/API.md §1), and
 // this file runs alongside the other auth e2e suites against the same
 // server, so registration calls are a shared, limited budget across the
 // entire api-e2e run, not just within this file.

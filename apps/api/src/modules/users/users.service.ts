@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 
 import type {
+  MediaResponse,
   PublicProfileResponse,
   UpdateProfileInput,
   UserPostsResponse,
@@ -9,18 +10,28 @@ import type {
 
 import { toUserResponse } from '../../common/mappers/user-response.mapper';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MediaService } from '../media/media.service';
 import { toPublicProfileResponse } from './profile-response.mapper';
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mediaService: MediaService,
+  ) {}
 
   async getPublicProfile(
     username: string,
     viewerId: string | undefined,
   ): Promise<PublicProfileResponse> {
     const user = await this.findActiveUserByUsername(username);
-    return toPublicProfileResponse(user, viewerId !== undefined);
+    const avatarUrl = this.mediaService.resolveAvatarUrl(user.avatarMedia);
+    return toPublicProfileResponse(user, viewerId !== undefined, avatarUrl);
+  }
+
+  /** `PATCH /me/avatar` (docs/API.md §4) — validation/ownership lives in `MediaService`. */
+  async setAvatar(userId: string, mediaId: string): Promise<MediaResponse> {
+    return this.mediaService.setAsAvatar(userId, mediaId);
   }
 
   /**
@@ -57,6 +68,7 @@ export class UsersService {
     // worth centralizing once a third does (docs/PROGRESS.md).
     const user = await this.prisma.user.findFirst({
       where: { username, deletedAt: null },
+      include: { avatarMedia: true },
     });
     if (!user) {
       throw new NotFoundException('User not found.');

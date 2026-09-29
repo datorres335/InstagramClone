@@ -8,8 +8,14 @@ export const metadata = {
 };
 
 export default async function EditProfilePage() {
-  const user = await getApiClient().auth.session();
+  const apiClient = getApiClient();
+  const user = await apiClient.auth.session();
   if (!user) redirect('/login');
+
+  // `UserResponseSchema` (session) deliberately never includes `avatarUrl`
+  // (docs/API.md §3) — the public profile shape is the only place it's
+  // exposed, so it's fetched separately just to seed the uploader's preview.
+  const profile = await apiClient.users.getProfile(user.username);
 
   return (
     <main>
@@ -21,6 +27,7 @@ export default async function EditProfilePage() {
           websiteUrl: user.websiteUrl,
           isPrivate: user.isPrivate,
         }}
+        currentAvatarUrl={profile.avatarUrl}
       />
     </main>
   );

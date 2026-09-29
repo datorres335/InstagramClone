@@ -40,11 +40,23 @@ model User {
   // Reserved — MVP does not require verification before login.
   emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
 
+  // Deferred out of the Milestone 2 migration (docs/DATABASE.md §3.1's
+  // deviation note): `Media` didn't exist yet. Lands here, in the same
+  // migration that creates `Media` (Milestone 9). Nullable FK, not required
+  // — most users never set an avatar. `@unique` makes this a true one-to-one
+  // (a given media row can be at most one user's avatar — a real invariant,
+  // not incidental). `onDelete: SetNull` rather than `Cascade`: deleting the
+  // underlying `Media` row (not a flow this MVP implements, but defensively
+  // correct regardless) should clear the avatar, not the user.
+  avatarMediaId String? @unique @map("avatar_media_id") @db.Uuid
+  avatarMedia   Media?  @relation("UserAvatar", fields: [avatarMediaId], references: [id], onDelete: SetNull)
+
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
   refreshTokens RefreshToken[]
+  mediaOwned    Media[]        @relation("MediaOwner")
 
   @@index([deletedAt])
   @@map("users")
@@ -78,4 +90,57 @@ model RefreshToken {
   @@index([userId, familyId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+enum MediaPurpose {
+  AVATAR
+  POST_IMAGE
+}
+
+enum MediaStatus {
+  PENDING
+  READY
+  FAILED
+}
+
+/// A single generic asset table for both avatars and post images
+/// (docs/DATABASE.md §3.3) — both go through the identical
+/// presign → upload → process pipeline (docs/ARCHITECTURE.md §8).
+model Media {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  ownerId String @map("owner_id") @db.Uuid
+  owner   User   @relation("MediaOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  purpose MediaPurpose
+  status  MediaStatus  @default(PENDING)
+
+  // Original upload's object key. Never a full URL — resolved to one at
+  // response time (docs/ARCHITECTURE.md §8), so storage configuration can
+  // change without a data migration.
+  storageKey String @map("storage_key")
+
+  // e.g. `{ "thumbnail": "key...", "feed": "key..." }` — populated once
+  // `status` becomes `READY`. A fixed, code-defined key set, not
+  // independently queryable data, so a jsonb column (not a child table) is
+  // the right trade-off here.
+  variants Json?
+
+  width  Int?
+  height Int?
+
+  // Low-cost placeholder for progressive image loading.
+  blurhash String?
+
+  byteSize    Int    @map("byte_size")
+  contentType String @map("content_type")
+
+  failureReason String? @map("failure_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  avatarOfUser User? @relation("UserAvatar")
+
+  @@index([ownerId, status])
+  @@map("media")
 }

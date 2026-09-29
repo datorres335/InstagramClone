@@ -45,14 +45,12 @@ describe('ProfileScreen', () => {
 
   it('renders the profile once it loads', async () => {
     jest.mocked(apiClient.users.getProfile).mockResolvedValue(fakeProfile);
-    jest
-      .mocked(useAuth)
-      .mockReturnValue({
-        user: null,
-        loading: false,
-        setUser: jest.fn(),
-        logout: jest.fn(),
-      });
+    jest.mocked(useAuth).mockReturnValue({
+      user: null,
+      loading: false,
+      setUser: jest.fn(),
+      logout: jest.fn(),
+    });
 
     render(<ProfileScreen />);
 
@@ -100,14 +98,12 @@ describe('ProfileScreen', () => {
       .mockRejectedValue(
         new ApiError({ type: 'x', title: 'Not Found', status: 404 }),
       );
-    jest
-      .mocked(useAuth)
-      .mockReturnValue({
-        user: null,
-        loading: false,
-        setUser: jest.fn(),
-        logout: jest.fn(),
-      });
+    jest.mocked(useAuth).mockReturnValue({
+      user: null,
+      loading: false,
+      setUser: jest.fn(),
+      logout: jest.fn(),
+    });
 
     render(<ProfileScreen />);
 

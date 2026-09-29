@@ -2,10 +2,8 @@ import { useLocalSearchParams, Link } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
-import {
-  ApiError,
-  type PublicProfileResponse,
-} from '@instagram-clone/api-client';
+import { ApiError } from '@instagram-clone/api-client';
+import type { PublicProfileResponse } from '@instagram-clone/validation';
 
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
