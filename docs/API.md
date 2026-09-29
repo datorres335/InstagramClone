@@ -136,17 +136,30 @@ it true). Auth is genuinely optional here (`OptionalAuthGuard`,
 `apps/api/src/modules/auth/`): a missing/invalid token is never rejected, just treated
 as an anonymous viewer.
 
-## 5. Follows
+## 5. Follows (implemented Milestone 10)
 
-| Method & path                    | Auth     | Notes                                                         |
-| -------------------------------- | -------- | ------------------------------------------------------------- |
-| `PUT /users/:username/follow`    | required | Idempotent follow; `204`. `409` if attempting to follow self. |
-| `DELETE /users/:username/follow` | required | Idempotent unfollow; `204`                                    |
-| `GET /users/:username/followers` | optional | Paginated                                                     |
-| `GET /users/:username/following` | optional | Paginated                                                     |
+| Method & path                    | Auth     | Notes                                                                                                      |
+| -------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------- |
+| `PUT /users/:username/follow`    | required | Idempotent follow; `204`. `409 conflict` if attempting to follow self. `404` if `:username` doesn't exist. |
+| `DELETE /users/:username/follow` | required | Idempotent unfollow; `204` whether or not the edge existed. `404` if `:username` doesn't exist.            |
+| `GET /users/:username/followers` | optional | `200` → `FollowListResponse` (below), cursor-paginated (§1). `404` if `:username` doesn't exist.           |
+| `GET /users/:username/following` | optional | Same shape, the accounts `:username` follows.                                                              |
 
 No approval/request step in the MVP even for `isPrivate` accounts — see
 `FEATURES.md` for the explicit scope decision and `DATABASE.md` §3.6.
+
+`FollowListResponse`: `{ data: FollowListItem[], meta: { nextCursor } }`.
+`FollowListItem`: `{ id, username, fullName, avatarUrl, isFollowedByMe }` — deliberately
+narrower than `PublicProfileResponse` (no `bio`/`websiteUrl`/counts), matching
+docs/FEATURES.md #6's "avatar/username/full name... a follow/unfollow affordance
+inline." `isFollowedByMe` is computed relative to the _viewer_, not the list's subject
+— on your own followers/following list, your own row (if present) always shows `false`
+(a self-follow-state check, and self-follows are never possible), not an error; this is
+expected, not a bug (see docs/PROGRESS.md's Milestone 10 known issues).
+
+`GET /users/:username`'s `followersCount`/`followingCount`/`isFollowedByMe` (§4) are all
+real as of this milestone — the first fields on that response that were hardcoded stubs
+since Milestone 8 to become fully live before `Post` (Milestone 11) does.
 
 ## 6. Media (implemented Milestone 9)
 

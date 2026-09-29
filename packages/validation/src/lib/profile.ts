@@ -8,13 +8,13 @@ import { usernameSchema } from './user';
  * post/follower/following counts, and `isFollowedByMe`).
  *
  * `avatarUrl` resolves to a real URL once the user has a `READY` `AVATAR`
- * media set (Milestone 9); `postsCount`/`followersCount`/`followingCount`
- * are still always `0` — `Follow` (Milestone 10) and `Post` (Milestone 11)
- * don't exist yet. The schema describes the shape this endpoint will have
- * once those land too — declaring it now, rather than after, means
- * `apps/web`/`apps/mobile` don't need a breaking response-shape change later
- * for fields that were always part of the documented contract (`docs/API.md`
- * §4 predates this milestone).
+ * media set (Milestone 9); `followersCount`/`followingCount`/`isFollowedByMe`
+ * are real as of Milestone 10. Only `postsCount` is still always `0` —
+ * `Post` doesn't exist until Milestone 11. The schema described this full
+ * shape from Milestone 8 onward, before every field had something real
+ * behind it — declaring it up front meant `apps/web`/`apps/mobile` never
+ * needed a breaking response-shape change as each field landed for real
+ * (`docs/API.md` §4 predates Milestone 8).
  */
 export const publicProfileResponseSchema = z.object({
   id: z.uuid(),

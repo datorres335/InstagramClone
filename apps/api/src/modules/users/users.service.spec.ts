@@ -31,8 +31,18 @@ function createDeps() {
     resolveAvatarUrl: jest.fn().mockReturnValue(null),
     setAsAvatar: jest.fn(),
   };
-  const service = new UsersService(prisma as never, mediaService as never);
-  return { service, prisma, mediaService };
+  const followsService = {
+    getFollowCounts: jest
+      .fn()
+      .mockResolvedValue({ followers: 0, following: 0 }),
+    isFollowing: jest.fn().mockResolvedValue(false),
+  };
+  const service = new UsersService(
+    prisma as never,
+    mediaService as never,
+    followsService as never,
+  );
+  return { service, prisma, mediaService, followsService };
 }
 
 describe('UsersService', () => {
@@ -63,13 +73,43 @@ describe('UsersService', () => {
       });
     });
 
-    it('computes isFollowedByMe as false (not null) for an authenticated viewer', async () => {
-      const { service, prisma } = createDeps();
+    it('computes isFollowedByMe from FollowsService for an authenticated viewer', async () => {
+      const { service, prisma, followsService } = createDeps();
       prisma.user.findFirst.mockResolvedValue(fakeUser);
+      followsService.isFollowing.mockResolvedValue(true);
 
       const result = await service.getPublicProfile('alice', 'viewer-1');
 
-      expect(result.isFollowedByMe).toBe(false);
+      expect(followsService.isFollowing).toHaveBeenCalledWith(
+        'viewer-1',
+        'user-1',
+      );
+      expect(result.isFollowedByMe).toBe(true);
+    });
+
+    it('never calls FollowsService.isFollowing for an anonymous viewer', async () => {
+      const { service, prisma, followsService } = createDeps();
+      prisma.user.findFirst.mockResolvedValue(fakeUser);
+
+      const result = await service.getPublicProfile('alice', undefined);
+
+      expect(followsService.isFollowing).not.toHaveBeenCalled();
+      expect(result.isFollowedByMe).toBeNull();
+    });
+
+    it('reports real follower/following counts from FollowsService', async () => {
+      const { service, prisma, followsService } = createDeps();
+      prisma.user.findFirst.mockResolvedValue(fakeUser);
+      followsService.getFollowCounts.mockResolvedValue({
+        followers: 12,
+        following: 3,
+      });
+
+      const result = await service.getPublicProfile('alice', undefined);
+
+      expect(followsService.getFollowCounts).toHaveBeenCalledWith('user-1');
+      expect(result.followersCount).toBe(12);
+      expect(result.followingCount).toBe(3);
     });
 
     it("resolves avatarUrl via MediaService from the user's avatarMedia relation", async () => {

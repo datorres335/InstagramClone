@@ -10,6 +10,7 @@ import type {
 
 import { toUserResponse } from '../../common/mappers/user-response.mapper';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FollowsService } from '../follows/follows.service';
 import { MediaService } from '../media/media.service';
 import { toPublicProfileResponse } from './profile-response.mapper';
 
@@ -18,6 +19,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
+    private readonly followsService: FollowsService,
   ) {}
 
   async getPublicProfile(
@@ -26,7 +28,13 @@ export class UsersService {
   ): Promise<PublicProfileResponse> {
     const user = await this.findActiveUserByUsername(username);
     const avatarUrl = this.mediaService.resolveAvatarUrl(user.avatarMedia);
-    return toPublicProfileResponse(user, viewerId !== undefined, avatarUrl);
+    const [counts, isFollowedByMe] = await Promise.all([
+      this.followsService.getFollowCounts(user.id),
+      viewerId
+        ? this.followsService.isFollowing(viewerId, user.id)
+        : Promise.resolve(null),
+    ]);
+    return toPublicProfileResponse(user, avatarUrl, counts, isFollowedByMe);
   }
 
   /** `PATCH /me/avatar` (docs/API.md §4) — validation/ownership lives in `MediaService`. */

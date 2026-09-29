@@ -58,6 +58,11 @@ model User {
   refreshTokens RefreshToken[]
   mediaOwned    Media[]        @relation("MediaOwner")
 
+  // `following`: rows where this user is the follower (who I follow).
+  // `followers`: rows where this user is being followed (who follows me).
+  following Follow[] @relation("Follower")
+  followers Follow[] @relation("Following")
+
   @@index([deletedAt])
   @@map("users")
 }
@@ -143,4 +148,29 @@ model Media {
 
   @@index([ownerId, status])
   @@map("media")
+}
+
+/// Immediate, no-approval follow edge (docs/DATABASE.md §3.6, docs/FEATURES.md #5 —
+/// `User.isPrivate` exists but the MVP does not gate this behind a request/approval
+/// workflow). A composite PK naturally prevents duplicate follows; self-follows are
+/// rejected in `FollowsService`, not the schema — Prisma has no portable `@@check`
+/// constraint, so the equivalent `CHECK (follower_id <> following_id)` is added by
+/// hand to this model's migration SQL instead (see the migration file).
+model Follow {
+  followerId  String @map("follower_id") @db.Uuid
+  followingId String @map("following_id") @db.Uuid
+
+  // "Follower": the edge where this user is the one doing the following.
+  // "Following": the edge where this user is the one being followed.
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // The composite PK efficiently serves "who does X follow" (starts with
+  // followerId); the secondary index below serves "who follows X" (followers
+  // list) and follower-count aggregates — docs/DATABASE.md §3.6.
+  @@id([followerId, followingId])
+  @@index([followingId, followerId])
+  @@map("follows")
 }

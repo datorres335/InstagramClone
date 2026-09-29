@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 9 — Media Pipeline
+**Current Milestone:** Milestone 10 — Follow / Unfollow
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -53,8 +53,17 @@ polling, and `PATCH /me/avatar` wiring the finished piece into `UsersModule`. `G
 /users/:username`'s `avatarUrl` resolves for real now, no longer a hardcoded `null`.
 Both `web` and `mobile` gained a "change photo" affordance on their Milestone 8
 profile-edit screens, running the full presign→upload→poll→set-avatar flow against the
-real API. No Follow/Post features exist yet — profile counts stay honest, schema-stable
-stubs until Milestones 10–11 land them for real.
+real API. Milestone 10 adds `apps/api`'s third domain module, `FollowsModule`: a new
+`Follow` table (a self-referential many-to-many on `User`, composite PK, a hand-added
+`CHECK` constraint against self-follows), `PUT`/`DELETE /users/:username/follow`
+(idempotent either way), and `GET /users/:username/followers`/`following` — the
+**first real cursor-pagination implementation** in this codebase (`GET
+/users/:username/posts` since Milestone 8 always returns an empty page, so it never
+actually needed one). `PublicProfileResponse`'s `followersCount`/`followingCount`/
+`isFollowedByMe` are all real now, not hardcoded stubs. Both `web` and `mobile` gained
+a Follow/Unfollow button on profile views and new followers/following list
+screens with an inline follow/unfollow affordance per row. No Post/feed features exist
+yet — `postsCount` stays a stub until Milestone 11.
 
 ---
 
@@ -467,6 +476,81 @@ not a function`) — expected, not a bug, since `apps/mobile`'s supported target
       `api-e2e:e2e` (8/8 suites, 27/27 tests) + `web-e2e:e2e` (Chromium) against the
       live Dockerized Postgres/MinIO/Redis and real running `api`/`web` servers
 
+### Milestone 10 — Follow / Unfollow
+
+- [x] `prisma/schema.prisma` — `Follow` model (`docs/DATABASE.md` §3.6:
+      composite PK `(followerId, followingId)`, a secondary
+      `(followingId, followerId)` index for the followers-list/count direction,
+      `onDelete: Cascade` on both FKs) and the reverse `User.following`/
+      `User.followers` relations. The `followerId <> followingId` `CHECK`
+      constraint was hand-added to the migration SQL — Prisma's schema DSL has
+      no portable `@@check` attribute (same class of gap as Milestone 9's
+      media migration needing hand edits, different cause)
+- [x] `apps/api/src/common/pagination/cursor.ts` — `encodeCursor`/`decodeCursor`,
+      the **first real implementation** of the opaque base64
+      `(createdAt, id)`-pair cursor `docs/API.md` §1 has described since the
+      design phase (`GET /users/:username/posts`, Milestone 8, never needed one
+      — always an empty page). Deliberately just encode/decode, not a generic
+      Prisma `where`-clause builder — see the file's own doc comment for why
+- [x] `apps/api/src/modules/follows/` — `FollowsModule`/`FollowsController`/
+      `FollowsService`, `apps/api`'s third domain module. `follow`/`unfollow`
+      are idempotent (`upsert`/`deleteMany`); `getFollowers`/`getFollowing` do
+      real keyset pagination (`ORDER BY createdAt DESC, <other-id> DESC`,
+      `take: limit + 1` to detect a next page) with a single extra query per
+      page for the whole page's `isFollowedByMe`, not one per row
+- [x] Four endpoints wired: `PUT`/`DELETE /users/:username/follow` (self-follow
+      → `409`, nonexistent target → `404`), `GET /users/:username/followers`/
+      `following` (optional auth, `400` for a malformed cursor)
+- [x] `UsersService.getPublicProfile` now resolves real
+      `followersCount`/`followingCount`/`isFollowedByMe` via
+      `FollowsService.getFollowCounts`/`isFollowing` — `UsersModule` imports
+      `FollowsModule` (not the reverse), the same dependency shape
+      `MediaService`/`avatarUrl` established in Milestone 9
+- [x] `packages/validation`'s new `follow.ts` (`followListItemSchema`,
+      narrower than `PublicProfileResponse` — no `bio`/`websiteUrl`/counts, per
+      `docs/FEATURES.md` #6) and `packages/api-client`'s new `follows`
+      namespace (`follow`/`unfollow`/`getFollowers`/`getFollowing`).
+      `buildQueryString` (cursor/limit query-string serialization) extracted
+      out of `users-client.ts` into its own shared file — the second consumer
+      crossed this codebase's own "duplicate until a second real consumer
+      exists" threshold
+- [x] `apps/web`: a `FollowButton` client component (Server Actions for the
+      actual `PUT`/`DELETE`, `router.refresh()` after a successful toggle to
+      re-fetch the surrounding page's counts) on the profile view page, plus
+      new `[username]/followers/page.tsx` and `[username]/following/page.tsx`
+      list pages sharing a `FollowListItem` row component
+- [x] `apps/mobile`: the same Follow/Unfollow button directly on
+      `profile/[username].tsx` (no Server Action indirection needed — see
+      Milestone 9's equivalent note on `apiClient` being directly callable),
+      new flat `profile/followers.tsx`/`following.tsx` screens (reached via
+      `router.push` with `username` as a param, not nested under
+      `[username]/` — see Deviations below) sharing a
+      `components/follow-list-item.tsx` row component
+- [x] 25 new/updated unit tests: 8 `cursor.spec.ts` + `follows.service.spec.ts`
+      (19 across both) in `apps/api`, 6 `follows-client.spec.ts` +
+      `follow.spec.ts` in `packages/validation`/`packages/api-client`, plus
+      updated `profile-view.spec.tsx` (10 new follow/unfollow and
+      followers/following-navigation cases) and a new 6-test
+      `follow-lists.spec.tsx` in `apps/mobile`
+- [x] 11 new `apps/api-e2e` integration tests (`follows/follows.spec.ts`) —
+      against the real Dockerized Postgres, not mocked: follow/idempotent
+      repeat/404-on-nonexistent-target, self-follow `409`, unauthenticated
+      `401`, unfollow/idempotent repeat, real follower/following count
+      changes, a genuine keyset-paginated followers list (`limit=2` across 3
+      real followers, a real `nextCursor` consumed on the second page),
+      `isFollowedByMe` computed correctly for both an authenticated and an
+      anonymous viewer, `404`s for a nonexistent target's lists, and a `400`
+      for a malformed cursor
+- [x] 3 new `apps/web-e2e` Playwright tests (`follows.spec.ts`, Chromium) — a
+      real browser follow→count/button update→reload-persists→unfollow round
+      trip, confirming no follow button renders on your own profile, and the
+      followers list's inline button reflecting a real per-row viewer
+      relationship
+- [x] Full validation passing: `nx run-many -t lint test build` (11 projects) +
+      `api-e2e:e2e` (9/9 suites, 38/38 tests) + `web-e2e:e2e` (15/15,
+      Chromium) against the live Dockerized Postgres and real running
+      `api`/`web` servers
+
 ---
 
 ## Validation Performed
@@ -843,6 +927,96 @@ pnpm exec nx run api-e2e:e2e        # re-verified 8/8 suites, 27/27 tests
 Both background `api:serve` instances confirmed stopped afterward — no stray processes
 left listening on 3000.
 
+### Milestone 10
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding Follow
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  > prisma/migrations/20260929203726_0003_follow/migration.sql
+# ^ hand-added the CHECK constraint afterward (Prisma has no @@check attribute)
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d follows — composite PK, secondary
+# index, CHECK constraint, both FKs all matched the schema.prisma design exactly.
+
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json
+# ^ two `noUncheckedIndexedAccess` errors on `page[page.length - 1]` in
+#   FollowsService.toListResponse — fixed with `page.at(-1)` + a null guard.
+#   Clean afterward.
+
+pnpm exec nx run api:test --testPathPatterns="follows|cursor"   # 19/19, first
+# real run after the indexed-access fix — no other failures.
+pnpm exec nx run api:test --testPathPatterns=users
+# ^ 4 failures: UsersService's constructor gained a third dependency
+#   (FollowsService) and toPublicProfileResponse's signature changed — the
+#   existing spec's createDeps()/assertions predated both. Updated the mock
+#   and rewrote the "isFollowedByMe" test to assert the real computed value
+#   instead of a hardcoded false. 76/76 afterward.
+pnpm exec nx run api:lint   # clean
+pnpm exec nx run api:build  # webpack compiled successfully
+
+pnpm exec nx run api-client:generate-types
+# ^ confirms apps/api's module graph boots cleanly for OpenAPI introspection
+#   with FollowsController registered; all 3 new route shapes
+#   (/follow PUT+DELETE, /followers, /following) appeared in the generated
+#   openapi-types.ts on the first run.
+pnpm exec nx run api-client:test   # 40/40 (6 new follows-client.spec.ts cases)
+pnpm exec nx run api-client:lint   # clean
+pnpm exec nx run validation:test --skip-nx-cache   # 62/62 (6 new follow.spec.ts cases)
+
+pnpm exec nx run web:build
+# ^ Next build compiled + typechecked cleanly; new /[username]/followers and
+#   /[username]/following routes both registered as dynamic (ƒ).
+pnpm exec nx run web:lint
+# ^ one warning: an unnecessary eslint-disable comment for
+#   @next/next/no-img-element (that rule isn't actually configured in this
+#   project — same pre-existing, harmless condition Milestone 9's
+#   avatar-uploader.tsx already has). Removed the comment from my own new
+#   file; left the pre-existing one alone (out of this milestone's scope).
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.app.json   # clean
+pnpm exec nx run mobile:lint    # clean
+pnpm exec nx run mobile:test --testPathPatterns=profile-view
+# ^ 10/10 on the first run once the test file's apiClient/expo-router mocks
+#   were extended with follows.follow/unfollow and router.push.
+pnpm exec nx run mobile:test --testPathPatterns=follow-lists   # 6/6, first run
+pnpm exec nx run mobile:test   # 43/43, whole project
+pnpm exec nx run mobile:build  # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build   # 28/28 tasks, whole workspace
+
+pnpm exec nx run api:serve --configuration=development   # backgrounded
+pnpm exec nx run api-e2e:e2e --testPathPatterns=follows
+# ^ 11/11 passing on the first real run against the live Dockerized Postgres.
+pnpm exec nx run api-e2e:e2e   # 9/9 suites, 38/38 tests, whole api-e2e run
+
+pnpm exec nx run web-e2e:e2e --grep=follows -- --project=chromium
+# ^ first attempt: nx swallowed --grep when combined with a trailing
+#   `-- --project=chromium`, so all spec files ran (not just follows.spec.ts)
+#   and their combined /auth/register calls blew through the 20/min throttle
+#   — 7 failures, all registration timeouts, none in follows.spec.ts's own
+#   logic. Re-ran with just `--grep=follows` (no trailing args, matching the
+#   pattern that already worked for Milestone 9's avatar grep run): 3/3
+#   passing on Chromium.
+pnpm exec nx run web-e2e:e2e -- --project=chromium   # the whole suite together
+# ^ first run: 14/15 passed, one follows.spec.ts test failed the same way —
+#   this file alone registered 6 fresh accounts across its 3 tests, and
+#   running right after the previous grep-filtered invocation (which itself
+#   registered 6) left the combined count too close to the 20/min budget
+#   within the same window. Reduced the file's own registration need from 6
+#   to 4 (one shared `viewer` account registered once via `beforeAll` and
+#   re-logged-in per test — login has its own, separate, unshared throttle —
+#   `target`/`otherFollower` still registered fresh per test since their
+#   assertions depend on starting at zero followers). 15/15 passing
+#   afterward, confirmed on a clean run.
+
+pnpm exec prettier --write "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}"
+pnpm exec nx run-many -t lint test build   # re-verified 28/28 clean afterward
+```
+
+Both background `api:serve` instances confirmed stopped afterward — no stray processes
+left listening on 3000.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -1202,6 +1376,75 @@ responsibility, thumbnail cropping behavior) are resolved for real now; see
 `docs/ARCHITECTURE.md` §8's own "As implemented" addendum for the consolidated
 record.
 
+### Milestone 10
+
+- **`followerId <> followingId` is a hand-added `CHECK` constraint, not a
+  `@@check` in `schema.prisma`.** Prisma's schema DSL has no portable check-
+  constraint attribute (confirmed against current docs before assuming this —
+  see `docs/ARCHITECTURE.md` risk #9's "frameworks move fast" caution). Added
+  by hand to the migration SQL, same technique already established for
+  Milestone 9's media migration (different underlying gap: that one was a
+  non-interactive-environment CLI guard, this one is a genuine DSL
+  limitation). `FollowsService` also rejects self-follows at the application
+  layer for a clean `409` — the DB constraint is a backstop, not the primary
+  enforcement path, so a bug in the service layer can't silently corrupt data.
+- **The inline follow/unfollow button on a followers/following list renders
+  for any authenticated viewer, not gated to "only when it's your own
+  list."** `docs/FEATURES.md` #6's original wording ("when viewing your own
+  follower/following list") reads as a scope restriction, but
+  `isFollowedByMe` is already computed per row regardless of whose list is
+  being viewed — restricting the button to the viewer's own list would mean
+  deliberately not using data the API already returns, for no clear benefit.
+  Implemented as the more useful superset instead: any list, any
+  authenticated viewer. `docs/FEATURES.md` updated to describe this
+  as-implemented.
+- **`isFollowedByMe` on a list row is a self-check when the row happens to be
+  the viewer's own entry, and is therefore always `false` there** — e.g.
+  viewing your own followers list, your own name (if you somehow followed
+  yourself, which is impossible) would show "Follow," never "Unfollow." This
+  isn't a special case in the implementation; it falls out naturally from
+  "does the viewer follow this row's user," which is definitionally false for
+  a self-row. Not fixed with special-case logic — the literal, uniform
+  computation is more predictable than carving out an exception for one row.
+  Recorded here because it's a real, slightly-surprising-at-first-glance
+  behavior worth knowing about, not because it needs changing (also see Known
+  Issues below, and `docs/API.md` §5's note on the same point).
+- **Mobile's followers/following screens are flat routes
+  (`app/profile/followers.tsx`/`following.tsx`) reached via `router.push`
+  with `username` as a param, not nested under `app/profile/[username]/`.**
+  Converting the existing flat `profile/[username].tsx` file into a
+  `[username]/index.tsx` + `[username]/followers.tsx` directory structure
+  just for these two new screens was judged more churn than benefit for two
+  screens — Expo Router supports passing params to a flat route exactly as
+  well as reading them from a nested dynamic segment. Web's equivalent
+  (`apps/web`) uses genuinely nested `[username]/followers/page.tsx` instead,
+  since Next.js App Router has no equivalent friction — a directory
+  containing both `page.tsx` and a `followers/` subdirectory is its normal
+  idiom, not a restructure.
+- **`buildQueryString` extracted from `users-client.ts` into its own file**
+  (`packages/api-client/src/lib/build-query-string.ts`), reused by the new
+  `follows-client.ts`. The first genuinely shared piece of client transport
+  logic beyond `HttpClient` itself — this codebase's established threshold
+  ("duplicate until a second real consumer exists," applied consistently
+  since Milestone 5) was crossed by this milestone's `getFollowers`/
+  `getFollowing` needing the identical `?cursor=&limit=` serialization
+  `getPosts` already had.
+- **`/auth/register`'s `apps/web-e2e` register-call discipline tightened
+  further**: `follows.spec.ts` registers one shared `viewer` account once via
+  `beforeAll` and re-logs-in (a separate, much less constrained throttle) for
+  each test, rather than a fresh register per test. This is the web-e2e
+  equivalent of the `beforeAll`-shared-user technique `apps/api-e2e` adopted
+  in Milestone 8 (bug #20) and is the first time that discipline has been
+  applied on the Playwright side — worth reusing for every future
+  `apps/web-e2e` file that needs a persistent, reusable identity across
+  multiple tests within one file.
+
+None of Milestone 10's deviations touch `docs/ARCHITECTURE.md`'s core design; `Follow`
+matches `docs/DATABASE.md` §3.6 exactly (implementation-detail-level notes only — the
+mapped table name and the `CHECK` constraint's mechanism), and the cursor pagination
+implementation matches `docs/API.md` §1's design (opaque base64 `(createdAt, id)`
+pair) precisely, being its first real instance.
+
 ---
 
 ## Bugs Found and Fixed
@@ -1478,6 +1721,37 @@ UsersModule module`. `PrismaService` resolved fine (`PrismaModule` is
     milestone's scope, but leaving a known-broken import in place contradicts
     CLAUDE.md's "fix known issues" standing instruction once discovered.
 
+### Milestone 10
+
+27. **`noUncheckedIndexedAccess` rejected `page[page.length - 1]` in
+    `FollowsService.toListResponse`** (`Object is possibly 'undefined'`) —
+    TypeScript strict mode has no way to know that `page.length - 1` is a
+    valid index just because `page` came from a non-empty-checked slice.
+    Fixed with `page.at(-1)` plus an explicit truthiness check on the result,
+    which both satisfies the type checker and is more idiomatic than a
+    non-null assertion.
+28. **`UsersService`'s unit tests broke the moment `FollowsService` became its
+    third constructor dependency** — `users.service.spec.ts`'s `createDeps()`
+    predated this milestone and only mocked `prisma`/`mediaService`,
+    so `new UsersService(prisma, mediaService)` (missing the third arg)
+    left `this.followsService` `undefined`, throwing on the first call inside
+    `getPublicProfile`. Not a design flaw — exactly the kind of break a
+    constructor-signature change is supposed to surface immediately via a
+    failing test suite. Fixed by extending `createDeps()` and rewriting the
+    `isFollowedByMe` test to assert the real value `FollowsService.isFollowing`
+    returns instead of the old hardcoded-`false` expectation that predated
+    `Follow` existing.
+29. **Combining `--grep` and a trailing `-- --project=chromium` on the same
+    `nx run web-e2e:e2e` invocation silently dropped the `--grep` filter**,
+    running every spec file instead of just the targeted one — not a bug in
+    this milestone's code, but worth recording since it cost real debugging
+    time chasing what looked like a flaky follows-list test before the actual
+    cause (the whole suite's combined `/auth/register` calls exceeding the
+    throttle) became clear. `--grep=X` alone (no trailing `--` args) filters
+    correctly, as does `-- --project=chromium` alone; the two together do not
+    combine as expected in this Nx/Playwright wiring. Prefer running one or
+    the other, not both, until this is worth investigating further.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -1563,15 +1837,12 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   this will resurface, worse, as more test files accumulate. Not fixed at the
   throttle-configuration level on purpose — see the Milestone 8 deviations entry for
   why loosening it wasn't judged worth the trade-off.
-- **`profile.postsCount`/`followersCount`/`followingCount` are still hardcoded
-  stubs** (`0`) until `Post`/`Follow` exist (Milestones 10–11) — `avatarUrl` is real
-  now (Milestone 9). The response _shape_ is already final (`docs/API.md` §4, the
-  Milestone 8 deviation above) — only the values inside `toPublicProfileResponse`
-  (`apps/api/src/modules/users/`) need to change when those land, not the schema or
-  any client code.
-- **No Follow/Unfollow button on the profile view yet** (either platform) —
-  `docs/FEATURES.md` #3 describes one; it lands with Milestone 10's `Follow` table.
-  Not an oversight, see the Milestone 8 deviations entry.
+- **`profile.postsCount` is still a hardcoded stub** (`0`) until `Post` exists
+  (Milestone 11) — `avatarUrl` (Milestone 9) and `followersCount`/`followingCount`/
+  `isFollowedByMe` (Milestone 10) are all real now. The response _shape_ is already
+  final (`docs/API.md` §4, the Milestone 8 deviation above) — only the value inside
+  `toPublicProfileResponse` (`apps/api/src/modules/users/`) needs to change when
+  `Post` lands, not the schema or any client code.
 - **The public profile _view_ screens (web's `[username]/page.tsx`, mobile's
   `profile/[username].tsx`) don't render the avatar image at all** — only the
   Milestone 8/9 profile-_edit_ screens show it (that was this milestone's explicit
@@ -1591,6 +1862,26 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   headroom. The same discipline from Milestone 8's bug #20 still applies: register
   the minimum a file's tests actually need via shared `beforeAll` fixtures, not one
   per test.
+- **`isFollowedByMe` on a followers/following list row is always `false` when the
+  row happens to be the viewer's own entry** (Milestone 10, see Deviations above) —
+  a correct, literal consequence of "does the viewer follow this row's user," not a
+  bug, but worth knowing before assuming a "Follow" button next to your own name in
+  your own follower list means something is broken.
+- **No follower-count/following-count caching or denormalization** —
+  `FollowsService.getFollowCounts` runs two real `COUNT(*)` queries against
+  `follows` on every `GET /users/:username` call. Fine at MVP scale (`follows` has
+  two small, well-indexed columns per row); revisit with a denormalized counter
+  column (updated transactionally on follow/unfollow) only if profile-view query
+  latency actually becomes a problem under real load — not a speculative concern to
+  address now.
+- **Web E2E's follow/unfollow tests were only run against Chromium** — same
+  pre-existing Firefox/WebKit-not-installed environment limitation noted for
+  Milestone 8/9's web-e2e coverage, not new to this milestone.
+- **`apps/web-e2e` now has its own version of the shared-account discipline**
+  (Milestone 10's Deviations entry above: `follows.spec.ts` registers one `viewer`
+  once and re-logs-in per test) — worth applying the same pattern to any future
+  `apps/web-e2e` file whose tests need a persistent, reusable identity, the way
+  `apps/api-e2e` already does via `beforeAll`-shared users.
 
 ---
 
@@ -1622,7 +1913,12 @@ left open. Milestone 9's six deviations (`avatarMediaId`'s `@unique`, `PATCH
 server-side-crop-only vs. mobile's real client crop, `@nestjs/bullmq@12.0.0` needing
 no downgrade, uniform square-cropping of every `thumbnail` regardless of `purpose`,
 and the register-throttle increase) are equally each decided and recorded above with
-rationale, not left open. Everything else recorded in this file is
+rationale, not left open. Milestone 10's six deviations (the hand-added `CHECK`
+constraint, the inline follow button rendering for any viewer rather than only on the
+viewer's own list, the self-row `isFollowedByMe` computation, mobile's flat
+followers/following routes vs. web's nested ones, extracting `buildQueryString`, and
+web-e2e's shared-`viewer`-via-login discipline) are equally each decided and recorded
+above with rationale, not left open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -1632,44 +1928,51 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 10 — Follow / Unfollow**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s
-third domain module and the first genuinely new relational entity since `RefreshToken`
-(Milestone 2) — a self-referential many-to-many on `User`.
+**Milestone 11 — Posts (Create, Read, Delete)**: per `docs/IMPLEMENTATION_PLAN.md`,
+`apps/api`'s fourth domain module and the first to actually consume Milestone 9's
+media pipeline for something other than avatars — the first milestone where
+`Media.purpose: POST_IMAGE` rows get attached to anything. Also the first milestone
+rendering uploaded media through `next/image` (risk #9 in `docs/ARCHITECTURE.md` —
+confirm current Next 16 image-handling APIs before assuming this document's wording is
+still accurate).
 
-1. Schema: a new `Follow` migration (`docs/DATABASE.md` §3.6 — `followerId`/
-   `followeeId`, a composite unique constraint so following twice is a no-op not a
-   duplicate row, indexes supporting both "who follows me" and "who do I follow"
-   lookups efficiently).
-2. API (`docs/API.md` §5): `PUT`/`DELETE /users/:username/follow` (idempotent —
-   `PUT` ensures the relationship exists, `DELETE` ensures it doesn't, both `204`
-   regardless of prior state, per `docs/API.md` §1's idempotent-toggle convention
-   already established for this exact pattern), `GET /users/:username/followers`,
-   `GET /users/:username/following` (both cursor-paginated, `packages/validation`'s
-   existing `paginationQuerySchema` from Milestone 8). Self-follow rejected with
-   `409 conflict`.
-3. Fill in the real values `PublicProfileResponse.followersCount`/`followingCount`/
-   `isFollowedByMe` have been hardcoded stubs for since Milestone 8 — the schema
-   shape doesn't change, only `toPublicProfileResponse`'s implementation
-   (`apps/api/src/modules/users/`) does. `User.isPrivate` exists but is **not**
-   gated behind an approval workflow in the MVP (`docs/FEATURES.md` #5's explicit
-   scope decision) — following a private account behaves identically to a public
-   one; don't build a `FollowRequest` table or an approval step.
-4. Web + mobile: a Follow/Unfollow button on the profile view screens (both
-   platforms currently render neither — Milestone 8/9's deviations note this isn't
-   an oversight, just sequencing), and followers/following list screens.
-5. **Tests**: integration tests covering idempotency (following twice is a no-op
-   `204`, unfollowing twice likewise), self-follow rejection (`409`), and
-   follower/following count correctness after follow/unfollow; Playwright coverage
-   for following a user from their profile and seeing it reflected in a followers
-   list.
+1. Schema: `Post` and `PostMedia` (`docs/DATABASE.md` §3.4/§3.5) — a new migration.
+   `PostMedia` orders a post's images (array order matters, docs/API.md §7); confirm
+   the ordering-column design against `docs/DATABASE.md` §3.5 rather than assume a
+   plain integer `position` column is what's specified.
+2. API (`docs/API.md` §7): `POST /posts` (body `{ caption?, location?, mediaIds:
+string[] }`, 1–10 items — every `mediaId` must be the caller's own `READY`,
+   `POST_IMAGE`-purpose media, not already attached to another post; reuse the
+   ownership/status-check pattern `MediaService.setAsAvatar` already established for
+   avatars, docs/ARCHITECTURE.md §8 point 4), `GET /posts/:id` (optional auth —
+   author, ordered media, counts, `isLikedByMe`/`isSavedByMe` — both `false`/`null`
+   stubs until Milestones 13/15 land `Like`/`SavedPost`, same stub-now-fill-later
+   pattern `PublicProfileResponse` used from Milestone 8 through this one),
+   `DELETE /posts/:id` (author-only soft delete, `403` for a non-author attempt —
+   this is the first endpoint that actually needs that check, unlike `PATCH /me`'s
+   Milestone 8 workaround).
+3. Web + mobile: a create-post flow reusing Milestone 9's presign→upload→poll flow
+   for multiple images (`MediaClient.waitUntilProcessed`/`uploadToPresignedUrl`
+   already handle one image at a time — decide explicitly whether to parallelize
+   multi-image uploads or await them sequentially, and document the choice rather
+   than default silently), caption/location inputs, a post detail view, and the
+   profile grid actually showing real posts (`GET /users/:username/posts`, stubbed
+   empty since Milestone 8, `docs/PROGRESS.md`'s Milestone 8 entry).
+4. **Tests**: integration tests for multi-image post creation, including the
+   media-must-be-`READY`-and-owned-by-caller validation and the 1–10 image bound
+   (both boundaries: 0 images and 11 images should both fail) — against the real
+   MinIO/Redis pipeline, not mocked, matching Milestone 9's own testing discipline;
+   Playwright covers creating a post with 2+ images and seeing it on the profile
+   grid.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 10 section,
-`docs/DATABASE.md` §3.6 (`Follow`), and `docs/API.md` §5 in full. Also worth deciding
-explicitly before writing the schema: whether the composite unique constraint on
-`(followerId, followeeId)` is expressed as a `@@unique` (simple, matches this
-project's existing convention for e.g. `RefreshToken.tokenHash`) or something more
-elaborate — there's no obvious reason to deviate from the simple approach, but confirm
-against `docs/DATABASE.md`'s stated indexing philosophy rather than assume. Note the
-`apps/api-e2e` shared `/auth/register` throttle budget is now 20/min/IP, not 10
-(Milestone 9's deviation) — still finite, so keep registering the minimum each new
-test file actually needs via shared `beforeAll` fixtures rather than one per test.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 11 section,
+`docs/DATABASE.md` §3.4/§3.5 (`Post`/`PostMedia`) in full, and `docs/API.md` §7. Note
+the register-throttle/shared-account disciplines from Milestones 8–10 (`apps/api-e2e`:
+share users via `beforeAll`, budget is 20/min/IP; `apps/web-e2e`: register once,
+re-login per test where a persistent identity is needed) — apply them from the start
+for this milestone's test files rather than registering fresh per test and hitting the
+same wall. Also worth deciding explicitly before writing the create-post endpoint:
+whether `mediaIds` ownership/status validation happens as N sequential `MediaService`
+calls or one batched query — `MediaService` doesn't currently expose a
+`getOwnedMedia`-for-multiple-ids method, so this is a real design choice, not a
+detail to default without recording.

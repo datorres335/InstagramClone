@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { ApiError } from '@instagram-clone/api-client';
 
 import { getApiClient } from '../../../lib/get-api-client';
+import { FollowButton } from './follow-button';
 
 interface ProfilePageProps {
   params: Promise<{ username: string }>;
@@ -12,9 +13,9 @@ interface ProfilePageProps {
 /**
  * Public profile view (docs/API.md §4, docs/FEATURES.md #3) — works for
  * both "my own profile" and anyone else's; the only difference is whether
- * the "Edit profile" link renders. No Follow/Unfollow button yet — that's
- * Milestone 10 (`Follow` doesn't exist until then, and `isFollowedByMe` is
- * a hardcoded stub — see docs/PROGRESS.md's Milestone 8 deviations).
+ * the "Edit profile" link renders (own profile) vs. a Follow/Unfollow
+ * button (someone else's, and only when signed in — an anonymous viewer
+ * sees no button at all rather than one that would need a login redirect).
  */
 export default async function ProfilePage({ params }: ProfilePageProps) {
   const { username } = await params;
@@ -45,10 +46,24 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
       )}
       <ul>
         <li>{profile.postsCount} posts</li>
-        <li>{profile.followersCount} followers</li>
-        <li>{profile.followingCount} following</li>
+        <li>
+          <Link href={`/${profile.username}/followers`}>
+            {profile.followersCount} followers
+          </Link>
+        </li>
+        <li>
+          <Link href={`/${profile.username}/following`}>
+            {profile.followingCount} following
+          </Link>
+        </li>
       </ul>
       {isOwnProfile && <Link href="/profile/edit">Edit profile</Link>}
+      {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (
+        <FollowButton
+          username={profile.username}
+          initialIsFollowing={profile.isFollowedByMe}
+        />
+      )}
     </main>
   );
 }

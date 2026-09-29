@@ -7,6 +7,7 @@ import type {
   UserResponse,
 } from '@instagram-clone/validation';
 
+import { buildQueryString } from './build-query-string';
 import type { HttpClient } from './http-client';
 
 export interface UsersClient {
@@ -19,15 +20,6 @@ export interface UsersClient {
   updateProfile(input: UpdateProfileInput): Promise<UserResponse>;
   /** `PATCH /me/avatar` (docs/API.md §4) — `mediaId` must be the caller's own `READY` `AVATAR` media. */
   updateAvatar(mediaId: string): Promise<MediaResponse>;
-}
-
-function buildQueryString(query?: PaginationQuery): string {
-  if (!query) return '';
-  const params = new URLSearchParams();
-  if (query.cursor) params.set('cursor', query.cursor);
-  if (query.limit !== undefined) params.set('limit', String(query.limit));
-  const qs = params.toString();
-  return qs ? `?${qs}` : '';
 }
 
 export function createUsersClient(http: HttpClient): UsersClient {

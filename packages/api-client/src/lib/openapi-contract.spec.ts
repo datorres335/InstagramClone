@@ -24,6 +24,10 @@ type _UpdateAvatarRoute = paths['/api/v1/me/avatar']['patch'];
 type _PresignMediaRoute = paths['/api/v1/media/presign']['post'];
 type _CompleteMediaRoute = paths['/api/v1/media/{id}/complete']['post'];
 type _GetMediaRoute = paths['/api/v1/media/{id}']['get'];
+type _FollowRoute = paths['/api/v1/users/{username}/follow']['put'];
+type _UnfollowRoute = paths['/api/v1/users/{username}/follow']['delete'];
+type _FollowersRoute = paths['/api/v1/users/{username}/followers']['get'];
+type _FollowingRoute = paths['/api/v1/users/{username}/following']['get'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

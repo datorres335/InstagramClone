@@ -1,4 +1,5 @@
 import { type AuthClient, createAuthClient } from './auth-client';
+import { createFollowsClient, type FollowsClient } from './follows-client';
 import { HttpClient, type HttpClientConfig } from './http-client';
 import { createMediaClient, type MediaClient } from './media-client';
 import { createUsersClient, type UsersClient } from './users-client';
@@ -7,6 +8,7 @@ export interface ApiClient {
   auth: AuthClient;
   users: UsersClient;
   media: MediaClient;
+  follows: FollowsClient;
 }
 
 /**
@@ -25,5 +27,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
     auth: createAuthClient(http),
     users: createUsersClient(http),
     media: createMediaClient(http),
+    follows: createFollowsClient(http),
   };
 }

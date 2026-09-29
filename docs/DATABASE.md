@@ -168,7 +168,7 @@ asset can't be attached twice to one post. A check constraint at the application
 (enforced in the create-post service, not the DB) caps carousel length (e.g. 10 images,
 matching Instagram's own limit).
 
-### 3.6 `Follow`
+### 3.6 `Follow` (implemented Milestone 10)
 
 | Column      | Type        | Constraints              |
 | ----------- | ----------- | ------------------------ |
@@ -189,6 +189,13 @@ followerId = :me)` query.
 No status/approval column in the MVP — every follow is immediate, even for
 `isPrivate` accounts (see `FEATURES.md` for the explicit scope note); adding a
 `FollowRequest` table later is additive and doesn't require touching `Follow` itself.
+
+**As implemented:** the table maps to `follows` (plural, matching every other table's
+convention). Prisma's schema DSL has no portable `@@check` attribute, so the
+`followerId <> followingId` constraint was added by hand to the migration SQL rather
+than expressed in `schema.prisma` — `FollowsService` also rejects self-follows at the
+application layer (for a clean `409`, docs/API.md §5), so the DB constraint is a
+backstop, not the primary enforcement path.
 
 ### 3.7 `Like`
 

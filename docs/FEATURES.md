@@ -57,10 +57,10 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Media` with `purpose: AVATAR` (`DATABASE.md` §3.3),
   `POST /media/presign`, `POST /media/:id/complete`, `PATCH /me/avatar` (`API.md` §6, §4).
 
-### 5. Follow / Unfollow
+### 5. Follow / Unfollow (implemented Milestone 10)
 
 - One user follows another; immediate effect (the followed account's posts appear in
-  the follower's feed right away).
+  the follower's feed right away — the feed itself lands Milestone 12).
 - **Explicit MVP scope decision**: `User.isPrivate` exists in the schema, but the MVP
   does **not** implement a follow-request/approval workflow — following a private
   account behaves identically to following a public one. This is called out because it
@@ -71,10 +71,16 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Follow` (`DATABASE.md` §3.6), `PUT`/`DELETE
 /users/:username/follow` (`API.md` §5).
 
-### 6. Followers / Following Lists
+### 6. Followers / Following Lists (implemented Milestone 10)
 
-- Paginated lists on a profile, each entry showing avatar/username/full name and (when
-  viewing your own follower/following list) a follow/unfollow affordance inline.
+- Paginated lists on a profile, each entry showing avatar/username/full name and a
+  follow/unfollow affordance inline.
+- **As implemented**: the inline affordance renders for any authenticated viewer
+  browsing any followers/following list (not gated to "only when it's your own list") —
+  `isFollowedByMe` is already computed per row regardless of whose list is being
+  viewed, so restricting the button to the viewer's own list would be a strictly less
+  useful subset of what the API already supports. See docs/PROGRESS.md's Milestone 10
+  deviations.
 - **Out of scope**: mutual-followers indicator, search-within-list.
 - Entities/endpoints: `GET /users/:username/followers`, `GET
 /users/:username/following` (`API.md` §5).

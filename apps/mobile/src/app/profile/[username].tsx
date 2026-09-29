@@ -1,18 +1,26 @@
-import { useLocalSearchParams, Link } from 'expo-router';
+import { useLocalSearchParams, Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { ApiError } from '@instagram-clone/api-client';
 import type { PublicProfileResponse } from '@instagram-clone/validation';
 
 import { apiClient } from '../../lib/api-client';
+import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
 
 /**
  * Public profile view (docs/API.md §4, docs/FEATURES.md #3) — the same
  * screen for "my own profile" (reached via the Profile tab) and anyone
- * else's; the only difference is whether the "Edit profile" link renders.
- * No Follow/Unfollow button yet — that's Milestone 10.
+ * else's; the only difference is whether the "Edit profile" link renders
+ * (own profile) vs. a Follow/Unfollow button (someone else's, signed in
+ * only — an anonymous viewer sees no button).
  */
 export default function ProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
@@ -20,6 +28,8 @@ export default function ProfileScreen() {
   const [profile, setProfile] = useState<PublicProfileResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [followPending, setFollowPending] = useState(false);
+  const [followError, setFollowError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,6 +55,29 @@ export default function ProfileScreen() {
       cancelled = true;
     };
   }, [username]);
+
+  async function handleFollowToggle() {
+    if (!profile || profile.isFollowedByMe === null) return;
+    setFollowError(null);
+    setFollowPending(true);
+    const wasFollowing = profile.isFollowedByMe;
+    try {
+      if (wasFollowing) {
+        await apiClient.follows.unfollow(profile.username);
+      } else {
+        await apiClient.follows.follow(profile.username);
+      }
+      setProfile({
+        ...profile,
+        isFollowedByMe: !wasFollowing,
+        followersCount: profile.followersCount + (wasFollowing ? -1 : 1),
+      });
+    } catch (caught) {
+      setFollowError(authErrorMessage(caught));
+    } finally {
+      setFollowPending(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -74,10 +107,49 @@ export default function ProfileScreen() {
       {profile.websiteUrl && <Text>{profile.websiteUrl}</Text>}
       <View style={styles.stats}>
         <Text>{profile.postsCount} posts</Text>
-        <Text>{profile.followersCount} followers</Text>
-        <Text>{profile.followingCount} following</Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() =>
+            router.push({
+              pathname: '/profile/followers',
+              params: { username: profile.username },
+            })
+          }
+        >
+          <Text>{profile.followersCount} followers</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() =>
+            router.push({
+              pathname: '/profile/following',
+              params: { username: profile.username },
+            })
+          }
+        >
+          <Text>{profile.followingCount} following</Text>
+        </Pressable>
       </View>
       {isOwnProfile && <Link href="/profile/edit">Edit profile</Link>}
+      {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (
+        <View>
+          <Pressable
+            style={styles.button}
+            onPress={handleFollowToggle}
+            disabled={followPending}
+            accessibilityRole="button"
+          >
+            <Text style={styles.buttonText}>
+              {profile.isFollowedByMe ? 'Unfollow' : 'Follow'}
+            </Text>
+          </Pressable>
+          {followError && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {followError}
+            </Text>
+          )}
+        </View>
+      )}
     </View>
   );
 }
@@ -92,4 +164,13 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 20, fontWeight: '600' },
   stats: { flexDirection: 'row', gap: 16, marginVertical: 8 },
+  button: {
+    backgroundColor: '#111827',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+  },
+  buttonText: { color: '#ffffff', fontWeight: '600' },
+  error: { color: '#dc2626' },
 });

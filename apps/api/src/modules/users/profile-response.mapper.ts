@@ -3,17 +3,17 @@ import type { PublicProfileResponse } from '@instagram-clone/validation';
 
 /**
  * Maps a Prisma `User` row to the public profile shape (`docs/API.md` §4).
- * `postsCount`/`followersCount`/`followingCount` are still hardcoded until
- * `Follow`/`Post` exist (Milestones 10–11 — see
- * `publicProfileResponseSchema`'s own doc comment); `avatarUrl` resolves for
- * real as of Milestone 9 (`MediaService.resolveAvatarUrl`). `isFollowedByMe`
- * is `null` for an anonymous viewer, `false` for an authenticated one
- * (there's no `Follow` table yet for it to ever be `true`).
+ * `postsCount` is still hardcoded until `Post` exists (Milestone 11) —
+ * `avatarUrl` (Milestone 9) and `followersCount`/`followingCount`/
+ * `isFollowedByMe` (Milestone 10, via `FollowsService`) are all real now.
+ * `isFollowedByMe` is `null` for an anonymous viewer (never computed), a
+ * real boolean for an authenticated one.
  */
 export function toPublicProfileResponse(
   user: User,
-  isViewerAuthenticated: boolean,
   avatarUrl: string | null,
+  followCounts: { followers: number; following: number },
+  isFollowedByMe: boolean | null,
 ): PublicProfileResponse {
   return {
     id: user.id,
@@ -24,9 +24,9 @@ export function toPublicProfileResponse(
     avatarUrl,
     isPrivate: user.isPrivate,
     postsCount: 0,
-    followersCount: 0,
-    followingCount: 0,
-    isFollowedByMe: isViewerAuthenticated ? false : null,
+    followersCount: followCounts.followers,
+    followingCount: followCounts.following,
+    isFollowedByMe,
     createdAt: user.createdAt.toISOString(),
   };
 }

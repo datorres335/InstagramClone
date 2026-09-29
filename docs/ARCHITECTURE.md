@@ -227,7 +227,13 @@ large-file proxy.
   implemented as of Milestone 5. `UsersModule` (`GET /users/:username`,
   `GET /users/:username/posts`, `PATCH /me`) is implemented as of Milestone 8 — the
   first domain module besides `auth` to exist, and the first to import `AuthModule`
-  for its guards rather than define its own (see §7's `OptionalAuthGuard` note). A global
+  for its guards rather than define its own (see §7's `OptionalAuthGuard` note).
+  `MediaModule`/`StorageModule` (presign/upload/process pipeline, §8) landed Milestone 9. `FollowsModule` (`PUT`/`DELETE /users/:username/follow`,
+  `GET /users/:username/followers`/`following`) landed Milestone 10 — `UsersModule`
+  imports it (not the reverse) so `PublicProfileResponse`'s
+  `followersCount`/`followingCount`/`isFollowedByMe` can resolve through
+  `FollowsService`, the same dependency shape `MediaService`/`avatarUrl` already
+  established. A global
   `HttpExceptionFilter` (`apps/api/src/common/filters`) producing RFC 7807 Problem
   Details, and a global `ZodValidationPipe` (via `nestjs-zod`, registered through
   `APP_PIPE`) so every DTO is validated against a schema imported from

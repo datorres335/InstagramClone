@@ -36,17 +36,15 @@ test.describe('profile: avatar upload', () => {
   test('uploads a photo and shows it as the avatar after processing finishes', async ({
     page,
   }) => {
-    const credentials = await registerThroughUi(page);
+    await registerThroughUi(page);
     const image = await fakePng();
 
     await page.goto('/profile/edit');
-    await page
-      .getByLabel('Change photo')
-      .setInputFiles({
-        name: 'avatar.png',
-        mimeType: 'image/png',
-        buffer: image,
-      });
+    await page.getByLabel('Change photo').setInputFiles({
+      name: 'avatar.png',
+      mimeType: 'image/png',
+      buffer: image,
+    });
 
     await expect(page.getByText('Photo updated.')).toBeVisible({
       timeout: 20_000,
