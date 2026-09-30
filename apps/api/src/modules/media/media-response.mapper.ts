@@ -42,7 +42,8 @@ export function resolveAvatarUrl(
   return variants ? variants.thumbnail : null;
 }
 
-function resolveVariantUrls(
+/** Exported for `PostsModule`'s response mapper — resolving a `PostMedia` row's underlying `Media` variants. */
+export function resolveVariantUrls(
   media: Media | null,
   storage: StorageService,
 ): MediaVariants | null {

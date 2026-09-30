@@ -204,9 +204,17 @@ large-file proxy.
   `proxy.ts` (Next 16's renamed `middleware.ts`) keeps that cookie's access token from
   going stale between requests, since `cookies()` can only be _written_ from a Server
   Action or Route Handler, never a plain page render.
-- Images: `next/image` configured with a loader pointing at the object-storage /
-  CDN domain; the API returns fully-qualified media URLs (post-processed variants), not
-  raw storage keys, so the web app never talks to S3 directly for reads.
+- Images: plain `<img>` elements, not `next/image` (deviation from this section's
+  original draft, confirmed empirically in Milestone 9 and reconfirmed against current
+  Next 16 docs in Milestone 11 per risk #9 rather than assumed). The API already
+  returns fully-qualified, fixed-dimension media URLs (`sharp`-generated variants —
+  `thumbnail`/`feed` — not raw storage keys), so there is no on-demand resizing left
+  for `next/image`'s optimizer to usefully do; its only remaining value would be lazy
+  loading, which isn't worth `next/image`'s own overhead (a `remotePatterns` allowlist
+  that has to track every MinIO/S3 host across environments, plus its Node-side proxy
+  route for every image request) for images already served pre-sized straight from
+  object storage. Both the avatar (Milestone 9) and post (Milestone 11) image
+  pipelines use plain `<img>` consistently for this reason.
 
 ### 5.2 `apps/api` — NestJS
 

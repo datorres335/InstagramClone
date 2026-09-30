@@ -1,3 +1,4 @@
+import * as React from 'react';
 import {
   fireEvent,
   render,
@@ -11,9 +12,15 @@ import HomeScreen from '../app/(tabs)/home';
 jest.mock('../lib/auth-context', () => ({
   useAuth: jest.fn(),
 }));
-jest.mock('expo-router', () => ({
-  router: { replace: jest.fn() },
-}));
+jest.mock('expo-router', () => {
+  const { Text } = jest.requireActual('react-native');
+  return {
+    router: { replace: jest.fn() },
+    Link: ({ children }: { children: React.ReactNode }) => (
+      <Text>{children}</Text>
+    ),
+  };
+});
 
 const { router } = jest.requireMock('expo-router') as {
   router: { replace: jest.Mock };

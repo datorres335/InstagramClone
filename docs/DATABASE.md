@@ -136,7 +136,7 @@ trade-off: variant keys are a small, fixed, code-defined set (`thumbnail`, `feed
 `original`), not independently queryable data, so a child table would only add joins
 without adding query power.
 
-### 3.4 `Post`
+### 3.4 `Post` (implemented Milestone 11)
 
 | Column                            | Type        | Constraints                                |
 | --------------------------------- | ----------- | ------------------------------------------ |
@@ -147,10 +147,12 @@ without adding query power.
 | createdAt / updatedAt / deletedAt | timestamptz | see conventions                            |
 
 Indexes: index(`authorId`, `createdAt DESC`) — the core query for "posts by this user,
-newest first" (profile grid) and a building block of the feed query (see §6). Partial
-index `WHERE deletedAt IS NULL`.
+newest first" (profile grid) and a building block of the feed query (see §6).
+**Deviation:** a plain (non-partial) index, not `WHERE deletedAt IS NULL` as originally
+specified — Prisma's schema DSL has no partial-index syntax, the same gap and the same
+resolution already recorded for `User.deletedAt` (Milestone 2, §3.1).
 
-### 3.5 `PostMedia`
+### 3.5 `PostMedia` (implemented Milestone 11)
 
 Join table giving a `Post` an ordered list of one-or-more `Media` (multiple images per
 post).
@@ -159,14 +161,20 @@ post).
 | -------- | -------- | --------------------------------------------------- |
 | id       | uuid     | PK                                                  |
 | postId   | uuid     | FK → `Post.id`, not null, `onDelete: Cascade`       |
-| mediaId  | uuid     | FK → `Media.id`, not null                           |
+| mediaId  | uuid     | FK → `Media.id`, not null, **unique**               |
 | position | smallint | not null — 0-based order within the post's carousel |
 | altText  | text     | nullable — accessibility                            |
 
-Indexes: unique(`postId`, `position`); unique(`postId`, `mediaId`) so the same media
-asset can't be attached twice to one post. A check constraint at the application layer
-(enforced in the create-post service, not the DB) caps carousel length (e.g. 10 images,
-matching Instagram's own limit).
+Indexes: unique(`postId`, `position`). **Deviation:** `mediaId` is `@unique` on its own,
+not merely part of a `unique(postId, mediaId)` pair as originally specified — a media
+row must be attachable to at most one post _ever_ ("not already attached elsewhere",
+`API.md` §7), not merely not-twice-to-the-same-post; a lone-`mediaId` unique constraint
+is what actually enforces that at the database level (and makes the originally-specified
+`unique(postId, mediaId)` redundant, since a unique `mediaId` already implies it) — the
+same "the stricter constraint is the real invariant" reasoning Milestone 9 applied to
+`User.avatarMediaId`. A check constraint at the application layer (enforced in
+`PostsService`, not the DB) caps carousel length at 10 images, matching Instagram's own
+limit.
 
 ### 3.6 `Follow` (implemented Milestone 10)
 

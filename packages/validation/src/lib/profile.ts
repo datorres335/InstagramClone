@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { postSummarySchema } from './post';
 import { usernameSchema } from './user';
 
 /**
@@ -9,12 +10,11 @@ import { usernameSchema } from './user';
  *
  * `avatarUrl` resolves to a real URL once the user has a `READY` `AVATAR`
  * media set (Milestone 9); `followersCount`/`followingCount`/`isFollowedByMe`
- * are real as of Milestone 10. Only `postsCount` is still always `0` —
- * `Post` doesn't exist until Milestone 11. The schema described this full
- * shape from Milestone 8 onward, before every field had something real
- * behind it — declaring it up front meant `apps/web`/`apps/mobile` never
- * needed a breaking response-shape change as each field landed for real
- * (`docs/API.md` §4 predates Milestone 8).
+ * (Milestone 10) and `postsCount` (Milestone 11) are all real now. The
+ * schema described this full shape from Milestone 8 onward, before every
+ * field had something real behind it — declaring it up front meant
+ * `apps/web`/`apps/mobile` never needed a breaking response-shape change as
+ * each field landed for real (`docs/API.md` §4 predates Milestone 8).
  */
 export const publicProfileResponseSchema = z.object({
   id: z.uuid(),
@@ -57,17 +57,12 @@ export const updateProfileInputSchema = z.object({
 export type UpdateProfileInput = z.infer<typeof updateProfileInputSchema>;
 
 /**
- * `GET /users/:username/posts` (`docs/API.md` §4) — always empty until
- * `Post` exists (Milestone 11). `z.never()` makes that honest at the type
- * level too, not just in the current implementation: `data` can only ever
- * be `[]`, and a non-empty array would fail to validate rather than being
- * silently accepted. The `cursor`/`limit` query params are still accepted
- * and validated (`paginationQuerySchema`) even though they don't affect
- * anything yet, so this endpoint's call signature doesn't change once
- * Milestone 11 gives it something real to paginate.
+ * `GET /users/:username/posts` (`docs/API.md` §4) — a cursor-paginated post
+ * grid, real as of Milestone 11 (previously always an empty page before
+ * `Post` existed).
  */
 export const userPostsResponseSchema = z.object({
-  data: z.array(z.never()),
+  data: z.array(postSummarySchema),
   meta: z.object({ nextCursor: z.string().nullable() }),
 });
 export type UserPostsResponse = z.infer<typeof userPostsResponseSchema>;

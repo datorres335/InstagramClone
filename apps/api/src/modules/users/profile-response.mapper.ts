@@ -3,9 +3,9 @@ import type { PublicProfileResponse } from '@instagram-clone/validation';
 
 /**
  * Maps a Prisma `User` row to the public profile shape (`docs/API.md` §4).
- * `postsCount` is still hardcoded until `Post` exists (Milestone 11) —
- * `avatarUrl` (Milestone 9) and `followersCount`/`followingCount`/
- * `isFollowedByMe` (Milestone 10, via `FollowsService`) are all real now.
+ * `avatarUrl` (Milestone 9), `followersCount`/`followingCount`/
+ * `isFollowedByMe` (Milestone 10, via `FollowsService`), and `postsCount`
+ * (Milestone 11, via `PostsService`) are all real now.
  * `isFollowedByMe` is `null` for an anonymous viewer (never computed), a
  * real boolean for an authenticated one.
  */
@@ -14,6 +14,7 @@ export function toPublicProfileResponse(
   avatarUrl: string | null,
   followCounts: { followers: number; following: number },
   isFollowedByMe: boolean | null,
+  postsCount: number,
 ): PublicProfileResponse {
   return {
     id: user.id,
@@ -23,7 +24,7 @@ export function toPublicProfileResponse(
     websiteUrl: user.websiteUrl,
     avatarUrl,
     isPrivate: user.isPrivate,
-    postsCount: 0,
+    postsCount,
     followersCount: followCounts.followers,
     followingCount: followCounts.following,
     isFollowedByMe,

@@ -245,6 +245,69 @@ describe('MediaService', () => {
     });
   });
 
+  describe('getReadyMediaForAttachment', () => {
+    it("returns the media when it's the caller's own, READY, and the expected purpose", async () => {
+      const { service, prisma } = createDeps();
+      const readyPostImage = {
+        ...fakePendingMedia,
+        purpose: 'POST_IMAGE' as const,
+        status: 'READY' as const,
+      };
+      prisma.media.findUnique.mockResolvedValue(readyPostImage);
+
+      const result = await service.getReadyMediaForAttachment(
+        'user-1',
+        'media-1',
+        'POST_IMAGE',
+      );
+
+      expect(result).toEqual(readyPostImage);
+    });
+
+    it('rejects the wrong purpose with MediaNotReadyException', async () => {
+      const { service, prisma } = createDeps();
+      prisma.media.findUnique.mockResolvedValue({
+        ...fakePendingMedia,
+        purpose: 'AVATAR',
+        status: 'READY',
+      });
+
+      await expect(
+        service.getReadyMediaForAttachment('user-1', 'media-1', 'POST_IMAGE'),
+      ).rejects.toBeInstanceOf(MediaNotReadyException);
+    });
+
+    it('rejects a non-READY media with MediaNotReadyException', async () => {
+      const { service, prisma } = createDeps();
+      prisma.media.findUnique.mockResolvedValue({
+        ...fakePendingMedia,
+        purpose: 'POST_IMAGE',
+        status: 'PENDING',
+      });
+
+      await expect(
+        service.getReadyMediaForAttachment('user-1', 'media-1', 'POST_IMAGE'),
+      ).rejects.toBeInstanceOf(MediaNotReadyException);
+    });
+
+    it("rejects another user's media with ForbiddenException", async () => {
+      const { service, prisma } = createDeps();
+      prisma.media.findUnique.mockResolvedValue({
+        ...fakePendingMedia,
+        purpose: 'POST_IMAGE',
+        status: 'READY',
+      });
+
+      await expect(
+        service.getReadyMediaForAttachment(
+          'someone-else',
+          'media-1',
+          'POST_IMAGE',
+        ),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
   describe('resolveAvatarUrl', () => {
     it('returns null for a null media', () => {
       const { service } = createDeps();

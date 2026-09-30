@@ -30,13 +30,11 @@ export class UsersController {
 
   @Get(':username/posts')
   @UseGuards(OptionalAuthGuard)
-  @ApiOperation({
-    summary: "Get a user's posts (paginated; always empty until Milestone 11).",
-  })
+  @ApiOperation({ summary: "Get a user's posts (paginated profile grid)." })
   async getPosts(
     @Param('username') username: string,
-    @Query() _query: PaginationQueryDto,
+    @Query() query: PaginationQueryDto,
   ): Promise<UserPostsResponse> {
-    return this.usersService.getUserPosts(username);
+    return this.usersService.getUserPosts(username, query);
   }
 }

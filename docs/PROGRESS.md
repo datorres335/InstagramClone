@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 10 — Follow / Unfollow
+**Current Milestone:** Milestone 11 — Posts (Create, Read, Delete)
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -62,8 +62,20 @@ real API. Milestone 10 adds `apps/api`'s third domain module, `FollowsModule`: a
 actually needed one). `PublicProfileResponse`'s `followersCount`/`followingCount`/
 `isFollowedByMe` are all real now, not hardcoded stubs. Both `web` and `mobile` gained
 a Follow/Unfollow button on profile views and new followers/following list
-screens with an inline follow/unfollow affordance per row. No Post/feed features exist
-yet — `postsCount` stays a stub until Milestone 11.
+screens with an inline follow/unfollow affordance per row. Milestone 11 adds
+`apps/api`'s fourth domain module, `PostsModule`, and is the first milestone to
+actually consume Milestone 9's media pipeline for something other than avatars: a new
+`Post`/`PostMedia` schema (a post's `PostMedia.mediaId` is itself `@unique` — a media
+row can be attached to at most one post, ever), `POST /posts` (1–10 `READY`,
+`POST_IMAGE`-purpose images the caller owns, none already attached elsewhere),
+`GET /posts/:id` (optional auth), and `DELETE /posts/:id` (author-only soft delete).
+`GET /users/:username/posts` (stubbed empty since Milestone 8) now returns a real,
+cursor-paginated grid, and `PublicProfileResponse.postsCount` is real too, the last of
+that response's fields to leave stub status. Both `web` and `mobile` gained a
+multi-image create-post flow (reusing Milestone 9's presign→upload→poll pipeline once
+per image), a post detail view, and a real profile grid linking into it. No feed
+exists yet — Milestone 12 is where posts actually reach anyone besides their own
+author and profile visitors.
 
 ---
 
@@ -551,6 +563,75 @@ not a function`) — expected, not a bug, since `apps/mobile`'s supported target
       Chromium) against the live Dockerized Postgres and real running
       `api`/`web` servers
 
+### Milestone 11 — Posts (Create, Read, Delete)
+
+- [x] `prisma/schema.prisma` — `Post` (`docs/DATABASE.md` §3.4: `caption`,
+      `location`, soft-delete `deletedAt`, `@@index([authorId,
+createdAt(sort: Desc)])`) and `PostMedia` (§3.5: ordered join to `Media`,
+      `position` `SmallInt`, `mediaId @unique` — see Deviations below) — a new
+      migration, hand-placed via the same `prisma migrate diff` +
+      `migrate deploy` workaround Milestone 9/10 already established
+- [x] `MediaService.getReadyMediaForAttachment(userId, mediaId, purpose)` — a
+      new public method generalizing `setAsAvatar`'s internal
+      ownership/purpose/status checks so `PostsService` can reuse them
+      verbatim for `POST_IMAGE` media; `setAsAvatar` itself refactored to call
+      it, not duplicate it
+- [x] `apps/api/src/modules/posts/` — `PostsModule`/`PostsController`/
+      `PostsService`, `apps/api`'s fourth domain module. `createPost`
+      validates every `mediaId` sequentially (ownership/purpose/`READY`,
+      then a batched already-attached check), `getById` soft-delete-aware,
+      `deletePost` author-only, `getPostsByAuthor` reuses Milestone 10's
+      exact cursor-pagination pattern for the profile grid
+- [x] Three endpoints wired: `POST /posts`, `GET /posts/:id` (optional auth),
+      `DELETE /posts/:id` (author-only, `403` otherwise)
+- [x] `UsersService.getUserPosts` now delegates to
+      `PostsService.getPostsByAuthor` instead of returning a hardcoded empty
+      page (`UsersModule` imports `PostsModule`); `UsersService.getPublicProfile`
+      now also resolves a real `postsCount` via a new
+      `PostsService.getPostCountByAuthor`, the last stub field on
+      `PublicProfileResponse` to go live
+- [x] `packages/validation`'s new `post.ts` (`createPostInputSchema`,
+      `postResponseSchema`, `postSummarySchema`) and `packages/api-client`'s
+      new `posts` namespace (`create`/`getById`/`remove`)
+- [x] `apps/web`: a `CreatePostForm` client component (multi-image
+      sequential presign→upload→poll, caption/location inputs), a `/p/[id]`
+      post detail page with an author-only delete button, and the profile
+      view page now rendering a real thumbnail grid linking into post detail
+- [x] `apps/mobile`: a `post/new.tsx` create-post screen (`expo-image-picker`
+      multi-select, `orderedSelection: true` to preserve carousel order), a
+      `post/[id].tsx` detail screen with a swipeable `FlatList` media
+      carousel, and the profile screen restructured around a `numColumns={3}`
+      `FlatList` grid
+- [x] 19 new/updated unit tests: 9 `post.spec.ts` in `packages/validation`,
+      4 new `getReadyMediaForAttachment` cases in `media.service.spec.ts`,
+      15 `posts.service.spec.ts` (including the new
+      `getPostCountByAuthor` case), 4 `posts-client.spec.ts`, plus updated
+      `users.service.spec.ts` (delegation + real `postsCount` cases),
+      `home.spec.tsx`/`profile-view.spec.tsx` (mobile), and two new mobile
+      spec files: `create-post.spec.tsx` (4 tests — this is the file that
+      caught the stale-reference bug below) and `post-detail.spec.tsx` (5 tests)
+- [x] 16 new `apps/api-e2e` integration tests (`posts/posts.spec.ts`) — real
+      presign→PUT-to-MinIO→complete→BullMQ-processed→attach pipeline, not
+      mocked: single- and multi-image creation (order preserved as
+      `position`), the 1–10 image bound (both ends), non-`READY`/wrong-purpose
+      media (`422`), someone else's media (`403`), duplicate-in-request and
+      already-attached-elsewhere media (`409` both), unauthenticated `401`,
+      anonymous `GET` with `null` `isLikedByMe`/`isSavedByMe`, `404` for a
+      missing post, non-author delete `403`, soft-delete-then-404, a real
+      keyset-paginated profile grid (newest-first, resolved thumbnails), a
+      soft-deleted post excluded from the grid, and (added after the
+      `postsCount` fix below) `GET /users/:username` reporting the correct
+      real count both after creating 3 posts and after deleting the only one
+- [x] 1 new `apps/web-e2e` Playwright test (`create-post.spec.tsx`, Chromium)
+      — a real browser multi-image (2-photo) post creation through the full
+      presign→upload→poll→submit flow, landing on `/p/:id` with both images
+      and the caption/location visible, then confirming the post appears in
+      the author's profile grid
+- [x] Full validation passing: `nx run-many -t lint test build` (11 projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` + `api-e2e:e2e`
+      (10/10 suites, 54/54 tests) + `web-e2e:e2e` (16/16, Chromium) against
+      the live Dockerized Postgres/MinIO/Redis and real running `api`/`web`
+      servers
+
 ---
 
 ## Validation Performed
@@ -1017,6 +1098,103 @@ pnpm exec nx run-many -t lint test build   # re-verified 28/28 clean afterward
 Both background `api:serve` instances confirmed stopped afterward — no stray processes
 left listening on 3000.
 
+### Milestone 11
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding Post/PostMedia
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  > prisma/migrations/20260929225738_0004_post/migration.sql
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d posts \d post_media — composite/unique
+# indexes, both FKs, all matched the schema.prisma design exactly.
+
+pnpm exec nx run api:test --testPathPatterns=media   # 18/18, new
+# getReadyMediaForAttachment cases (success/wrong-purpose/non-READY/forbidden) passing
+# on the first run — setAsAvatar's refactor to call it didn't change its own behavior.
+
+pnpm exec nx run api:test --testPathPatterns=posts   # 15/15, first run once the
+# shared `include` constant was inlined at each Prisma call site — see Bugs Found below
+# for the type-inference issue that forced that change.
+
+pnpm exec nx run api:test --testPathPatterns=users
+# ^ delegation tests for getUserPosts passed immediately; a real postsCount test was
+#   added afterward once the stale `postsCount: 0` stub was noticed and fixed (see
+#   Bugs Found below) — 8/8 afterward.
+pnpm exec nx run api:lint    # clean
+pnpm exec nx run api:build   # webpack compiled successfully
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirms apps/api's module graph boots cleanly for OpenAPI introspection with
+#   PostsController registered; all 3 new route shapes (/posts POST, /posts/:id
+#   GET+DELETE) appeared in the generated openapi-types.ts on the first run.
+pnpm exec nx run api-client:test   # 44/44 (4 new posts-client.spec.ts cases)
+pnpm exec nx run api-client:lint   # clean
+pnpm exec nx run validation:test --skip-nx-cache   # 71/71 (9 new post.spec.ts cases)
+
+pnpm exec nx run web:build
+# ^ Next build compiled + typechecked cleanly once the /posts/new/page.tsx import-path
+#   depth bug was fixed (see Bugs Found below); new /posts/new and /p/[id] routes both
+#   registered as dynamic (ƒ).
+pnpm exec nx run web:lint    # clean
+pnpm exec nx run web:test    # clean, no new web unit tests this milestone (Server
+# Action wrappers and the create-post form are exercised by web-e2e instead)
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:lint    # clean
+pnpm exec nx run mobile:test --testPathPatterns=create-post
+# ^ hung indefinitely on the happy-path test before the stale-object-reference
+#   updateSlot bug was found and fixed (see Bugs Found below — this is the milestone's
+#   most significant bug). 4/4 passing afterward.
+pnpm exec nx run mobile:test --testPathPatterns=post-detail   # 5/5, first run
+pnpm exec nx run mobile:test --testPathPatterns=home   # fixed a missing Link mock
+# (see Bugs Found below), 1/1 afterward
+pnpm exec nx run mobile:test --testPathPatterns=profile-view
+# ^ fixed a missing apiClient.users.getPosts mock (see Bugs Found below); 12/12
+#   afterward (2 new post-grid cases)
+pnpm exec nx run mobile:test   # whole project, clean
+pnpm exec nx run mobile:build  # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build   # 28/28 tasks, whole workspace
+
+pnpm exec nx run api-e2e:e2e --testPathPatterns=posts   # 16/16, first real run —
+# full presign→PUT-to-MinIO→complete→BullMQ-processed→attach pipeline, no mocking.
+pnpm exec nx run api-e2e:e2e   # 10/10 suites, 54/54 tests, whole api-e2e run — the
+# register-throttle budget held with 2/20 to spare (posts.spec.ts adds 4 registrations
+# to the previously-tracked 14).
+
+nx run api:serve   # started manually — web-e2e's own webServer only manages web:dev
+pnpm exec nx run web-e2e:e2e -- --grep "create with multiple images" --project=chromium
+# ^ first attempt failed: `getByRole('img')` found 1 image instead of 2 — the carousel
+#   images render `alt=""` (no altText yet), which gives them ARIA role
+#   "presentation," not "img." Fixed the test's own locator (`main img`), not the app —
+#   see Bugs Found below. 1/1 passing afterward.
+pnpm exec nx run web-e2e:e2e -- --project=chromium   # 16/16, whole suite together
+
+# Noticed while writing docs/API.md's postsCount write-up that
+# profile-response.mapper.ts still hardcoded postsCount: 0 even though Post now
+# exists — a real, un-shipped gap, not a documentation-only fix. Wired
+# PostsService.getPostCountByAuthor into UsersService.getPublicProfile, added unit
+# coverage (users.service.spec.ts, posts.service.spec.ts) and two new
+# apps/api-e2e assertions (profile.postsCount after creating 3 posts, and after
+# deleting the only one) — see Bugs Found below.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean after the fix
+pnpm exec nx run api:test --skip-nx-cache   # 116/116, whole project
+pnpm exec nx run api-e2e:e2e --testPathPatterns=posts --skip-nx-cache   # 16/16
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 54/54, whole suite, confirmed stable
+
+pnpm exec prettier --write "apps/**/*.{ts,tsx}" "packages/**/*.ts" \
+  "docs/**/*.md"
+pnpm exec nx run-many -t lint test build   # re-verified clean afterward
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # all three clean
+```
+
+The manually-started `api:serve` background process was confirmed stopped (freed port 3000) after it was found still listening and colliding with `api-e2e:e2e`'s own
+managed continuous-task server — see Bugs Found below.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -1445,6 +1623,77 @@ mapped table name and the `CHECK` constraint's mechanism), and the cursor pagina
 implementation matches `docs/API.md` §1's design (opaque base64 `(createdAt, id)`
 pair) precisely, being its first real instance.
 
+### Milestone 11
+
+- **`PostMedia.mediaId` is `@unique`, not only part of a composite
+  `unique(postId, mediaId)`.** A media row can be attached to at most one post,
+  ever ("not already attached elsewhere," `docs/API.md` §7) — the same
+  "the stricter constraint is the real invariant" reasoning Milestone 9 applied
+  to `User.avatarMediaId`. This also makes the originally-documented
+  `unique(postId, mediaId)` redundant (a unique `mediaId` alone already implies
+  it); only `unique(postId, position)` remains as a second index.
+  `docs/DATABASE.md` §3.5 updated to describe this as-implemented.
+- **`Post`'s `@@index([authorId, createdAt(sort: Desc)])` is a plain index, not
+  a partial one** (`docs/DATABASE.md` §3.4 originally specified `WHERE
+deletedAt IS NULL`) — Prisma's schema DSL still has no portable partial-index
+  syntax, the same gap already noted for `User.deletedAt` back in Milestone 2.
+- **`mediaIds` ownership/status validation is N sequential
+  `MediaService.getReadyMediaForAttachment` calls, not one batched query.**
+  `docs/PROGRESS.md`'s own Milestone 10 "before starting" note flagged this as
+  a real design choice, not a default to leave undecided. Chosen because
+  `MediaService` has no existing multi-id lookup method, the list is capped at
+  10 items (MVP scale), and adding a batched-validation code path used by
+  exactly one caller wasn't judged worth the complexity over N small, already-
+  well-tested single-id calls.
+- **Duplicate `mediaId` within one request, and a `mediaId` already attached to
+  another post, both map to `409 conflict`** — reusing the existing generic
+  catalog entry (no new error type minted) since both are the same underlying
+  business rule ("each media item is used at most once, ever") surfacing at
+  two different points in the same validation pass.
+- **A shared, separately-declared Prisma `include` constant broke TypeScript's
+  generic inference for the query result type** (`Argument of type '{...
+scalars...}' is not assignable to parameter of type 'PostWithRelations'`).
+  Fixed by inlining the identical `include: {...}` object literally at each of
+  `PostsService`'s two call sites instead of extracting it once — worth
+  remembering for any future Prisma 7 query needing a non-trivial `include`:
+  inline it at the call site, or accept a manual intersection type plus an
+  explicit cast, but don't extract a shared `include` constant.
+- **Post detail URLs are a top-level `/p/:id` route on web** (Instagram's own
+  convention) — nothing in the docs specified a URL shape, so this was a
+  judgment call, made consistently on mobile too (`post/[id].tsx`).
+- **Images render as plain `<img>` elements, not `next/image`** — this
+  actually dates to Milestone 9's avatar uploader (never updated in
+  `docs/ARCHITECTURE.md` §5.1 at the time), and is reconfirmed and now
+  correctly documented as of this milestone, per risk #9's "confirm current
+  Next 16 image-handling APIs" instruction. The API already returns
+  fully-qualified, fixed-dimension `sharp`-generated variant URLs, so
+  `next/image`'s on-demand resizing has nothing left to do — its only
+  remaining value (lazy loading) isn't worth its own overhead (a
+  `remotePatterns` allowlist tracking every MinIO/S3 host, plus a Node-side
+  proxy route per image) for images already served pre-sized from object
+  storage. `docs/ARCHITECTURE.md` §5.1 updated to describe this as-implemented.
+- **Mobile's post detail carousel is a real swipeable, paged `FlatList`;
+  web's is a plain stacked list of every image, not a swipeable widget.**
+  Building a from-scratch swipe/drag carousel in plain React (no carousel
+  library exists in this repo's dependency tree) was judged more effort than
+  this milestone's detail-page scope warranted — deferred as a small,
+  low-risk follow-up rather than blocking the milestone. `docs/FEATURES.md` #8
+  updated to record this as-implemented.
+- **`PublicProfileResponse.postsCount` was wired to a real count as part of
+  this milestone**, not left as a stub for a later one — `docs/API.md` §4's
+  wording ("`Post`/`Follow` land Milestones 10–11") already scoped this to
+  Milestone 11, and leaving a freshly-real `Post` table's count still
+  hardcoded to `0` once `Post` existed would have contradicted `docs/API.md`
+  §4's own stated milestone boundary, not just been an incomplete nice-to-have
+  (see Bugs Found below — this was caught and fixed during this milestone's
+  own doc-sync pass, not left for Milestone 12).
+
+None of Milestone 11's deviations touch `docs/ARCHITECTURE.md`'s core design beyond
+the `next/image` clarification above (which corrects the document to match what
+Milestone 9 already shipped, not a new decision made now); `Post`/`PostMedia` match
+`docs/DATABASE.md` §3.4/§3.5 in every respect except the two indexing notes above, both
+implementation-detail-level, not schema-shape changes.
+
 ---
 
 ## Bugs Found and Fixed
@@ -1752,6 +2001,123 @@ UsersModule module`. `PrismaService` resolved fine (`PrismaModule` is
     combine as expected in this Nx/Playwright wiring. Prefer running one or
     the other, not both, until this is worth investigating further.
 
+### Milestone 11
+
+30. **CRITICAL — a stale object-reference comparison silently dropped every
+    upload-status UI update after the first one, on both `web` and `mobile`.**
+    Both `apps/mobile/src/app/post/new.tsx` and
+    `apps/web/src/app/(app)/posts/new/create-post-form.tsx`'s per-image-slot
+    state updater originally compared by object identity:
+    `setImages((prev) => prev.map((s) => (s === slot ? { ...s, ...patch } : s)))`.
+    Since every call to this updater replaces the slot's object in state with
+    a brand-new one, the **first** call from a given `uploadOne` closure
+    (`{status: 'processing'}`) matches (the stale `slot` the closure captured
+    still equals the then-current state's object), but **every subsequent**
+    call from that same closure (`{status: 'ready'}` or `{status: 'error'}`)
+    silently no-ops — `.map()` finds no `===` match against an object that no
+    longer exists anywhere in the array, and returns the array completely
+    unchanged, with no error and no warning. The visible symptom: every
+    selected photo got stuck showing "Processing…" forever, even though the
+    real upload/processing had genuinely finished successfully underneath.
+    Caught by `apps/mobile/src/__tests__/create-post.spec.tsx`'s happy-path
+    test, which exercises the full async pipeline rather than mocking each
+    step in isolation — a `waitFor(() => expect(screen.getByText('Ready'))...)`
+    hung indefinitely even at an inflated 5000ms timeout, which is a genuine
+    logic bug, not a timing issue. Diagnosis took three steps: (1) first
+    incorrectly suspected `FlatList`/`VirtualizedList`'s test-environment
+    `act()` warnings and replaced it with a plain `ScrollView` + `.map()` (a
+    legitimate simplification — capped at 10 images, so virtualization buys
+    nothing — but did not fix the hang); (2) added temporary `console.log`
+    statements inside `uploadOne`, which proved the component's own async
+    logic (including `waitUntilProcessed` resolving and the `updateSlot`
+    call itself) ran to completion correctly on both the success and failure
+    paths; (3) this narrowed it to "the state update never reaches the
+    render," which is what pointed at the `s === slot` comparison. Fixed on
+    both platforms by capturing a stable identifier once at the top of
+    `uploadOne` — `slot.uri` (mobile) / `slot.previewUrl` (web), both already
+    used as the list's React `key` — and comparing against that instead of
+    object identity. This would have shipped completely broken (every
+    multi-image post creation permanently stuck) had it not been caught by a
+    real multi-step test; worth remembering as a general lesson for this
+    codebase: **a per-item state updater that closes over the item object
+    itself, called more than once across re-renders, must compare by a stable
+    id, never by object identity** — the first call always "works" by
+    coincidence, which is exactly what makes this class of bug easy to ship.
+31. **A shared, separately-declared Prisma `include` constant broke
+    TypeScript's generic inference for the query result type.** Attempting
+    `export const postInclude = {...} satisfies Prisma.PostInclude` in
+    `post-response.mapper.ts` and passing that constant into
+    `prisma.post.create`/`findFirst` produced `Argument of type '{ [x:
+string]: any; } & {...scalars...}' is not assignable to parameter of type
+    'PostWithRelations'` — Prisma 7's generated types exist
+    (`prisma/generated/prisma/models/Post.ts`), but a value coming from a
+    separately-typed constant defeats the generic inference the query methods
+    rely on to narrow their return type. Fixed by inlining the identical
+    `include: {...}` object literally at each of `PostsService`'s two call
+    sites instead (see Deviations above).
+32. **`apps/web`'s `posts/new/page.tsx` had a wrong relative import depth** —
+    `'../../../lib/get-api-client'` (3 levels) instead of the 4 the file's
+    actual location (`src/app/(app)/posts/new/page.tsx`) requires. Caught by
+    `next build`'s module-not-found error, not by any test (Vitest's
+    module resolution is looser here); the sibling `post-actions.ts` in the
+    same directory had already been written with the correct 4 levels from
+    the start, which is what made the mismatch obvious once spotted.
+33. **Two mobile test files broke once new "New post" links/data were added
+    to already-existing screens.** `home.spec.tsx`'s `expo-router` mock
+    exported only `{ router: { replace: jest.fn() } }`, no `Link` — once
+    `home.tsx` started rendering a real `<Link>`, this crashed with `Element
+type is invalid` (undefined component). `profile-view.spec.tsx`'s
+    `apiClient.users` mock had no `getPosts` — once `[username].tsx` started
+    calling `Promise.all([getProfile, getPosts])` on every render, its
+    existing tests failed with `apiClient.users.getPosts is not a function`.
+    Both fixed by extending the existing mocks (a working `Link` mock via
+    `jest.requireActual('react-native')`, and a default-resolved
+    `getPosts` mock) — the same category of break Milestone 10's bug #28
+    already described for a constructor-signature change, just for a mock's
+    surface area instead of a constructor's arity.
+34. **A Playwright `getByRole('img')` assertion under-counted post images
+    because of their intentionally-empty `alt`.** The post detail page
+    renders `<img alt={item.altText ?? ''} .../>`, and `altText` is `null`
+    until per-image alt text is a real feature (not in this milestone's
+    scope) — an `<img>` with `alt=""` has ARIA role `"presentation"`, not
+    `"img"`, per the HTML accessibility tree spec, so `getByRole('img')`
+    silently excludes it. `apps/web-e2e/src/create-post.spec.ts`'s own
+    assertion was the one that was wrong (`getByRole('img')` expecting `2`,
+    finding `1`) — fixed the test to count `main img` elements directly
+    instead of by role, not the app; the app's decorative-image markup is
+    correct as written.
+35. **`PublicProfileResponse.postsCount` was still hardcoded to `0` after
+    `Post` had already landed earlier in this same milestone** —
+    `profile-response.mapper.ts`'s own doc comment said "hardcoded until
+    `Post` exists (Milestone 11)," which was no longer true the moment the
+    `Post` schema/service existed, but nothing had gone back to wire it up.
+    Caught while writing this milestone's `docs/API.md` update (comparing the
+    doc's claimed behavior against the actual mapper code, not just trusting
+    the earlier doc comment), not by any failing test — the existing unit and
+    e2e assertions for `postsCount` only ever exercised the zero-posts case,
+    which the hardcoded stub also satisfied by coincidence. Fixed by adding
+    `PostsService.getPostCountByAuthor` and wiring it into
+    `UsersService.getPublicProfile` alongside the existing follow-count
+    `Promise.all`, with new unit coverage in both `posts.service.spec.ts` and
+    `users.service.spec.ts` and two new `apps/api-e2e` assertions (real count
+    after creating 3 posts, `0` again after deleting the only one). Worth
+    remembering: **a doc comment that says "stubbed until X exists" is a
+    signal to double-check once X actually exists in the same milestone**,
+    not something that resolves itself just because the schema landed.
+36. **A manually-started `nx run api:serve` background process (used to run
+    the web-e2e Playwright test, since its `webServer` config only manages
+    `web:dev`) was still listening on port 3000 when `nx run api-e2e:e2e` was
+    run afterward**, which manages its own `api:serve` continuous-task
+    dependency and expects to own that port itself. The symptom was an
+    opaque Node DNS-resolution error (`GetAddrInfoReqWrap.onlookupall`) from
+    `axios`, not an obvious "port already in use" message. Fixed by stopping
+    the manually-started process (confirmed via `netstat` afterward, not just
+    assumed) before re-running `api-e2e:e2e`; not a code bug, but worth
+    remembering as a standing rule for this repo's own test-running
+    discipline: **never leave a manually-started `api:serve` running before
+    invoking `api-e2e:e2e`**, since the two will silently fight over the same
+    port instead of failing with a clear message.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -1837,12 +2203,11 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   this will resurface, worse, as more test files accumulate. Not fixed at the
   throttle-configuration level on purpose — see the Milestone 8 deviations entry for
   why loosening it wasn't judged worth the trade-off.
-- **`profile.postsCount` is still a hardcoded stub** (`0`) until `Post` exists
-  (Milestone 11) — `avatarUrl` (Milestone 9) and `followersCount`/`followingCount`/
-  `isFollowedByMe` (Milestone 10) are all real now. The response _shape_ is already
-  final (`docs/API.md` §4, the Milestone 8 deviation above) — only the value inside
-  `toPublicProfileResponse` (`apps/api/src/modules/users/`) needs to change when
-  `Post` lands, not the schema or any client code.
+- **RESOLVED (Milestone 11, was a known issue as of Milestone 8/10):**
+  `profile.postsCount` is now a real count via `PostsService.getPostCountByAuthor`
+  — every field on `PublicProfileResponse` (`avatarUrl` since Milestone 9,
+  `followersCount`/`followingCount`/`isFollowedByMe` since Milestone 10,
+  `postsCount` since Milestone 11) is real now, none still hardcoded.
 - **The public profile _view_ screens (web's `[username]/page.tsx`, mobile's
   `profile/[username].tsx`) don't render the avatar image at all** — only the
   Milestone 8/9 profile-_edit_ screens show it (that was this milestone's explicit
@@ -1850,10 +2215,13 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   is already populated and ready to use; adding an `<img>`/`<Image>` to the view
   screens is a small, low-risk follow-up whenever profile viewing itself gets its
   next pass, not a gap in the media pipeline itself.
-- **`Media.blurhash` is generated and stored but not consumed by any client UI yet**
-  — there's no progressive-image-loading surface to use it until posts/feed
-  rendering exists (Milestone 11/12). The field and its generation are real and
-  tested; only the consuming UI is future work.
+- **`Media.blurhash` is generated, stored, and now returned on every
+  `PostMedia` item (Milestone 11's `PostResponse.media[].blurhash`), but still
+  not consumed by any client UI** — post detail rendering on both `web` and
+  `mobile` uses a plain `<img>`/`Image` with no blurhash placeholder yet. Not
+  in this milestone's scope (create/read/delete, not progressive-loading
+  polish); a natural small follow-up whenever feed rendering (Milestone 12)
+  or post detail gets its next visual pass.
 - **Web E2E's avatar upload test was only run against Chromium**, same
   environment limitation already noted for Milestone 8's web-e2e coverage
   (Firefox/WebKit browsers not installed here) — not new to this milestone.
@@ -1882,6 +2250,36 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   once and re-logs-in per test) — worth applying the same pattern to any future
   `apps/web-e2e` file whose tests need a persistent, reusable identity, the way
   `apps/api-e2e` already does via `beforeAll`-shared users.
+- **`apps/api-e2e`'s `/auth/register` throttle now sits at 18/20 used**
+  (`posts.spec.ts` adds 4 registrations to the previously-tracked 14 from
+  Milestones 8–10) — only 2 requests of headroom left in the shared budget.
+  The next milestone that needs fresh accounts (Milestone 12, Home Feed, which
+  will need a real follow graph plus several authors) should plan its
+  registration count carefully from the start rather than discover the
+  ceiling the way Milestone 9 did (bug #25) — sharing accounts via `beforeAll`
+  is no longer just good practice here, it's close to mandatory.
+- **Web's post detail carousel is a plain stacked list, not a swipeable
+  widget** (see Deviations above) — all images are present and correctly
+  ordered, only the browsing interaction differs from mobile's real paged
+  `FlatList` carousel. A small, low-risk follow-up, not a functional gap.
+- **No caption/hashtag/mention parsing** — `Post.caption` is plain text
+  end-to-end, matching `docs/FEATURES.md` #9's explicit MVP scope (`@`/`#`
+  characters may appear in the text but are never linked or indexed). Not an
+  oversight; revisit only if a future milestone actually adds that feature.
+- **Post creation is not atomic across the multi-image upload and the final
+  `POST /posts` call** — each image finishes its own presign→upload→poll
+  cycle independently before the post is created, so a browser/app crash
+  between "all images ready" and "post submitted" leaves orphaned `READY`,
+  unattached `Media` rows (not orphaned posts — `Post` itself is only ever
+  created in one atomic `prisma.post.create` call with all its `PostMedia`
+  rows). This mirrors the existing avatar-upload pipeline's same
+  upload-then-attach shape (Milestone 9) and isn't a new risk this milestone
+  introduces; no cleanup job for orphaned `Media` rows exists yet for either
+  pipeline — a reasonable future addition (a scheduled sweep for old,
+  never-attached `Media` rows), not part of this milestone's scope.
+- **Web E2E's create-post test was only run against Chromium** — same
+  pre-existing Firefox/WebKit-not-installed environment limitation noted for
+  every prior milestone's web-e2e coverage.
 
 ---
 
@@ -1918,7 +2316,14 @@ constraint, the inline follow button rendering for any viewer rather than only o
 viewer's own list, the self-row `isFollowedByMe` computation, mobile's flat
 followers/following routes vs. web's nested ones, extracting `buildQueryString`, and
 web-e2e's shared-`viewer`-via-login discipline) are equally each decided and recorded
-above with rationale, not left open. Everything else recorded in this file is
+above with rationale, not left open. Milestone 11's nine deviations (`PostMedia.mediaId`'s
+`@unique`, the plain-not-partial `Post` index, sequential-not-batched media validation,
+409-conflict reuse for duplicate/already-attached media, the inline-`include`-vs-
+shared-constant Prisma typing lesson, the `/p/:id` URL convention, the `next/image` →
+plain-`<img>` documentation correction, web's non-swipeable vs. mobile's swipeable
+carousel, and wiring `postsCount` for real within this same milestone rather than
+deferring it) are equally each decided and recorded above with rationale, not left
+open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -1928,51 +2333,51 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 11 — Posts (Create, Read, Delete)**: per `docs/IMPLEMENTATION_PLAN.md`,
-`apps/api`'s fourth domain module and the first to actually consume Milestone 9's
-media pipeline for something other than avatars — the first milestone where
-`Media.purpose: POST_IMAGE` rows get attached to anything. Also the first milestone
-rendering uploaded media through `next/image` (risk #9 in `docs/ARCHITECTURE.md` —
-confirm current Next 16 image-handling APIs before assuming this document's wording is
-still accurate).
+**Milestone 12 — Home Feed**: per `docs/IMPLEMENTATION_PLAN.md`, the first milestone
+where a post becomes visible to anyone besides its own author or a profile visitor —
+everything before this (Milestones 8–11) only ever surfaced posts one profile at a
+time. This is also risk #3 in `docs/ARCHITECTURE.md` actually being exercised for the
+first time: the documented MVP decision is fan-out-on-read (`WHERE authorId IN
+(following)` at query time, not a precomputed feed table), so this milestone is where
+that choice either holds up or needs revisiting — not a hypothetical to defer further.
 
-1. Schema: `Post` and `PostMedia` (`docs/DATABASE.md` §3.4/§3.5) — a new migration.
-   `PostMedia` orders a post's images (array order matters, docs/API.md §7); confirm
-   the ordering-column design against `docs/DATABASE.md` §3.5 rather than assume a
-   plain integer `position` column is what's specified.
-2. API (`docs/API.md` §7): `POST /posts` (body `{ caption?, location?, mediaIds:
-string[] }`, 1–10 items — every `mediaId` must be the caller's own `READY`,
-   `POST_IMAGE`-purpose media, not already attached to another post; reuse the
-   ownership/status-check pattern `MediaService.setAsAvatar` already established for
-   avatars, docs/ARCHITECTURE.md §8 point 4), `GET /posts/:id` (optional auth —
-   author, ordered media, counts, `isLikedByMe`/`isSavedByMe` — both `false`/`null`
-   stubs until Milestones 13/15 land `Like`/`SavedPost`, same stub-now-fill-later
-   pattern `PublicProfileResponse` used from Milestone 8 through this one),
-   `DELETE /posts/:id` (author-only soft delete, `403` for a non-author attempt —
-   this is the first endpoint that actually needs that check, unlike `PATCH /me`'s
-   Milestone 8 workaround).
-3. Web + mobile: a create-post flow reusing Milestone 9's presign→upload→poll flow
-   for multiple images (`MediaClient.waitUntilProcessed`/`uploadToPresignedUrl`
-   already handle one image at a time — decide explicitly whether to parallelize
-   multi-image uploads or await them sequentially, and document the choice rather
-   than default silently), caption/location inputs, a post detail view, and the
-   profile grid actually showing real posts (`GET /users/:username/posts`, stubbed
-   empty since Milestone 8, `docs/PROGRESS.md`'s Milestone 8 entry).
-4. **Tests**: integration tests for multi-image post creation, including the
-   media-must-be-`READY`-and-owned-by-caller validation and the 1–10 image bound
-   (both boundaries: 0 images and 11 images should both fail) — against the real
-   MinIO/Redis pipeline, not mocked, matching Milestone 9's own testing discipline;
-   Playwright covers creating a post with 2+ images and seeing it on the profile
-   grid.
+1. API (`docs/API.md` §7, `docs/DATABASE.md` §6): `GET /feed` (required auth) —
+   paginated posts from accounts the caller follows, newest first, real cursor
+   pagination reusing the exact `encodeCursor`/`decodeCursor` +
+   keyset-`WHERE`-on-`(createdAt, id)` pattern `FollowsService` (Milestone 10) and
+   `PostsService.getPostsByAuthor` (Milestone 11) both already established — this
+   is the third real instance of that pattern, not a new design. Decide explicitly
+   whether an account with zero follows gets an empty feed or some fallback (e.g.
+   their own posts, or nothing) — `docs/FEATURES.md` #10 should already say which;
+   confirm against it rather than assume.
+2. The feed's response shape is very likely just an array of the same `PostResponse`
+   Milestone 11 already defined (`docs/API.md` §7) — reuse `toPostResponse` and
+   `PostsService`'s existing per-post mapping rather than inventing a parallel
+   "feed post" type, unless the feed genuinely needs fields a profile-grid/detail
+   view doesn't (if so, document why before adding a new schema).
+3. Web + mobile: a feed screen — infinite scroll / load-more via cursor, each post
+   rendered with its full carousel (reuse whatever post-detail rendering approach
+   Milestone 11 already has, including the web/mobile swipeable-carousel deviation
+   recorded above — decide whether to close that gap for the feed specifically,
+   since a feed is a much higher-visibility surface than a single post-detail page,
+   or defer consistently with the existing deviation).
+4. **Tests**: an integration test that seeds a real follow graph and several posts
+   across multiple authors, then asserts: feed ordering (newest first), pagination
+   correctness (cursor-based, matching the established pattern's existing test
+   shape), and that posts from non-followed accounts are correctly excluded — against
+   the real Dockerized Postgres, not mocked, matching every milestone since 5's
+   testing discipline. Also a basic query-plan sanity check (e.g. `EXPLAIN` showing
+   index usage on the fan-out query) documented as a manual/CI-script step per
+   `docs/IMPLEMENTATION_PLAN.md`, not a unit test.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 11 section,
-`docs/DATABASE.md` §3.4/§3.5 (`Post`/`PostMedia`) in full, and `docs/API.md` §7. Note
-the register-throttle/shared-account disciplines from Milestones 8–10 (`apps/api-e2e`:
-share users via `beforeAll`, budget is 20/min/IP; `apps/web-e2e`: register once,
-re-login per test where a persistent identity is needed) — apply them from the start
-for this milestone's test files rather than registering fresh per test and hitting the
-same wall. Also worth deciding explicitly before writing the create-post endpoint:
-whether `mediaIds` ownership/status validation happens as N sequential `MediaService`
-calls or one batched query — `MediaService` doesn't currently expose a
-`getOwnedMedia`-for-multiple-ids method, so this is a real design choice, not a
-detail to default without recording.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 12 section,
+`docs/DATABASE.md` §6 (feed query design) in full, and `docs/API.md` §7's `GET /feed`
+row. Note the `/auth/register` throttle is now at 18/20 used (see Known Issues above)
+— this milestone's tests will need a follow graph with several distinct authors, so
+plan the minimum number of accounts needed and share them via `beforeAll` from the
+very first draft of the test file, not as a fix after hitting the ceiling (the pattern
+every milestone since 8's bug #20 has had to apply reactively at least once). Also
+worth deciding explicitly before writing the feed query: whether `GET /feed` accepts
+its own `limit`/`cursor` query params identically to the existing paginated endpoints
+(`docs/API.md` §1's general pagination convention) — almost certainly yes, but confirm
+against `docs/API.md` §7 rather than assume silently.

@@ -121,16 +121,16 @@ substitutions without meaningfully improving guessability; length is what matter
 | Method & path                | Auth     | Notes                                                                                                                                                                                                                                                                                                                                                        |
 | ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `GET /users/:username`       | optional | Public profile: bio, avatar, post/follower/following counts, `isFollowedByMe` (only computed when authenticated)                                                                                                                                                                                                                                             |
-| `GET /users/:username/posts` | optional | Paginated post grid for that user — **always an empty page until Milestone 11** (`Post` doesn't exist yet)                                                                                                                                                                                                                                                   |
+| `GET /users/:username/posts` | optional | Paginated post grid for that user — returns real `PostSummary` items, cursor-paginated newest-first (**implemented Milestone 11**, see §7)                                                                                                                                                                                                                   |
 | `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                                                                                                                                                                                                                                                                  |
 | `PATCH /me/avatar`           | required | Body `{ mediaId }` → `200` `MediaResponse` (§6) — must reference the caller's own `READY` `AVATAR`-purpose media (`403` if not the caller's own, `422 media-not-ready` — §14 — if wrong purpose or not `READY`). Returns the media resource, not `UserResponse`, since the latter deliberately never includes `avatarUrl` (§3) — **implemented Milestone 9** |
 | `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **Milestone 19**                                                                                                                                                                                                                                                           |
 
 `GET /users/:username`'s `avatarUrl` resolves to a real URL once the user has a `READY`
-`AVATAR` media set (implemented Milestone 9); `postsCount`/`followersCount`/`followingCount`
-are still always `0` (`Post`/`Follow` land Milestones 10–11) — the response schema (`PublicProfileResponseSchema`,
-`packages/validation`) already has the shape those milestones will fill in, so this
-isn't a breaking change later. `isFollowedByMe` is `null` for an unauthenticated
+`AVATAR` media set (implemented Milestone 9); `followersCount`/`followingCount` are real
+as of Milestone 10 and `postsCount` is real as of Milestone 11 — the response schema
+(`PublicProfileResponseSchema`, `packages/validation`) already had the shape those
+milestones filled in, so none of this was a breaking change. `isFollowedByMe` is `null` for an unauthenticated
 viewer, `false` for an authenticated one (never `true` yet — no `Follow` table to make
 it true). Auth is genuinely optional here (`OptionalAuthGuard`,
 `apps/api/src/modules/auth/`): a missing/invalid token is never rejected, just treated
@@ -173,12 +173,43 @@ since Milestone 8 to become fully live before `Post` (Milestone 11) does.
 
 ## 7. Posts
 
+`POST`/`GET`/`DELETE /posts*` implemented Milestone 11. `GET /feed` is still
+Milestone 12 (Home Feed) — not implemented yet.
+
 | Method & path       | Auth                   | Notes                                                                                                                                                                                            |
 | ------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `POST /posts`       | required               | Body `{ caption?, location?, mediaIds: string[] }` (1–10 items, order = array order); all `mediaIds` must be the caller's own `READY`, `POST_IMAGE`-purpose media not already attached elsewhere |
 | `GET /posts/:id`    | optional               | Single post with author, media (ordered), counts, `isLikedByMe`/`isSavedByMe` when authenticated                                                                                                 |
 | `DELETE /posts/:id` | required (author only) | Soft delete                                                                                                                                                                                      |
 | `GET /feed`         | required               | The authenticated home feed — paginated posts from followed accounts, newest first (see `DATABASE.md` §6)                                                                                        |
+
+**`PostResponse`** (`GET`/`POST /posts*`'s single-post shape — a judgment call, since
+this section only specified the fields at a high level before implementation):
+`{ id, author: { id, username, fullName, avatarUrl }, caption, location, media:
+[{ id, url, thumbnailUrl, width, height, blurhash, altText, position }], likesCount,
+commentsCount, isLikedByMe, isSavedByMe, createdAt }`. `likesCount`/`commentsCount` are
+hardcoded `0` and `isLikedByMe`/`isSavedByMe` stubbed `false` for an authenticated
+viewer / `null` for anonymous (the same null-for-anonymous convention
+`isFollowedByMe` established in Milestone 10) until `Like`/`SavedPost` exist
+(Milestones 13/15).
+
+**`PostSummary`** (the profile-grid tile shape returned by `GET
+/users/:username/posts`, deliberately minimal): `{ id, thumbnailUrl, createdAt }` —
+only the carousel's first (`position: 0`) image is resolved per post, not the whole
+media array, since a grid tile never needs more than a cover thumbnail.
+
+**Error mapping for `POST /posts`** (reusing existing catalog entries rather than
+minting new ones, per this codebase's established practice):
+
+| Condition                                                     | Response                                          |
+| ------------------------------------------------------------- | ------------------------------------------------- |
+| A `mediaId` not owned by the caller                           | `403`/`404` (`getOwnedMedia`'s existing behavior) |
+| A `mediaId` with the wrong `purpose` or not yet `READY`       | `422 media-not-ready` (reused from Milestone 9)   |
+| The same `mediaId` listed twice in one request                | `409 conflict`                                    |
+| A `mediaId` already attached to another post                  | `409 conflict`                                    |
+| Fewer than 1 or more than 10 `mediaIds`                       | `400` (Zod validation)                            |
+| A malformed pagination cursor on `GET /users/:username/posts` | `400`                                             |
+| `DELETE /posts/:id` by a non-author                           | `403`                                             |
 
 ## 8. Likes
 

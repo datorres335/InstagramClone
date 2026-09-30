@@ -1,4 +1,4 @@
-import { router } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useAuth } from '../../lib/auth-context';
@@ -16,6 +16,7 @@ export default function HomeScreen() {
       <Text style={styles.title} role="heading">
         Welcome, {user?.username}
       </Text>
+      <Link href="/post/new">New post</Link>
       <Pressable
         style={styles.button}
         onPress={handleLogout}

@@ -28,6 +28,9 @@ type _FollowRoute = paths['/api/v1/users/{username}/follow']['put'];
 type _UnfollowRoute = paths['/api/v1/users/{username}/follow']['delete'];
 type _FollowersRoute = paths['/api/v1/users/{username}/followers']['get'];
 type _FollowingRoute = paths['/api/v1/users/{username}/following']['get'];
+type _CreatePostRoute = paths['/api/v1/posts']['post'];
+type _GetPostRoute = paths['/api/v1/posts/{id}']['get'];
+type _DeletePostRoute = paths['/api/v1/posts/{id}']['delete'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

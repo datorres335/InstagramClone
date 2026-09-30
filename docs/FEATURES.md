@@ -85,7 +85,7 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `GET /users/:username/followers`, `GET
 /users/:username/following` (`API.md` §5).
 
-### 7. Image Posts
+### 7. Image Posts (implemented Milestone 11)
 
 - A post has 1..N images, an optional caption, optional free-text location.
 - Created only from `READY` media the poster owns (enforced server-side, §6 of
@@ -94,11 +94,18 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Post`, `PostMedia`, `Media` (`DATABASE.md` §3.3–3.5),
   `POST /posts`, `GET /posts/:id` (`API.md` §7).
 
-### 8. Multiple Images Per Post
+### 8. Multiple Images Per Post (implemented Milestone 11)
 
 - Carousel of up to 10 images per post (matching Instagram's own limit), ordered by the
-  `position` the client specifies at creation time; web/mobile render a swipeable
-  carousel with a page indicator.
+  `position` the client specifies at creation time.
+- **Deviation**: mobile's post detail screen renders a real swipeable, paged carousel
+  (`FlatList` with `pagingEnabled`); web's post detail page renders every image in the
+  carousel as a plain stacked list instead of a swipeable widget — building a
+  from-scratch swipe/drag carousel in plain React (no carousel library is in this
+  repo's dependency tree, and adding one wasn't judged worth it for one milestone's
+  detail page) was deferred as a small, low-risk follow-up rather than blocking this
+  milestone. All images are still present, in the correct `position` order, on both
+  platforms — only the _browsing interaction_ differs.
 - **Out of scope**: reordering images after the post is created (create is atomic —
   editing media composition after the fact is not part of the MVP; caption editing may
   still be allowed, see below).

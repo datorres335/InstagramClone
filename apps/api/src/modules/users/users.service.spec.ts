@@ -37,12 +37,19 @@ function createDeps() {
       .mockResolvedValue({ followers: 0, following: 0 }),
     isFollowing: jest.fn().mockResolvedValue(false),
   };
+  const postsService = {
+    getPostsByAuthor: jest
+      .fn()
+      .mockResolvedValue({ data: [], meta: { nextCursor: null } }),
+    getPostCountByAuthor: jest.fn().mockResolvedValue(0),
+  };
   const service = new UsersService(
     prisma as never,
     mediaService as never,
     followsService as never,
+    postsService as never,
   );
-  return { service, prisma, mediaService, followsService };
+  return { service, prisma, mediaService, followsService, postsService };
 }
 
 describe('UsersService', () => {
@@ -112,6 +119,17 @@ describe('UsersService', () => {
       expect(result.followingCount).toBe(3);
     });
 
+    it('reports a real post count from PostsService', async () => {
+      const { service, prisma, postsService } = createDeps();
+      prisma.user.findFirst.mockResolvedValue(fakeUser);
+      postsService.getPostCountByAuthor.mockResolvedValue(7);
+
+      const result = await service.getPublicProfile('alice', undefined);
+
+      expect(postsService.getPostCountByAuthor).toHaveBeenCalledWith('user-1');
+      expect(result.postsCount).toBe(7);
+    });
+
     it("resolves avatarUrl via MediaService from the user's avatarMedia relation", async () => {
       const { service, prisma, mediaService } = createDeps();
       const userWithAvatar = { ...fakeUser, avatarMedia: { id: 'media-1' } };
@@ -148,23 +166,36 @@ describe('UsersService', () => {
   });
 
   describe('getUserPosts', () => {
-    it('returns an empty page for an existing user', async () => {
-      const { service, prisma } = createDeps();
+    it('delegates to PostsService.getPostsByAuthor with the resolved userId', async () => {
+      const { service, prisma, postsService } = createDeps();
       prisma.user.findFirst.mockResolvedValue(fakeUser);
-
-      await expect(service.getUserPosts('alice')).resolves.toEqual({
-        data: [],
+      const page = {
+        data: [
+          {
+            id: 'post-1',
+            thumbnailUrl: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
         meta: { nextCursor: null },
+      };
+      postsService.getPostsByAuthor.mockResolvedValue(page);
+
+      const result = await service.getUserPosts('alice', { limit: 20 });
+
+      expect(postsService.getPostsByAuthor).toHaveBeenCalledWith('user-1', {
+        limit: 20,
       });
+      expect(result).toEqual(page);
     });
 
     it('throws NotFoundException for a username that does not exist', async () => {
       const { service, prisma } = createDeps();
       prisma.user.findFirst.mockResolvedValue(null);
 
-      await expect(service.getUserPosts('nobody')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.getUserPosts('nobody', { limit: 20 }),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 

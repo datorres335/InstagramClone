@@ -14,7 +14,7 @@ import ProfileScreen from '../app/profile/[username]';
 
 jest.mock('../lib/api-client', () => ({
   apiClient: {
-    users: { getProfile: jest.fn() },
+    users: { getProfile: jest.fn(), getPosts: jest.fn() },
     follows: {
       follow: jest.fn(),
       unfollow: jest.fn(),
@@ -57,6 +57,10 @@ const fakeProfile = {
 describe('ProfileScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(apiClient.users.getPosts).mockResolvedValue({
+      data: [],
+      meta: { nextCursor: null },
+    });
   });
 
   it('renders the profile once it loads', async () => {
@@ -265,6 +269,56 @@ describe('ProfileScreen', () => {
       expect(router.push).toHaveBeenCalledWith({
         pathname: '/profile/following',
         params: { username: 'alice' },
+      });
+    });
+  });
+
+  describe('post grid', () => {
+    it('shows an empty state when the user has no posts', async () => {
+      jest.mocked(apiClient.users.getProfile).mockResolvedValue(fakeProfile);
+      jest.mocked(useAuth).mockReturnValue({
+        user: null,
+        loading: false,
+        setUser: jest.fn(),
+        logout: jest.fn(),
+      });
+
+      render(<ProfileScreen />);
+
+      await waitFor(() =>
+        expect(screen.getByText('No posts yet.')).toBeTruthy(),
+      );
+    });
+
+    it('renders a thumbnail per post and navigates to it on tap', async () => {
+      jest.mocked(apiClient.users.getProfile).mockResolvedValue(fakeProfile);
+      jest.mocked(apiClient.users.getPosts).mockResolvedValue({
+        data: [
+          {
+            id: 'post-1',
+            thumbnailUrl: 'http://minio.test/post-1/thumbnail.webp',
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        ],
+        meta: { nextCursor: null },
+      });
+      jest.mocked(useAuth).mockReturnValue({
+        user: null,
+        loading: false,
+        setUser: jest.fn(),
+        logout: jest.fn(),
+      });
+
+      render(<ProfileScreen />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('post-tile-post-1')).toBeTruthy();
+      });
+      fireEvent.press(screen.getByTestId('post-tile-post-1'));
+
+      expect(router.push).toHaveBeenCalledWith({
+        pathname: '/post/[id]',
+        params: { id: 'post-1' },
       });
     });
   });

@@ -63,6 +63,8 @@ model User {
   following Follow[] @relation("Follower")
   followers Follow[] @relation("Following")
 
+  posts Post[] @relation("AuthoredPosts")
+
   @@index([deletedAt])
   @@map("users")
 }
@@ -144,7 +146,8 @@ model Media {
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
 
-  avatarOfUser User? @relation("UserAvatar")
+  avatarOfUser User?      @relation("UserAvatar")
+  postMedia    PostMedia?
 
   @@index([ownerId, status])
   @@map("media")
@@ -173,4 +176,55 @@ model Follow {
   @@id([followerId, followingId])
   @@index([followingId, followerId])
   @@map("follows")
+}
+
+/// One or more images with an optional caption/location (docs/DATABASE.md §3.4,
+/// docs/FEATURES.md #7/#8). The 1–10 image bound is enforced in `PostsService`,
+/// not the schema — Prisma has no row-count-per-parent constraint.
+model Post {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  authorId String @map("author_id") @db.Uuid
+  author   User   @relation("AuthoredPosts", fields: [authorId], references: [id], onDelete: Cascade)
+
+  caption  String?
+  location String?
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  media PostMedia[]
+
+  // Serves "posts by this user, newest first" (profile grid, docs/DATABASE.md
+  // §3.4) — a plain B-tree, not the partial `WHERE deletedAt IS NULL` index
+  // originally specified there; same Prisma-has-no-partial-index deviation
+  // already recorded for `User.deletedAt` (Milestone 2).
+  @@index([authorId, createdAt(sort: Desc)])
+  @@map("posts")
+}
+
+/// Ordered join between a `Post` and its `Media` (docs/DATABASE.md §3.5).
+/// `mediaId` is `@unique` — beyond the documented `unique(postId, mediaId)`,
+/// a media row can be attached to at most one post, ever ("not already
+/// attached elsewhere", docs/API.md §7) — enforced here, not only checked in
+/// `PostsService`, the same "`@unique` is the real invariant" reasoning
+/// Milestone 9 applied to `User.avatarMediaId`. That also makes the
+/// documented `unique(postId, mediaId)` redundant (a unique `mediaId` alone
+/// already implies it), so only `unique(postId, position)` is a second index.
+model PostMedia {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  postId String @map("post_id") @db.Uuid
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  mediaId String @unique @map("media_id") @db.Uuid
+  media   Media  @relation(fields: [mediaId], references: [id])
+
+  // 0-based order within the post's carousel (docs/FEATURES.md #8).
+  position Int     @db.SmallInt
+  altText  String? @map("alt_text")
+
+  @@unique([postId, position])
+  @@map("post_media")
 }

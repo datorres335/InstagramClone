@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 
 import type {
   MediaResponse,
+  PaginationQuery,
   PublicProfileResponse,
   UpdateProfileInput,
   UserPostsResponse,
@@ -12,6 +13,7 @@ import { toUserResponse } from '../../common/mappers/user-response.mapper';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FollowsService } from '../follows/follows.service';
 import { MediaService } from '../media/media.service';
+import { PostsService } from '../posts/posts.service';
 import { toPublicProfileResponse } from './profile-response.mapper';
 
 @Injectable()
@@ -20,6 +22,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
     private readonly followsService: FollowsService,
+    private readonly postsService: PostsService,
   ) {}
 
   async getPublicProfile(
@@ -28,13 +31,20 @@ export class UsersService {
   ): Promise<PublicProfileResponse> {
     const user = await this.findActiveUserByUsername(username);
     const avatarUrl = this.mediaService.resolveAvatarUrl(user.avatarMedia);
-    const [counts, isFollowedByMe] = await Promise.all([
+    const [counts, isFollowedByMe, postsCount] = await Promise.all([
       this.followsService.getFollowCounts(user.id),
       viewerId
         ? this.followsService.isFollowing(viewerId, user.id)
         : Promise.resolve(null),
+      this.postsService.getPostCountByAuthor(user.id),
     ]);
-    return toPublicProfileResponse(user, avatarUrl, counts, isFollowedByMe);
+    return toPublicProfileResponse(
+      user,
+      avatarUrl,
+      counts,
+      isFollowedByMe,
+      postsCount,
+    );
   }
 
   /** `PATCH /me/avatar` (docs/API.md §4) — validation/ownership lives in `MediaService`. */
@@ -43,14 +53,16 @@ export class UsersService {
   }
 
   /**
-   * Always an empty page today — `Post` doesn't exist until Milestone 11
-   * (see `userPostsResponseSchema`). Still confirms the user actually
-   * exists first, so a typo'd username 404s instead of silently looking
-   * like "this user just has no posts."
+   * The profile grid (docs/API.md §4), real as of Milestone 11. Still
+   * confirms the user actually exists first, so a typo'd username 404s
+   * instead of silently looking like "this user just has no posts."
    */
-  async getUserPosts(username: string): Promise<UserPostsResponse> {
-    await this.findActiveUserByUsername(username);
-    return { data: [], meta: { nextCursor: null } };
+  async getUserPosts(
+    username: string,
+    query: PaginationQuery,
+  ): Promise<UserPostsResponse> {
+    const user = await this.findActiveUserByUsername(username);
+    return this.postsService.getPostsByAuthor(user.id, query);
   }
 
   async updateOwnProfile(

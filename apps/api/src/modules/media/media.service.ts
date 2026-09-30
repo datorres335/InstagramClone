@@ -7,7 +7,7 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 
-import type { Media } from '@instagram-clone/prisma-client';
+import type { Media, MediaPurpose } from '@instagram-clone/prisma-client';
 import type {
   MediaResponse,
   PresignMediaInput,
@@ -105,11 +105,37 @@ export class MediaService {
   }
 
   async setAsAvatar(userId: string, mediaId: string): Promise<MediaResponse> {
+    const media = await this.getReadyMediaForAttachment(
+      userId,
+      mediaId,
+      'AVATAR',
+    );
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatarMediaId: media.id },
+    });
+
+    return toMediaResponse(media, this.storage);
+  }
+
+  /**
+   * Ownership + purpose + `READY`-status validation shared by every
+   * "attach this media to something" flow (`setAsAvatar` above;
+   * `PostsService.createPost`, Milestone 11) — `403`/`404` via
+   * `getOwnedMedia`, `422 media-not-ready` (docs/API.md §14) for the wrong
+   * `purpose` or a non-`READY` status.
+   */
+  async getReadyMediaForAttachment(
+    userId: string,
+    mediaId: string,
+    purpose: MediaPurpose,
+  ): Promise<Media> {
     const media = await this.getOwnedMedia(userId, mediaId);
 
-    if (media.purpose !== 'AVATAR') {
+    if (media.purpose !== purpose) {
       throw new MediaNotReadyException(
-        'This media was not uploaded for avatar use.',
+        `This media was not uploaded for ${purpose.toLowerCase()} use.`,
       );
     }
     if (media.status !== 'READY') {
@@ -118,12 +144,7 @@ export class MediaService {
       );
     }
 
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: { avatarMediaId: media.id },
-    });
-
-    return toMediaResponse(media, this.storage);
+    return media;
   }
 
   /** Shared by `UsersService.getPublicProfile` to resolve `PublicProfileResponse.avatarUrl`. */

@@ -21,6 +21,7 @@ export default async function HomePage() {
     <main>
       <h1>Welcome, {user.username}</h1>
       <Link href={`/${user.username}`}>View profile</Link>
+      <Link href="/posts/new">New post</Link>
       <form action={logoutAction}>
         <button type="submit">Log out</button>
       </form>

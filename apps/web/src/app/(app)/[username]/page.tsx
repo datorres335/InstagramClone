@@ -31,7 +31,10 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
     throw error;
   }
 
-  const viewer = await apiClient.auth.session();
+  const [viewer, posts] = await Promise.all([
+    apiClient.auth.session(),
+    apiClient.users.getPosts(username),
+  ]);
   const isOwnProfile = viewer?.username === profile.username;
 
   return (
@@ -57,12 +60,48 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
           </Link>
         </li>
       </ul>
-      {isOwnProfile && <Link href="/profile/edit">Edit profile</Link>}
+      {isOwnProfile && (
+        <>
+          <Link href="/profile/edit">Edit profile</Link>
+          <Link href="/posts/new">New post</Link>
+        </>
+      )}
       {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (
         <FollowButton
           username={profile.username}
           initialIsFollowing={profile.isFollowedByMe}
         />
+      )}
+      {posts.data.length === 0 ? (
+        <p>No posts yet.</p>
+      ) : (
+        <ul>
+          {posts.data.map((post) => (
+            <li key={post.id}>
+              <Link href={`/p/${post.id}`}>
+                {post.thumbnailUrl ? (
+                  <img
+                    src={post.thumbnailUrl}
+                    alt=""
+                    width={150}
+                    height={150}
+                    style={{ objectFit: 'cover' }}
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      display: 'inline-block',
+                      width: 150,
+                      height: 150,
+                      backgroundColor: '#e5e7eb',
+                    }}
+                  />
+                )}
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
     </main>
   );

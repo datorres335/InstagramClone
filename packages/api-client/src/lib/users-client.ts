@@ -12,7 +12,7 @@ import type { HttpClient } from './http-client';
 
 export interface UsersClient {
   getProfile(username: string): Promise<PublicProfileResponse>;
-  /** Always an empty page today — `Post` doesn't exist until Milestone 11 (docs/API.md §4). */
+  /** The profile grid, paginated (docs/API.md §4). */
   getPosts(
     username: string,
     query?: PaginationQuery,
