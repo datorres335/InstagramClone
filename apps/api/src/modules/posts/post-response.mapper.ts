@@ -10,6 +10,7 @@ import {
   resolveAvatarUrl,
   resolveVariantUrls,
 } from '../media/media-response.mapper';
+import type { LikeState } from '../likes/likes.service';
 import type { StorageService } from '../../storage/storage.service';
 
 /**
@@ -28,15 +29,18 @@ export type PostWithRelations = Post & {
 };
 
 /**
- * `likesCount`/`commentsCount` are `0` and `isLikedByMe`/`isSavedByMe` follow
+ * `likesCount`/`isLikedByMe` are real as of Milestone 13 (`likeState`,
+ * computed by `LikesService.getLikeStateForPosts` — batched per page, not
+ * per post). `commentsCount`/`isSavedByMe` are still `0`/stubbed, following
  * the same null-for-anonymous, real-boolean-for-authenticated convention
  * `isFollowedByMe` established (Milestone 10) — real values land with
- * `Like`/`SavedPost` (Milestones 13/15).
+ * `Comment`/`SavedPost` (Milestones 14/15).
  */
 export function toPostResponse(
   post: PostWithRelations,
   storage: StorageService,
   isViewerAuthenticated: boolean,
+  likeState: LikeState,
 ): PostResponse {
   return {
     id: post.id,
@@ -64,9 +68,9 @@ export function toPostResponse(
         position: postMedia.position,
       };
     }),
-    likesCount: 0,
+    likesCount: likeState.likesCount,
     commentsCount: 0,
-    isLikedByMe: isViewerAuthenticated ? false : null,
+    isLikedByMe: likeState.isLikedByMe,
     isSavedByMe: isViewerAuthenticated ? false : null,
     createdAt: post.createdAt.toISOString(),
   };

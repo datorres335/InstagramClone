@@ -15,6 +15,7 @@ import PostScreen from '../app/post/[id]';
 jest.mock('../lib/api-client', () => ({
   apiClient: {
     posts: { getById: jest.fn(), remove: jest.fn() },
+    likes: { like: jest.fn(), unlike: jest.fn() },
   },
 }));
 jest.mock('../lib/auth-context', () => ({
@@ -85,7 +86,8 @@ describe('PostScreen', () => {
     );
     expect(screen.getByText('Hello world')).toBeTruthy();
     expect(screen.getByText('San Francisco')).toBeTruthy();
-    expect(screen.getByText('2 likes · 1 comments')).toBeTruthy();
+    expect(screen.getByText('2 likes')).toBeTruthy();
+    expect(screen.getByText('1 comments')).toBeTruthy();
     expect(apiClient.posts.getById).toHaveBeenCalledWith('post-1');
   });
 
@@ -138,6 +140,31 @@ describe('PostScreen', () => {
       expect(screen.getByRole('heading')).toHaveTextContent('@alice'),
     );
     expect(screen.queryByText('Delete post')).toBeNull();
+  });
+
+  it('toggles the like button and count for an authenticated viewer', async () => {
+    jest
+      .mocked(apiClient.posts.getById)
+      .mockResolvedValue({ ...fakePost, isLikedByMe: false });
+    jest.mocked(apiClient.likes.like).mockResolvedValue(undefined);
+    jest.mocked(useAuth).mockReturnValue({
+      user: null,
+      loading: false,
+      setUser: jest.fn(),
+      logout: jest.fn(),
+    });
+
+    render(<PostScreen />);
+    await waitFor(() => expect(screen.getByText('Like')).toBeTruthy());
+    expect(screen.getByText('2 likes')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Like'));
+
+    await waitFor(() => {
+      expect(apiClient.likes.like).toHaveBeenCalledWith('post-1');
+      expect(screen.getByText('Unlike')).toBeTruthy();
+      expect(screen.getByText('3 likes')).toBeTruthy();
+    });
   });
 
   it('deletes the post and navigates to the author profile', async () => {

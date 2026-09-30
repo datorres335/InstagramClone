@@ -17,6 +17,7 @@ import type {
 
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
+import { LikesService } from '../likes/likes.service';
 import { MediaService } from '../media/media.service';
 import { resolveVariantUrls } from '../media/media-response.mapper';
 import { StorageService } from '../../storage/storage.service';
@@ -28,6 +29,7 @@ export class PostsService {
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
     private readonly storage: StorageService,
+    private readonly likesService: LikesService,
   ) {}
 
   /** `POST /posts` (docs/API.md §7) — 1–10 images, all the caller's own `READY` `POST_IMAGE` media, none already attached elsewhere. */
@@ -80,7 +82,13 @@ export class PostsService {
       },
     });
 
-    return toPostResponse(post, this.storage, true);
+    // A freshly created post always has 0 likes and isn't liked by its own
+    // creator yet — no need to query LikesService for a post that didn't
+    // exist a moment ago.
+    return toPostResponse(post, this.storage, true, {
+      likesCount: 0,
+      isLikedByMe: false,
+    });
   }
 
   /** `GET /posts/:id` (docs/API.md §7) — optional auth, only changes `isLikedByMe`/`isSavedByMe`. */
@@ -89,7 +97,16 @@ export class PostsService {
     viewerId: string | undefined,
   ): Promise<PostResponse> {
     const post = await this.findActivePost(postId);
-    return toPostResponse(post, this.storage, viewerId !== undefined);
+    const likeState = await this.likesService.getLikeStateForPosts(
+      [postId],
+      viewerId,
+    );
+    return toPostResponse(
+      post,
+      this.storage,
+      viewerId !== undefined,
+      likeState.get(postId) ?? { likesCount: 0, isLikedByMe: null },
+    );
   }
 
   /** `DELETE /posts/:id` (docs/API.md §7) — author-only soft delete. */
@@ -207,8 +224,18 @@ export class PostsService {
         ? encodeCursor({ createdAt: lastRow.createdAt, id: lastRow.id })
         : null;
 
+    // Batched for the whole page — one pair of queries, not one per post.
+    const likeStates = await this.likesService.getLikeStateForPosts(
+      page.map((post) => post.id),
+      viewerId,
+    );
     const data: PostResponse[] = page.map((post) =>
-      toPostResponse(post, this.storage, true),
+      toPostResponse(
+        post,
+        this.storage,
+        true,
+        likeStates.get(post.id) ?? { likesCount: 0, isLikedByMe: false },
+      ),
     );
 
     return { data, meta: { nextCursor } };

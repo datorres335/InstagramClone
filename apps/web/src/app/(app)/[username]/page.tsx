@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { ApiError } from '@instagram-clone/api-client';
 
 import { getApiClient } from '../../../lib/get-api-client';
-import { FollowButton } from './follow-button';
+import { FollowButton } from '../follow-button';
 
 interface ProfilePageProps {
   params: Promise<{ username: string }>;

@@ -13,6 +13,7 @@ import HomeScreen from '../app/(tabs)/home';
 jest.mock('../lib/api-client', () => ({
   apiClient: {
     posts: { getFeed: jest.fn(), remove: jest.fn() },
+    likes: { like: jest.fn(), unlike: jest.fn() },
   },
 }));
 jest.mock('../lib/auth-context', () => ({

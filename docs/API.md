@@ -189,11 +189,11 @@ Milestone 12.
 this section only specified the fields at a high level before implementation):
 `{ id, author: { id, username, fullName, avatarUrl }, caption, location, media:
 [{ id, url, thumbnailUrl, width, height, blurhash, altText, position }], likesCount,
-commentsCount, isLikedByMe, isSavedByMe, createdAt }`. `likesCount`/`commentsCount` are
-hardcoded `0` and `isLikedByMe`/`isSavedByMe` stubbed `false` for an authenticated
-viewer / `null` for anonymous (the same null-for-anonymous convention
-`isFollowedByMe` established in Milestone 10) until `Like`/`SavedPost` exist
-(Milestones 13/15).
+commentsCount, isLikedByMe, isSavedByMe, createdAt }`. `likesCount`/`isLikedByMe` are
+real as of Milestone 13 (§8). `commentsCount` is still hardcoded `0` and `isSavedByMe`
+still stubbed `false` for an authenticated viewer / `null` for anonymous (the same
+null-for-anonymous convention `isFollowedByMe` established in Milestone 10) until
+`Comment`/`SavedPost` exist (Milestones 14/15).
 
 **`PostSummary`** (the profile-grid tile shape returned by `GET
 /users/:username/posts`, deliberately minimal): `{ id, thumbnailUrl, createdAt }` —
@@ -230,13 +230,32 @@ comes back empty). A malformed cursor is `400`; an unauthenticated request is `4
 (unlike `GET /posts/:id`, `GET /feed` has no anonymous-viewer mode — showing a feed
 without a viewer to compute it for is meaningless).
 
-## 8. Likes
+## 8. Likes (implemented Milestone 13)
 
 | Method & path                | Auth     | Notes                                      |
 | ---------------------------- | -------- | ------------------------------------------ |
 | `PUT /posts/:postId/like`    | required | Idempotent like; `204`                     |
 | `DELETE /posts/:postId/like` | required | Idempotent unlike; `204`                   |
 | `GET /posts/:postId/likes`   | optional | Paginated list of users who liked the post |
+
+`PUT`/`DELETE` mirror `Follow`'s exact idempotent-toggle convention (Milestone 10) —
+`upsert`/`deleteMany`, never a create-then-catch-conflict pattern. Both `404` for a
+nonexistent/soft-deleted post. `GET /posts/:postId/likes` reuses `FollowListResponse`
+verbatim, not a new `LikeListResponse` type — a likers list row (`{ id, username,
+fullName, avatarUrl, isFollowedByMe }`) is the identical shape a followers/following
+list row already is, `isFollowedByMe` computed relative to the viewer exactly the same
+way. `PostResponse.likesCount`/`isLikedByMe` (docs/API.md §7) are real as of this
+milestone, computed by `LikesService.getLikeStateForPosts` — batched per page (one
+pair of queries for a whole feed page, not one per post), never per-row for a single
+`GET /posts/:id` either, since that call always goes through the same batched method
+with an array of one. **No `Notification` side effect**: `docs/FEATURES.md` #11
+describes liking as generating a notification for the post's author, but
+`docs/IMPLEMENTATION_PLAN.md` M13 explicitly offers deferring that to Milestone 16
+(when `Notification` itself lands) as a sanctioned alternative to pulling the whole
+notification pipeline forward — chosen here since implementing `Notification`'s
+table/enqueue/consumer/list-endpoint/UI as a side effect of "Likes" would be
+implementing most of Milestone 16 early, well beyond this milestone's own scope
+(see `docs/PROGRESS.md`'s Milestone 13 deviations).
 
 ## 9. Comments
 

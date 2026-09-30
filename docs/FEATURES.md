@@ -141,12 +141,20 @@ referenced to `DATABASE.md` / `API.md`).
   `Follow` never containing a self-edge, not special-cased logic).
 - Entities/endpoints: `GET /feed` (`API.md` §7).
 
-### 11. Likes
+### 11. Likes (implemented Milestone 13)
 
 - Like/unlike a post; like count and "liked by me" state shown everywhere a post
-  appears (feed, profile grid detail, post detail).
-- Liking generates a `Notification` for the post's author (unless the author liked
-  their own post).
+  appears (feed, post detail). Profile grid tiles (`PostSummary`) deliberately don't
+  show it — a grid tile is a thumbnail-only shape (`docs/API.md` §7), not a full post
+  card; opening the post shows the real count.
+- **Deviation, deliberately not implemented this milestone**: liking does not
+  currently generate a `Notification` for the post's author. `docs/IMPLEMENTATION_PLAN.md`
+  M13 explicitly offered pulling Milestone 16's whole `Notification` table/enqueue/
+  consumer/list-endpoint/UI forward as an alternative to deferring it — building all
+  of that as a side effect of "Likes" would mean implementing most of a different,
+  much larger milestone early, so it was deferred to Milestone 16 as the plan's other
+  sanctioned option (see `docs/PROGRESS.md`'s Milestone 13 deviations for the full
+  reasoning). The like feature itself is functionally complete without it.
 - **Out of scope**: liking comments (schema/API note it explicitly as future — would be
   a new `CommentLike` table, structurally identical to `Like`), seeing "liked by X and Y
   others" phrasing beyond a simple liker list/count.

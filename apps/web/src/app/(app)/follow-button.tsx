@@ -11,12 +11,12 @@ interface FollowButtonProps {
 }
 
 /**
- * Reused on the profile page itself and on any followers/following list row
- * (docs/FEATURES.md #5/#6) — `username` is always the *target* of the
- * button, not necessarily the page's own subject. `router.refresh()` after
- * a successful toggle re-fetches the surrounding Server Component's data
- * (follower/following counts) rather than duplicating that count as client
- * state here.
+ * Reused on the profile page itself, any followers/following list row, and
+ * a post's likers list (docs/FEATURES.md #5/#6) — `username` is always the
+ * *target* of the button, not necessarily the page's own subject.
+ * `router.refresh()` after a successful toggle re-fetches the surrounding
+ * Server Component's data (follower/following counts) rather than
+ * duplicating that count as client state here.
  */
 export function FollowButton({
   username,

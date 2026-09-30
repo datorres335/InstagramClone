@@ -11,6 +11,8 @@ import {
 
 import type { PostResponse } from '@instagram-clone/validation';
 
+import { LikeButton } from './like-button';
+
 interface PostCardProps {
   post: PostResponse;
   isAuthor: boolean;
@@ -67,9 +69,18 @@ export function PostCard({
         )}
       />
       {post.caption && <Text>{post.caption}</Text>}
-      <Text>
-        {post.likesCount} likes · {post.commentsCount} comments
-      </Text>
+      {post.isLikedByMe === null ? (
+        <Link href={{ pathname: '/post/likes', params: { postId: post.id } }}>
+          {post.likesCount} likes
+        </Link>
+      ) : (
+        <LikeButton
+          postId={post.id}
+          initialIsLiked={post.isLikedByMe}
+          initialLikesCount={post.likesCount}
+        />
+      )}
+      <Text>{post.commentsCount} comments</Text>
       {isAuthor && (
         <View>
           <Pressable

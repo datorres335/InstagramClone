@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 12 — Home Feed
+**Current Milestone:** Milestone 13 — Likes
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -85,7 +85,16 @@ real now — `web` via a "Load more" button, `mobile` via genuine `onEndReached`
 scroll — replacing the stub welcome screens both platforms have carried since
 Milestones 6/7. A shared `PostCard` component (one per platform) now backs both the
 feed and the post detail view, the second real consumer that justified extracting it
-out of `/p/[id]`'s/`post/[id].tsx`'s previously-inline markup.
+out of `/p/[id]`'s/`post/[id].tsx`'s previously-inline markup. Milestone 13 adds
+`apps/api`'s sixth domain module, `LikesModule`, and is the first of the three stub
+fields (`likesCount`, `isLikedByMe`) `PostResponse` has carried since Milestone 11 to
+go live: a new `Like` table (composite PK on `(userId, postId)`, mirroring `Follow`'s
+own composite-PK pattern), `PUT`/`DELETE /posts/:postId/like` (idempotent either way,
+matching `Follow`'s exact toggle convention), and `GET /posts/:postId/likes`
+(cursor-paginated, reusing `FollowListResponse` verbatim rather than a parallel type).
+Both `web` and `mobile` gained a like/unlike button on the shared `PostCard` (feed and
+post detail) and a likers list screen. No `Notification` side effect yet — deferred to
+Milestone 16 by design, not an oversight (see this milestone's Deviations entry).
 
 ---
 
@@ -716,6 +725,77 @@ createdAt(sort: Desc)])`) and `PostMedia` (§3.5: ordered join to `Media`,
       integration test and the query-plan check) + a manual, throwaway
       Playwright script (written, run, and deleted — not committed) proving
       a real browser session sees a followed account's post on `/home`
+
+### Milestone 13 — Likes
+
+- [x] `prisma/schema.prisma` — `Like` (docs/DATABASE.md §3.7: composite PK
+      `(userId, postId)`, secondary index on `postId` alone for count/list
+      queries, `onDelete: Cascade` on both FKs) and the reverse
+      `User.likes`/`Post.likes` relations — a new migration, hand-placed via
+      the same `prisma migrate diff` + `migrate deploy` workaround every
+      prior migration has used
+- [x] `apps/api/src/modules/likes/` — `LikesModule`/`LikesController`/
+      `LikesService`, `apps/api`'s sixth domain module. `like`/`unlike` are
+      idempotent (`upsert`/`deleteMany`, matching `FollowsService` exactly);
+      `getLikeStateForPosts(postIds, viewerId)` batches counts + the
+      viewer's own likes for a whole page in one pair of queries, used
+      identically by a single-post `GET` (an array of one) and the feed (a
+      whole page) so `PostsService` never needs two calling conventions;
+      `getLikers` does real keyset pagination reusing `FollowListResponse`
+- [x] Three endpoints wired: `PUT`/`DELETE /posts/:postId/like` (`404` for a
+      nonexistent/soft-deleted post), `GET /posts/:postId/likes` (optional
+      auth, `400` for a malformed cursor)
+- [x] `PostsService`/`post-response.mapper.ts` updated to take a real
+      `LikeState` at every `PostResponse` call site (`createPost` hardcodes
+      `{likesCount: 0, isLikedByMe: false}` without querying — a fresh post
+      can't have likes yet; `getById` and `getFeed` both call
+      `LikesService.getLikeStateForPosts` for real values, `getFeed` once
+      for the whole page)
+- [x] `packages/api-client`'s new `likes` namespace (`like`/`unlike`/
+      `getLikers`) — no new `packages/validation` types needed;
+      `GET /posts/:postId/likes` reuses `FollowListResponse` verbatim
+- [x] `apps/web`: a `LikeButton` client component (local state, not
+      `router.refresh()` — a like on a feed item shouldn't discard
+      `FeedList`'s "Load more" pagination state) on the shared `PostCard`,
+      and a `/p/[id]/likes` likers list page. `FollowButton`/
+      `FollowListItem`/`follow-actions.ts` promoted from `[username]/` to
+      the shared `apps/web/src/app/(app)/` directory (the same "second real
+      consumer" threshold `PostCard`/`DeletePostButton` crossed in
+      Milestone 12), since the likers list reuses them verbatim
+- [x] `apps/mobile`: a `LikeButton` component (calls `apiClient` directly,
+      no Server Action indirection needed) on the shared `PostCard`, and a
+      flat `post/likes.tsx` screen (reached via `router.push`/`Link` with
+      `postId` as a param — the same flat-route-over-directory-restructure
+      choice Milestone 10 made for `profile/followers.tsx`/`following.tsx`)
+      reusing the existing `components/follow-list-item.tsx` verbatim
+- [x] 14 new `likes.service.spec.ts` unit tests, 3 new `PostsService`
+      integration tests confirming the real `LikesService` wiring (`getById`
+      reports a real count, `createPost` never queries `LikesService`,
+      `getFeed` batches in exactly one call), 5 new `likes-client.spec.ts`
+      cases, 1 new `openapi-contract.spec.ts` type reference
+- [x] 7 new mobile unit tests: `like-button.spec.tsx` (3, including an
+      API-failure case that leaves the count unchanged) and
+      `post-likes.spec.tsx` (3, mirroring `follow-lists.spec.tsx`'s
+      pattern), plus 1 rewritten `post-detail.spec.tsx` assertion (the old
+      combined `"2 likes · 1 comments"` text no longer exists as one node)
+      and 1 new interactive-toggle case in that same file
+- [x] 10 new `apps/api-e2e` integration tests (`likes/likes.spec.ts`) — real
+      accounts/post, not mocked: like/unlike idempotency, real
+      `likesCount`/`isLikedByMe` on `GET /posts/:id` for the liker, a
+      different authenticated viewer, and an anonymous one, `404`s for a
+      nonexistent post, `401` for an unauthenticated like, a real
+      keyset-paginated likers list (newest-first, `isFollowedByMe`
+      resolved), a malformed-cursor `400`, and confirmation that `GET /feed`
+      reports the same real like state Milestone 12's feed query returns
+- [x] 1 new `apps/web-e2e` Playwright test (`like-post.spec.ts`, Chromium) —
+      a real browser like→count-updates→reload-persists→unlike round trip
+      from the home feed, per `docs/IMPLEMENTATION_PLAN.md` M13's explicit
+      Playwright requirement
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (12/12 suites, 69/69 tests, confirmed stable) +
+      `web-e2e:e2e` (17/17, Chromium, confirmed stable once run with proper
+      spacing from a prior full run — see Bugs Found below)
 
 ---
 
@@ -1381,6 +1461,113 @@ port conflict, one left over after a manual-verification run) were confirmed sto
 via `netstat`/`Get-CimInstance` before moving on — see Bugs Found below for the full
 detail on why this kept recurring this milestone specifically.
 
+### Milestone 13
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding Like
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  > prisma/migrations/20260929213739_0005_like/migration.sql
+# ^ the command's own stdout got polluted with a "Prisma 8.0.0-rc.19 update
+#   available" banner appended after the real SQL (stderr merged into the
+#   redirected file) — stripped it by hand before applying; the banner text
+#   is not valid SQL and would have broken `migrate deploy` if left in.
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d likes — composite PK, secondary
+# index, both FKs all matched the schema.prisma design exactly.
+
+pnpm exec nx run api:test --testPathPatterns=likes --skip-nx-cache   # 14/14,
+# first run — every LikesService test passed immediately (no Prisma
+# type-inference surprises this time; `getLikeStateForPosts`'s two queries
+# don't use a shared `include` constant, so Milestone 11's known pitfall
+# never applied here).
+pnpm exec nx run api:lint --skip-nx-cache
+# ^ one warning: an unused `UserWithAvatar` type alias left over from an
+#   early draft that ended up not needing it (the include shape is inferred
+#   inline instead). Removed the unused type.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed LikesModule/LikesController registered correctly in the real
+#   Nest boot log: PUT/DELETE /posts/:postId/like, GET /posts/:postId/likes.
+
+pnpm exec nx run api:test --testPathPatterns=posts --skip-nx-cache   # 24/24,
+# first run once posts.service.spec.ts's createDeps() gained the new
+# likesService mock (defaulting to the old hardcoded-stub shape so every
+# pre-existing test's expectations held without changes) — the 3 new tests
+# asserting real LikesService integration also passed immediately.
+pnpm exec nx run api:test --skip-nx-cache   # 138/138, whole project
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/posts/{postId}/like and /likes appeared in the
+#   generated openapi.json/types on the first run.
+pnpm exec nx run api-client:test --skip-nx-cache   # 51/51 (5 new likes-client.spec.ts cases)
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache
+# ^ compiled + typechecked cleanly; /p/[id]/likes registered as dynamic (ƒ)
+#   alongside the existing routes.
+pnpm exec nx run web:lint --skip-nx-cache    # clean (same pre-existing,
+# unrelated avatar-uploader.tsx warning noted since Milestone 9)
+pnpm exec nx run web:test --skip-nx-cache    # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --testPathPatterns=post-detail --skip-nx-cache
+# ^ first run: 1 failure — the old combined `"2 likes · 1 comments"` text
+#   assertion no longer matches now that the like count moved into its own
+#   interactive control, separate from the comments count. Fixed the test
+#   assertion (split into two `getByText` calls), not the app; also added a
+#   genuinely new test exercising the interactive LikeButton path (every
+#   existing fixture used `isLikedByMe: null`, so the toggle behavior had
+#   no real coverage yet). 6/6 passing afterward.
+pnpm exec nx run mobile:test --testPathPatterns=like-button --skip-nx-cache   # 3/3, first run
+pnpm exec nx run mobile:test --testPathPatterns=post-likes --skip-nx-cache   # 3/3, first run
+pnpm exec nx run mobile:lint --skip-nx-cache    # clean
+pnpm exec nx run mobile:test --skip-nx-cache    # 65/65, whole project
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, whole workspace
+
+pnpm exec nx run api-e2e:e2e --testPathPatterns=likes --skip-nx-cache   # 10/10,
+# first real run — full like/unlike/likers-list pipeline against the real
+# Postgres, no mocking.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 12/12 suites, 69/69 tests, confirmed
+# stable across two consecutive runs — the throttle headroom raised in
+# Milestone 12 held comfortably (20/40 used before this file, 3 more
+# accounts registered here).
+
+nx run api:serve   # started manually — web-e2e's own webServer only manages web:dev
+pnpm exec nx run web-e2e:e2e --testPathPatterns=like-post -- --project=chromium
+# ^ passed (17 total ran due to the same testPathPatterns + trailing --
+#   args not filtering as expected, a known Nx/Playwright interaction
+#   recorded since Milestone 10's bug #29) — the new like/unlike/reload
+#   round trip worked correctly through the real browser on the first try.
+pnpm exec nx run web-e2e:e2e -- --project=chromium
+# ^ first run of the FULL suite immediately afterward: several tests failed
+#   with a real `ThrottlerException: Too Many Requests` — not the
+#   `/auth/register`-specific throttle, but the workspace-wide global
+#   default (100 req/min/IP), tipped over by running the full 17-test suite
+#   twice in quick succession against the same long-lived dev server
+#   process within the same 60-second window. Waited briefly, re-ran: 17/17
+#   passing, confirmed the collision was a same-minute back-to-back-runs
+#   artifact, not a real regression — see Bugs Found below.
+
+pnpm exec prettier --write "apps/**/*.{ts,tsx}" "packages/**/*.ts" "docs/**/*.md"
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # re-verified clean afterward
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # all three clean
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 69/69, re-confirmed stable
+```
+
+Three stray `api:serve` background processes were found still listening on port 3000
+at various points this milestone (before the first `likes.spec.ts` run, before the
+manual `api:serve` start for web-e2e, and once more before the final re-verification
+run) — each confirmed via `Get-CimInstance`'s command line before stopping, matching
+the exact recurring pattern Milestone 12's bug #37 already documented. This is now
+clearly a standing characteristic of this workflow, not a one-off — see Known Issues
+below.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -1953,6 +2140,72 @@ substance (same filter, same ordering, same keyset pagination), differing only i
 being expressed as two Prisma calls instead of one nested SQL subquery, a
 Prisma-query-builder-level detail, not a schema or design-level change.
 
+### Milestone 13
+
+- **No `Notification` side effect for likes, deferred to Milestone 16 in full.**
+  `docs/IMPLEMENTATION_PLAN.md` M13 explicitly offered two sanctioned paths: defer the
+  notification write entirely (functionally complete like feature, no notification
+  until `Notification` lands), or pull Milestone 16's whole `Notification`
+  table/BullMQ-enqueue/consumer/list-endpoint/UI forward now since
+  `docs/DATABASE.md`/`docs/FEATURES.md` already fully specify it. Chose the former:
+  building all of Milestone 16 as a side effect of "Likes" would be a much larger
+  scope expansion than this milestone's own title suggests, and directly conflicts
+  with `CLAUDE.md`'s "do not implement future features unless explicitly requested in
+  the current milestone" — the plan's own recommendation to consider pulling it
+  forward was judged, on reflection, not actually simpler than deferring, just
+  differently-shaped work. `docs/FEATURES.md` #11 updated to describe this
+  explicitly rather than silently.
+- **`GET /posts/:postId/likes` reuses `FollowListResponse`/`FollowListItem` verbatim
+  — no new `LikeListResponse` type.** A likers list row (`{ id, username, fullName,
+avatarUrl, isFollowedByMe }`) is the exact same shape a followers/following list row
+  already is; `isFollowedByMe` is computed the identical way (relative to the viewer,
+  batched for the whole page). Introducing a parallel, structurally-identical type
+  would have been pure duplication with nothing to justify it — the same judgment
+  Milestone 12 made for `FeedResponse` reusing `postResponseSchema`.
+- **`LikesService.getLikeStateForPosts` batches like counts + the viewer's own likes
+  in one pair of queries for a whole page, used identically for a single post (an
+  array of one) and the feed (a whole page)** — rather than a separate
+  single-post-optimized method. `PostsService` never needs two different calling
+  conventions for the same concept, matching `FollowsService.getFollowCounts`/
+  `isFollowing`'s already-separate-methods shape only superficially; the real
+  precedent followed here is `getLikeStateForPosts` behaving like
+  `FollowsService.toListResponse`'s batched `isFollowedByMe` computation
+  (Milestone 10), generalized to also return a per-post count.
+- **`LikesModule` does its own small, self-contained post-existence check
+  (`findActivePost`, `prisma.post.findFirst`) rather than depending on `PostsModule`**
+  — the same "duplicate a tiny lookup over growing the dependency graph" trade-off
+  `FollowsService`/`UsersService` already make for their own `findActiveUserByUsername`
+  copies (now a fourth instance of this exact pattern). `PostsModule` depends on
+  `LikesModule` for `likesCount`/`isLikedByMe`, so the reverse dependency would be
+  circular regardless of duplication preferences.
+- **`FollowButton`/`FollowListItem`/`follow-actions.ts` promoted from
+  `apps/web/src/app/(app)/[username]/` to the shared `apps/web/src/app/(app)/`
+  directory** once the likers list page became a second real consumer outside that
+  route group — the identical "duplicate until a second real consumer exists"
+  threshold `PostCard`/`DeletePostButton` crossed in Milestone 12, applied to a
+  different pair of files this time. All four of that route group's own import sites
+  (`[username]/page.tsx`, `followers/page.tsx`, `following/page.tsx`, and the moved
+  files' own internal imports) updated accordingly.
+- **Mobile's likers list is a flat `post/likes.tsx` route (not nested under
+  `post/[id]/`), reached via `router.push`/`Link` with `postId` as a param** — the
+  identical flat-route-over-directory-restructure choice Milestone 10 made for
+  `profile/followers.tsx`/`following.tsx` (converting `post/[id].tsx` from a file into
+  a `[id]/` directory just for one more screen was judged more churn than benefit).
+  Reuses the existing `components/follow-list-item.tsx` verbatim, requiring no changes
+  to it at all — it was already generic over `FollowListItem`'s shape.
+- **Web's `LikeButton` manages its own local state, not `router.refresh()`** (unlike
+  `FollowButton`, which does call `router.refresh()`) — a like on one feed item
+  shouldn't re-fetch the whole `/home` page's Server Component data, which would
+  discard `FeedList`'s client-side "Load more" pagination state (the appended pages
+  already fetched). Nothing else on the page depends on fresh server data the way
+  follower/following counts do for `FollowButton`'s use case, so there's nothing
+  `router.refresh()` would need to pick up here.
+
+None of Milestone 13's deviations touch `docs/ARCHITECTURE.md`'s core design; `Like`
+matches `docs/DATABASE.md` §3.7 exactly (the "two queries, not one combined query"
+implementation note is a Prisma-query-builder-level detail, the same class of note
+Milestone 12's feed query already established, not a schema or design-level change).
+
 ---
 
 ## Bugs Found and Fixed
@@ -2450,6 +2703,59 @@ type is invalid` (undefined component). `profile-view.spec.tsx`'s
     unconditionally, the moment the component gains a `Link` anywhere in its
     tree** — not just the file that originally introduced the `Link` usage.
 
+### Milestone 13
+
+41. **A `prisma migrate diff`'s stdout redirect captured a Prisma
+    update-available banner appended after the real SQL**, since the command's
+    version-check notice writes to the same stream the shell redirect
+    captured. The generated `migration.sql` file briefly contained a
+    box-drawing-character banner ("Update available 7.10.0 -> 8.0.0-rc.19...")
+    after the real `CREATE TABLE`/`CREATE INDEX`/`ALTER TABLE` statements —
+    not valid SQL, and would have broken `prisma migrate deploy` if applied
+    as-is. Caught by reading the generated file before applying it (the same
+    "verify byte-for-byte, don't trust exit code 0" discipline Milestone 9's
+    migration workaround already established), not by a failed deploy. Fixed
+    by rewriting the file with just the clean SQL before running `migrate
+deploy`. Worth remembering for every future `prisma migrate diff`
+    invocation in this repo: **always read the generated migration file
+    before applying it**, not just when something looks obviously wrong.
+42. **The workspace-wide global throttle (100 req/min/IP) — not the
+    `/auth/register`-specific one — triggered a real `ThrottlerException` when
+    the full `apps/web-e2e` suite was run twice in quick succession against
+    the same long-lived dev server process.** Every earlier throttle incident
+    this project has hit (Milestone 8's bug #20, Milestone 9's bug #25,
+    Milestone 12's bug #38) was specifically about the register-throttle
+    budget; this is the first time the _global_ default was the one that
+    tripped, surfaced by running `nx run web-e2e:e2e -- --project=chromium`
+    (17 tests, each making several real HTTP round trips) immediately after
+    an equivalent invocation moments earlier — both runs' cumulative request
+    counts landed inside the same 60-second sliding window on the same server
+    process. Not fixed at the throttle-configuration level (100/min is a
+    reasonable workspace default, and this was a same-minute back-to-back-runs
+    artifact of manual verification, not a sustainable usage pattern any real
+    client would produce) — confirmed by simply waiting briefly and re-running:
+    17/17 passing, stable. Worth remembering: **re-running the full `web-e2e`
+    suite (or `api-e2e`) twice in immediate succession against the same
+    server process can trip the global throttle even when the
+    `/auth/register`-specific budget has plenty of headroom** — space out
+    full-suite re-runs, or restart the server process between them, rather
+    than assuming only the register throttle can ever be the culprit.
+43. **A stray `api:serve` process was found orphaned on port 3000 three
+    separate times this milestone** (before the first `likes.spec.ts` run,
+    before manually starting `api:serve` for the web-e2e likes test, and once
+    more before the final re-verification pass) — the identical recurring
+    issue Milestone 12's bug #37 first documented (a failed or interrupted
+    `api-e2e:e2e`/manual-verification run doesn't always let Nx's
+    continuous-task teardown or a manually-started process clean up after
+    itself). Each instance confirmed via `Get-CimInstance Win32_Process`'s
+    command line before stopping it, per the standing investigate-before-
+    killing discipline. No new information beyond bug #37 — recorded again
+    here specifically to confirm it's a **standing characteristic of this
+    workflow now, not a one-off**: checking `netstat` for a stray listener on
+    port 3000 before every `api-e2e:e2e` run or manual `api:serve` start
+    should be treated as a routine step for future milestones, not an
+    occasional troubleshooting step.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -2620,14 +2926,16 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   scope, but worth knowing if a future milestone wants real browser coverage
   of the feed specifically.
 - **`nx run api-e2e:e2e`'s continuous-task teardown doesn't reliably run after
-  a failing attempt** (bug #37) — a failed run can leave `api:serve` orphaned
-  on port 3000, blocking the next invocation with an unhelpful
-  `EADDRINUSE`/DNS-resolution error rather than a clear message. Not fixed at
-  the Nx-configuration level (unclear whether this is fixable without deeper
-  Nx internals knowledge, and it's a minor workflow friction, not a test
-  failure); the workaround is simply to check `netstat`/kill before re-running
-  `api-e2e:e2e` after any failed attempt, documented here so it's recognized
-  quickly if it recurs.
+  a failing attempt** (bug #37, recurred three more times in Milestone 13 —
+  bug #43) — a failed run, or even just an unrelated manual `api:serve` start,
+  can leave a process orphaned on port 3000, blocking the next invocation with
+  an unhelpful `EADDRINUSE`/DNS-resolution error rather than a clear message.
+  Confirmed as a **standing characteristic of this workflow, not a one-off** —
+  not fixed at the Nx-configuration level (unclear whether this is fixable
+  without deeper Nx internals knowledge, and it's a minor workflow friction,
+  not a test failure); the workaround is to check `netstat`/`Get-CimInstance`
+  before every `api-e2e:e2e` run or manual `api:serve` start, as a routine
+  step now, not an occasional troubleshooting one.
 - **Mobile `FlatList`/`VirtualizedList`-rendered item removal isn't reliably
   observable within any bounded `waitFor` window in this test environment**
   (bug #39) — a real, reproducible test-environment characteristic, not an app
@@ -2641,6 +2949,24 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   deliberate per-screen choice (see Deviations above), not an inconsistency
   needing resolution, but worth knowing if a future design pass wants uniform
   delete behavior across every surface that shows a post.
+- **No `Notification` row is created when a post is liked** — a deliberate,
+  documented Milestone 13 deviation (see above), not an oversight. The like
+  feature is functionally complete without it; a real notification will exist
+  once Milestone 16 implements `Notification` for real, at which point liking
+  (and following, and commenting) all need to start enqueuing one.
+- **The global 100 req/min/IP throttle, not just the `/auth/register`-specific
+  one, can be tripped by running the full `web-e2e`/`api-e2e` suite twice in
+  quick succession against the same server process** (bug #42) — a real,
+  reproducible interaction, not a config problem. Space out full-suite re-runs
+  by at least a minute, or restart the server process between them, if this
+  resurfaces.
+- **Profile grid tiles (`PostSummary`) don't show like counts** — a deliberate
+  scope decision (docs/FEATURES.md #11: "shown everywhere a post appears
+  (feed, post detail)," not the grid), not a gap in `LikesService`. The grid
+  tile shape has always been deliberately minimal since Milestone 11
+  (`{ id, thumbnailUrl, createdAt }`); adding a count there would be a real,
+  separate schema/response-shape decision for a future milestone, not
+  something this one silently missed.
 
 ---
 
@@ -2691,7 +3017,15 @@ single-relation-filter equivalent, `GET /feed` having no anonymous-viewer mode,
 `buildQueryString`/`getFeed` to `Partial<PaginationQuery>`, mobile's infinite-scroll vs.
 web's load-more-button, mobile's in-place feed delete vs. navigate-away elsewhere, and
 the second register-throttle increase) are equally each decided and recorded above
-with rationale, not left open. Everything else recorded in this file is
+with rationale, not left open. Milestone 13's seven deviations (deferring the
+`Notification` side effect to Milestone 16 entirely rather than pulling it forward,
+reusing `FollowListResponse`/`FollowListItem` verbatim for the likers list instead of a
+parallel type, `getLikeStateForPosts`'s batched-for-any-page-size design, `LikesModule`
+doing its own post-existence check rather than depending on `PostsModule`, promoting
+`FollowButton`/`FollowListItem`/`follow-actions.ts` to a shared web directory, mobile's
+flat `post/likes.tsx` route, and web's `LikeButton` using local state instead of
+`router.refresh()`) are equally each decided and recorded above with rationale, not
+left open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -2701,54 +3035,56 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 13 — Likes**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s fifth domain
-concept and the first of the three stub fields (`likesCount`, `isLikedByMe`) that
-`PostResponse` has carried since Milestone 11 to actually go live. Also the first
-milestone with an explicit, undecided fork in `docs/IMPLEMENTATION_PLAN.md` itself: the
-notification side-effect of a like can either be a direct write now (with `Notification`
-proper landing in Milestone 16) or implemented fully now (pulling Milestone 16's
-`Notification` table/enqueue mechanism forward) — `docs/DATABASE.md`/`docs/FEATURES.md`
-already fully specify the `Notification` shape, so this is a real choice to make and
-record explicitly in this milestone's own PROGRESS.md entry, not one to default
-silently.
+**Milestone 14 — Comments**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s seventh
+domain module and the second of `PostResponse`'s three original stub fields
+(`commentsCount`) to go live — `isSavedByMe` (Milestone 15) is the last one remaining
+after this. Flat (non-threaded) comments only, per `docs/FEATURES.md` #12 — the
+`parentCommentId` column exists in `docs/DATABASE.md` §3.8's schema but the API never
+accepts it from the client in the MVP, so don't build threading UI/logic that has
+nothing real to attach to.
 
-1. Schema: `Like` (`docs/DATABASE.md`'s Like model — read its exact spec before
-   assuming a shape; likely a composite PK on `(postId, userId)` or similar, mirroring
-   `Follow`'s own composite-PK pattern from Milestone 10) — a new migration.
-2. API (`docs/API.md` §8): `PUT`/`DELETE /posts/:postId/like` (idempotent either
-   way, `204`, matching `Follow`'s exact idempotent-toggle convention from Milestone
-   10 — reuse `upsert`/`deleteMany`, not a create-then-catch-conflict pattern), `GET
-/posts/:postId/likes` (optional auth, cursor-paginated list of likers — reuse the
-   exact `FollowListResponse`-shaped pagination pattern, likely renamed rather than
-   copied verbatim if the two responses end up identical).
-3. Wire `PostResponse.likesCount`/`isLikedByMe` to real values in `PostsService`'s
-   response mapping (`toPostResponse`, `apps/api/src/modules/posts/post-response.mapper.ts`)
-   — currently hardcoded `0`/`false`/`null` stubs since Milestone 11; this touches
-   every place `PostResponse` is produced (`createPost`, `getById`, `getFeed`), not
-   just one endpoint, since they all share the same mapper.
-4. Decide and record the notification side-effect approach (see above) explicitly
-   before writing the like endpoint, not after.
-5. Web + mobile: a like button/heart affordance on post detail and feed items (reuse
-   the shared `PostCard` component both platforms now have — Milestone 12's
-   extraction was specifically motivated by exactly this kind of "add one small
-   interactive affordance everywhere a post renders" need), and a likers list screen
-   (reuse the followers/following list screen pattern from Milestone 10).
-6. **Tests**: integration tests for like/unlike idempotency, real like-count
-   correctness (not a hardcoded stub anymore), liker-list pagination — against the
-   real Dockerized Postgres, matching every milestone's testing discipline; Playwright
-   covers liking a post from the feed (the first Playwright coverage the feed itself
-   gets, per Milestone 12's Known Issues note that none exists yet).
+1. Schema: `Comment` (`docs/DATABASE.md` §3.8 — read its exact spec before assuming a
+   shape; expect `id`, `postId`, `authorId`, `body`, `parentCommentId` (nullable, never
+   set by the API), `createdAt`, a soft-delete `deletedAt` per `docs/DATABASE.md` §7's
+   "`User`, `Post`, and `Comment` carry `deletedAt`" — the third and last soft-deletable
+   model) — a new migration.
+2. API (`docs/API.md` §9): `POST /posts/:postId/comments` (body `{ body }`, max 2200
+   chars, matching `Post.caption`'s own length cap), `GET /posts/:postId/comments`
+   (optional auth, paginated **oldest-first** — the opposite sort direction from every
+   other paginated list this codebase has built so far, all of which are newest-first;
+   confirm the cursor-keyset direction flips correctly rather than copying
+   `getPostsByAuthor`'s `desc` ordering by reflex), `DELETE
+/posts/:postId/comments/:commentId` (author-or-post-author soft delete — the first
+   endpoint in this codebase needing a two-way ownership check, unlike `DELETE
+/posts/:id`'s single-owner check).
+3. Wire `PostResponse.commentsCount` to a real value the same way Milestone 13 wired
+   `likesCount` — a new `CommentsService.getCommentCountForPosts`-shaped batched method
+   (or fold into a combined engagement-counts lookup if that ends up cleaner; decide
+   and record whichever is chosen), called from the same three `PostsService` sites
+   (`createPost` hardcodes 0 without querying, `getById`/`getFeed` query for real).
+4. Web + mobile: a comment input + list on the post detail page (not the feed — a
+   comment thread doesn't fit a feed card's compact shape the way a like button does;
+   confirm this against `docs/FEATURES.md` #12 rather than assume), and confirm
+   whether the delete permission's two-way ownership check needs a new UI affordance
+   (a comment author deleting their own comment vs. a post author moderating comments
+   on their own post) or if a single "Delete" control suffices for both cases.
+5. Decide the same notification-side-effect question Milestone 13 already answered
+   for likes ("defer to Milestone 16, not implemented as a side effect now") —
+   `docs/FEATURES.md` #12 says commenting also generates a notification for the post's
+   author; apply the identical, already-recorded reasoning rather than re-litigating it.
+6. **Tests**: integration tests for create/list/delete (including the
+   author-or-post-author delete permission check, the one genuinely new authorization
+   shape this milestone introduces) — against the real Dockerized Postgres, matching
+   every milestone's testing discipline; Playwright covers commenting on a post.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 13 section,
-`docs/DATABASE.md`'s `Like` model spec in full, and `docs/API.md` §8. Note the
-`/auth/register` throttle sits at 20/40 used (see Known Issues above) — plan this
-milestone's account/test-fixture needs the same economical way Milestone 12's
-`feed.spec.ts` did (share via `beforeAll`, register the minimum actually needed), not
-because headroom is currently tight (there's real margin now) but because that
-discipline is what keeps it from becoming tight again. Also worth deciding explicitly
-before writing the like endpoint: whether `GET /posts/:postId/likes`'s response type
-should be a new `LikeListItem`/`LikeListResponse` or literally reuse
-`FollowListItem`/`FollowListResponse` if the shapes end up identical (`{ id, username,
-fullName, avatarUrl }` per row) — don't introduce a parallel type without checking
-whether the existing one already fits, the same question Milestone 12 asked and
-answered ("no new type") for `FeedResponse`/`PostResponse`.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 14 section,
+`docs/DATABASE.md` §3.8 (`Comment`) in full, and `docs/API.md` §9. The `/auth/register`
+throttle sits at roughly 23/40 used (20 before Milestone 13, 3 more registered by
+`likes.spec.ts`) — real headroom remains, but keep applying the standing
+share-via-`beforeAll` discipline rather than registering fresh per test. Also worth
+deciding explicitly before writing the comment endpoints: whether `CommentResponse`
+needs its own new type in `packages/validation` (almost certainly yes — a comment has
+its own shape, `{ id, author, body, createdAt }` at minimum, unlike Milestone 13's
+likers list which could reuse `FollowListResponse` verbatim) — don't reach for reuse
+reflexively just because the last two milestones both found an existing type to reuse;
+confirm shape-identity before assuming it again.

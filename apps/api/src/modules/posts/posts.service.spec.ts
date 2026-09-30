@@ -78,12 +78,29 @@ function createDeps() {
   const storage = {
     getPublicUrl: jest.fn((key: string) => `http://minio.test/${key}`),
   };
+  // Defaults to the same "0 likes, false/null by auth state" shape the old
+  // hardcoded stub had, so every pre-existing test's expectations still
+  // hold without changes — tests that care about a *real* value override
+  // this mock explicitly.
+  const likesService = {
+    getLikeStateForPosts: jest.fn((postIds: string[], viewerId?: string) =>
+      Promise.resolve(
+        new Map(
+          postIds.map((id) => [
+            id,
+            { likesCount: 0, isLikedByMe: viewerId ? false : null },
+          ]),
+        ),
+      ),
+    ),
+  };
   const service = new PostsService(
     prisma as never,
     mediaService as never,
     storage as never,
+    likesService as never,
   );
-  return { service, prisma, mediaService, storage };
+  return { service, prisma, mediaService, storage, likesService };
 }
 
 describe('PostsService', () => {
@@ -118,6 +135,23 @@ describe('PostsService', () => {
       expect(result.id).toBe('post-1');
       expect(result.media).toHaveLength(1);
       expect(result.media[0].url).toBe('http://minio.test/media-1/feed.webp');
+    });
+
+    it('returns 0 likesCount and false isLikedByMe without querying LikesService', async () => {
+      const { service, prisma, mediaService, likesService } = createDeps();
+      mediaService.getReadyMediaForAttachment.mockResolvedValue(
+        fakeReadyMedia('media-1'),
+      );
+      prisma.postMedia.findFirst.mockResolvedValue(null);
+      prisma.post.create.mockResolvedValue(fakePostRow());
+
+      const result = await service.createPost('user-1', {
+        mediaIds: ['media-1'],
+      });
+
+      expect(likesService.getLikeStateForPosts).not.toHaveBeenCalled();
+      expect(result.likesCount).toBe(0);
+      expect(result.isLikedByMe).toBe(false);
     });
 
     it('preserves array order as carousel position', async () => {
@@ -217,6 +251,23 @@ describe('PostsService', () => {
           where: { id: 'missing', deletedAt: null },
         }),
       );
+    });
+
+    it('reports a real likesCount/isLikedByMe from LikesService', async () => {
+      const { service, prisma, likesService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue(fakePostRow());
+      likesService.getLikeStateForPosts.mockResolvedValue(
+        new Map([['post-1', { likesCount: 5, isLikedByMe: true }]]),
+      );
+
+      const result = await service.getById('post-1', 'viewer-1');
+
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledWith(
+        ['post-1'],
+        'viewer-1',
+      );
+      expect(result.likesCount).toBe(5);
+      expect(result.isLikedByMe).toBe(true);
     });
   });
 
@@ -355,6 +406,33 @@ describe('PostsService', () => {
           }),
         }),
       );
+    });
+
+    it('fetches like state for the whole page in one batched call', async () => {
+      const { service, prisma, likesService } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([{ followingId: 'author-a' }]);
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+      likesService.getLikeStateForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', { likesCount: 2, isLikedByMe: true }],
+          ['post-2', { likesCount: 0, isLikedByMe: false }],
+        ]),
+      );
+
+      const result = await service.getFeed('viewer-1', { limit: 20 });
+
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledTimes(1);
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledWith(
+        ['post-1', 'post-2'],
+        'viewer-1',
+      );
+      expect(result.data[0].likesCount).toBe(2);
+      expect(result.data[0].isLikedByMe).toBe(true);
+      expect(result.data[1].likesCount).toBe(0);
+      expect(result.data[1].isLikedByMe).toBe(false);
     });
   });
 

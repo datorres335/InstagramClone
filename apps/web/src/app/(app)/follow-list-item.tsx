@@ -6,12 +6,15 @@ import { FollowButton } from './follow-button';
 
 /**
  * One row of a followers/following list (docs/FEATURES.md #6: "avatar/
- * username/full name and... a follow/unfollow affordance inline"). The
- * inline button renders for any authenticated viewer, not only on their own
- * list — `isFollowedByMe` is already computed per-row regardless of whose
- * list this is, so gating the button to "your own list only" would be a
- * strictly less useful subset of what the API already supports (see
- * docs/PROGRESS.md's Milestone 10 deviations).
+ * username/full name and... a follow/unfollow affordance inline"), reused
+ * verbatim for a post's likers list (Milestone 13 — `GET /posts/:postId/
+ * likes` returns the identical `FollowListItem` shape, so no new type or
+ * row component was introduced). The inline button renders for any
+ * authenticated viewer, not only on their own list — `isFollowedByMe` is
+ * already computed per-row regardless of whose list this is, so gating the
+ * button to "your own list only" would be a strictly less useful subset of
+ * what the API already supports (see docs/PROGRESS.md's Milestone 10
+ * deviations).
  */
 export function FollowListItem({ item }: { item: FollowListItemType }) {
   return (

@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { PostResponse } from '@instagram-clone/validation';
 
 import { DeletePostButton } from './delete-post-button';
+import { LikeButton } from './like-button';
 
 interface PostCardProps {
   post: PostResponse;
@@ -38,7 +39,17 @@ export function PostCard({ post, isAuthor }: PostCardProps) {
       </ul>
       {post.caption && <p>{post.caption}</p>}
       <p>
-        {post.likesCount} likes · {post.commentsCount} comments
+        {post.isLikedByMe === null ? (
+          <Link href={`/p/${post.id}/likes`}>{post.likesCount} likes</Link>
+        ) : (
+          <LikeButton
+            postId={post.id}
+            initialIsLiked={post.isLikedByMe}
+            initialLikesCount={post.likesCount}
+          />
+        )}
+        {' · '}
+        {post.commentsCount} comments
       </p>
       {isAuthor && (
         <DeletePostButton

@@ -3,6 +3,7 @@ export * from './lib/api-error';
 export * from './lib/auth-client';
 export * from './lib/follows-client';
 export * from './lib/http-client';
+export * from './lib/likes-client';
 export * from './lib/media-client';
 export * from './lib/posts-client';
 export * from './lib/token-storage';

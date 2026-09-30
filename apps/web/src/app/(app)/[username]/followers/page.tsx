@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ApiError } from '@instagram-clone/api-client';
 
 import { getApiClient } from '../../../../lib/get-api-client';
-import { FollowListItem } from '../follow-list-item';
+import { FollowListItem } from '../../follow-list-item';
 
 interface FollowersPageProps {
   params: Promise<{ username: string }>;

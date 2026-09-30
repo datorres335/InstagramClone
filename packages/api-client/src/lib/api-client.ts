@@ -1,6 +1,7 @@
 import { type AuthClient, createAuthClient } from './auth-client';
 import { createFollowsClient, type FollowsClient } from './follows-client';
 import { HttpClient, type HttpClientConfig } from './http-client';
+import { createLikesClient, type LikesClient } from './likes-client';
 import { createMediaClient, type MediaClient } from './media-client';
 import { createPostsClient, type PostsClient } from './posts-client';
 import { createUsersClient, type UsersClient } from './users-client';
@@ -11,6 +12,7 @@ export interface ApiClient {
   media: MediaClient;
   follows: FollowsClient;
   posts: PostsClient;
+  likes: LikesClient;
 }
 
 /**
@@ -31,5 +33,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
     media: createMediaClient(http),
     follows: createFollowsClient(http),
     posts: createPostsClient(http),
+    likes: createLikesClient(http),
   };
 }
