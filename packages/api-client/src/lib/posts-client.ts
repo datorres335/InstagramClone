@@ -1,8 +1,11 @@
 import type {
   CreatePostInput,
+  FeedResponse,
+  PaginationQuery,
   PostResponse,
 } from '@instagram-clone/validation';
 
+import { buildQueryString } from './build-query-string';
 import type { HttpClient } from './http-client';
 
 export interface PostsClient {
@@ -11,6 +14,14 @@ export interface PostsClient {
   getById(postId: string): Promise<PostResponse>;
   /** `DELETE /posts/:id` (docs/API.md §7) — author-only. */
   remove(postId: string): Promise<void>;
+  /**
+   * `GET /feed` (docs/API.md §7, Milestone 12) — posts from followed
+   * accounts, newest first. `Partial`, not `PaginationQuery`, since callers
+   * paginating via a "load more" affordance only ever have a `cursor` in
+   * hand and should be able to omit `limit` to get the server's default
+   * rather than needing to know/repeat it.
+   */
+  getFeed(query?: Partial<PaginationQuery>): Promise<FeedResponse>;
 }
 
 export function createPostsClient(http: HttpClient): PostsClient {
@@ -34,6 +45,13 @@ export function createPostsClient(http: HttpClient): PostsClient {
       return http.authorizedRequest<void>(
         'DELETE',
         `/posts/${encodeURIComponent(postId)}`,
+      );
+    },
+
+    getFeed(query) {
+      return http.authorizedRequest<FeedResponse>(
+        'GET',
+        `/feed${buildQueryString(query)}`,
       );
     },
   };

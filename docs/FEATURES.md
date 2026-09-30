@@ -121,17 +121,24 @@ referenced to `DATABASE.md` / `API.md`).
   stays a plain `text` column).
 - Entities/endpoints: `Post.caption` (`DATABASE.md` §3.4).
 
-### 10. Home Feed
+### 10. Home Feed (implemented Milestone 12)
 
 - Reverse-chronological posts from accounts the current user follows, paginated by
   cursor.
 - Each feed item shows author, media carousel, caption, like/comment counts, and
-  like/comment/save affordances inline.
-- **Explicit MVP scope decision**: no algorithmic ranking — chronological only. Fan-out
-  computed at read time (`DATABASE.md` §6, §10; `ARCHITECTURE.md` risk #3).
+  like/comment/save affordances inline. As of Milestone 12, counts are still the
+  hardcoded-`0`/stubbed `PostResponse` fields Milestone 11 introduced (real once
+  `Like`/`Comment`/`SavedPost` land in Milestones 13–15) — the feed itself, and every
+  field's final shape, is real now; only the like/comment/save _values_ remain stubs,
+  the same stub-now-fill-later pattern `PublicProfileResponse` used from Milestone 8
+  through 11.
+- **Explicit MVP scope decision, confirmed as-implemented**: no algorithmic ranking —
+  chronological only. Fan-out computed at read time (`DATABASE.md` §6, §10;
+  `ARCHITECTURE.md` risk #3, now marked "exercised").
 - **Out of scope**: "New posts" live-update banner (would need realtime transport, out
   of scope per `ARCHITECTURE.md` non-goals), showing your own posts in your own feed
-  (a product decision left to implementation — default: no, matching Instagram).
+  (implemented as decided: **no**, matching Instagram — a real, tested consequence of
+  `Follow` never containing a self-edge, not special-cased logic).
 - Entities/endpoints: `GET /feed` (`API.md` §7).
 
 ### 11. Likes

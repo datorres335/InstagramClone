@@ -68,3 +68,15 @@ export const postSummarySchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export type PostSummary = z.infer<typeof postSummarySchema>;
+
+/**
+ * `GET /feed` (docs/API.md §7, Milestone 12) — full `PostResponse` items, not
+ * `PostSummary`: `docs/FEATURES.md` #10 says each feed item shows the whole
+ * carousel/caption/counts inline, the same shape a post detail page needs.
+ * Reuses `postResponseSchema` rather than a parallel "feed post" type.
+ */
+export const feedResponseSchema = z.object({
+  data: z.array(postResponseSchema),
+  meta: z.object({ nextCursor: z.string().nullable() }),
+});
+export type FeedResponse = z.infer<typeof feedResponseSchema>;

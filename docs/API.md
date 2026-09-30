@@ -47,9 +47,10 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
   doesn't. Both return `204 No Content` whether or not the call changed state.
 - **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP) with
   stricter per-route limits on `/auth/login`, `/auth/refresh` (10 req/min/IP) and
-  `/auth/register` (20 req/min/IP, raised from 10 in Milestone 9 — `apps/api-e2e`'s
-  register calls are a shared per-run budget across every spec file against one
-  server process, and the suite outgrew 10 once the media pipeline tests were added)
+  `/auth/register` (40 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
+  in Milestone 12, both times because `apps/api-e2e`'s register calls are a shared
+  per-run budget across every spec file against one server process, and the suite
+  outgrew each previous limit; see `docs/PROGRESS.md`'s Milestone 12 deviations)
   to slow credential-stuffing/enumeration — implemented Milestone 5. In-memory
   storage, not Redis (see the deviation in `docs/PROGRESS.md`): correct for the
   single-process API this is today, revisit if `apps/api` is ever horizontally
@@ -69,6 +70,7 @@ Credentials: true`) enabled since the refresh cookie requires it.
 | Follows          | `/api/v1/users/:username/follow*`, `/api/v1/users/:username/followers`, `/api/v1/users/:username/following` |
 | Media (uploads)  | `/api/v1/media`                                                                                             |
 | Posts            | `/api/v1/posts`                                                                                             |
+| Feed             | `/api/v1/feed`                                                                                              |
 | Likes            | `/api/v1/posts/:postId/like*`                                                                               |
 | Comments         | `/api/v1/posts/:postId/comments`                                                                            |
 | Saved posts      | `/api/v1/posts/:postId/save*`, `/api/v1/me/saved`                                                           |
@@ -173,15 +175,15 @@ since Milestone 8 to become fully live before `Post` (Milestone 11) does.
 
 ## 7. Posts
 
-`POST`/`GET`/`DELETE /posts*` implemented Milestone 11. `GET /feed` is still
-Milestone 12 (Home Feed) — not implemented yet.
+`POST`/`GET`/`DELETE /posts*` implemented Milestone 11. `GET /feed` implemented
+Milestone 12.
 
 | Method & path       | Auth                   | Notes                                                                                                                                                                                            |
 | ------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `POST /posts`       | required               | Body `{ caption?, location?, mediaIds: string[] }` (1–10 items, order = array order); all `mediaIds` must be the caller's own `READY`, `POST_IMAGE`-purpose media not already attached elsewhere |
 | `GET /posts/:id`    | optional               | Single post with author, media (ordered), counts, `isLikedByMe`/`isSavedByMe` when authenticated                                                                                                 |
 | `DELETE /posts/:id` | required (author only) | Soft delete                                                                                                                                                                                      |
-| `GET /feed`         | required               | The authenticated home feed — paginated posts from followed accounts, newest first (see `DATABASE.md` §6)                                                                                        |
+| `GET /feed`         | required               | The authenticated home feed — paginated posts from followed accounts, newest first (see `DATABASE.md` §6); a top-level resource, not nested under `/posts` — see §2's resource map               |
 
 **`PostResponse`** (`GET`/`POST /posts*`'s single-post shape — a judgment call, since
 this section only specified the fields at a high level before implementation):
@@ -210,6 +212,23 @@ minting new ones, per this codebase's established practice):
 | Fewer than 1 or more than 10 `mediaIds`                       | `400` (Zod validation)                            |
 | A malformed pagination cursor on `GET /users/:username/posts` | `400`                                             |
 | `DELETE /posts/:id` by a non-author                           | `403`                                             |
+
+**`FeedResponse`** (`GET /feed`'s shape, Milestone 12): `{ data: PostResponse[], meta:
+{ nextCursor } }` — full `PostResponse` items, not `PostSummary`, since
+`docs/FEATURES.md` #10 says each feed item shows the whole carousel/caption/counts
+inline, the same shape a post detail page needs; no separate "feed post" type was
+introduced. Fan-out-on-read (`docs/DATABASE.md` §6, `docs/ARCHITECTURE.md` risk #3):
+the caller's `following` edges are fetched once, then posts are queried with
+`authorId IN (...)`, matching `DATABASE.md` §6's literal query shape. Cursor
+pagination is the same opaque base64 `(createdAt, id)` pair every other paginated
+endpoint uses (`GET /users/:username/posts`, followers/following). Never includes the
+viewer's own posts — a real, non-obvious consequence of `Follow` never containing a
+self-edge, not special-cased logic (`docs/FEATURES.md` #10's explicit default,
+matching Instagram). A viewer following nobody gets `{ data: [], meta: { nextCursor:
+null } }` without a wasted `Post` query (short-circuited once the `following` list
+comes back empty). A malformed cursor is `400`; an unauthenticated request is `401`
+(unlike `GET /posts/:id`, `GET /feed` has no anonymous-viewer mode — showing a feed
+without a viewer to compute it for is meaningless).
 
 ## 8. Likes
 

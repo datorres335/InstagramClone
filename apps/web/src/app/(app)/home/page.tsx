@@ -3,19 +3,24 @@ import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { logoutAction } from './actions';
+import { FeedList } from './feed-list';
 
 export const metadata = {
   title: 'Home',
 };
 
 /**
- * The stub authenticated shell (docs/IMPLEMENTATION_PLAN.md M6) — real feed
- * content lands in Milestone 12. This page's job for now is just proving
- * the auth-check → protected-content → logout loop works end to end.
+ * The authenticated home feed (docs/API.md §7, docs/FEATURES.md #10,
+ * Milestone 12) — the stub shell from Milestone 6 now renders real,
+ * fan-out-on-read content: posts from followed accounts, newest first,
+ * never the viewer's own posts.
  */
 export default async function HomePage() {
-  const user = await getApiClient().auth.session();
+  const apiClient = getApiClient();
+  const user = await apiClient.auth.session();
   if (!user) redirect('/login');
+
+  const feed = await apiClient.posts.getFeed();
 
   return (
     <main>
@@ -25,6 +30,11 @@ export default async function HomePage() {
       <form action={logoutAction}>
         <button type="submit">Log out</button>
       </form>
+      <FeedList
+        initialPosts={feed.data}
+        initialNextCursor={feed.meta.nextCursor}
+        viewerUsername={user.username}
+      />
     </main>
   );
 }

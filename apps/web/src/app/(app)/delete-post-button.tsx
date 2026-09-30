@@ -9,6 +9,13 @@ interface DeletePostButtonProps {
   authorUsername: string;
 }
 
+/**
+ * Shared by the post detail page (`/p/[id]`) and the home feed (Milestone
+ * 12) — promoted out of `p/[id]/` once the feed became a second real
+ * consumer, matching this codebase's "duplicate until a second real
+ * consumer exists" threshold (see `buildQueryString`'s identical Milestone
+ * 10 precedent).
+ */
 export function DeletePostButton({
   postId,
   authorUsername,

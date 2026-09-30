@@ -118,4 +118,36 @@ describe('PostsClient', () => {
       );
     });
   });
+
+  describe('getFeed', () => {
+    it('sends GET /feed with a valid access token', async () => {
+      const feed = { data: [fakePost], meta: { nextCursor: null } };
+      vi.mocked(fetch).mockResolvedValue(fakeResponse(200, feed));
+      const client = clientWithToken();
+
+      const result = await client.getFeed();
+
+      expect(result).toEqual(feed);
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/feed',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer valid-token' },
+        }),
+      );
+    });
+
+    it('serializes cursor/limit into the query string', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        fakeResponse(200, { data: [], meta: { nextCursor: null } }),
+      );
+      const client = clientWithToken();
+
+      await client.getFeed({ cursor: 'abc', limit: 5 });
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/feed?cursor=abc&limit=5',
+        expect.anything(),
+      );
+    });
+  });
 });

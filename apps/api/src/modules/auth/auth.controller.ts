@@ -54,13 +54,17 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   // Still meaningfully stricter than the workspace default (100/60s) —
-  // raised from 10 in Milestone 9 because `apps/api-e2e`'s register calls
-  // are a shared budget across every spec file in one run against one
-  // long-lived server process (docs/API.md §1), and the suite had already
-  // grown to consume exactly 10 before this milestone's media tests added
-  // more. 20 gives headroom for further growth rather than re-tuning this
-  // again next milestone.
-  @Throttle({ default: { limit: 20, ttl: 60_000 } })
+  // raised from 10 to 20 in Milestone 9, then to 40 in Milestone 12, both
+  // times because `apps/api-e2e`'s register calls are a shared budget across
+  // every spec file in one run against one long-lived server process
+  // (docs/API.md §1). 20 ran out exactly at capacity (a real 429 on a full
+  // suite run, not a projection) once Milestone 12's feed.spec.ts added its
+  // 2 registrations on top of an already-exhausted budget — 40 is deliberately
+  // generous (2x current usage) rather than the bare minimum, since re-tuning
+  // this every single milestone that adds a multi-account test is its own
+  // cost; Likes/Comments/SavedPost (Milestones 13–15) will all need fresh
+  // accounts too.
+  @Throttle({ default: { limit: 40, ttl: 60_000 } })
   @ApiOperation({ summary: 'Create an account and start a session.' })
   async register(
     @Body() dto: RegisterDto,

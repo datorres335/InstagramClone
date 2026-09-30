@@ -1,7 +1,7 @@
 import type { PaginationQuery } from '@instagram-clone/validation';
 
 /** Shared by every paginated-list client method (`docs/API.md` §1's `?cursor=&limit=` shape). */
-export function buildQueryString(query?: PaginationQuery): string {
+export function buildQueryString(query?: Partial<PaginationQuery>): string {
   if (!query) return '';
   const params = new URLSearchParams();
   if (query.cursor) params.set('cursor', query.cursor);

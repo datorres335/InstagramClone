@@ -8,6 +8,7 @@ import {
 
 import type {
   CreatePostInput,
+  FeedResponse,
   PaginationQuery,
   PostResponse,
   PostSummary,
@@ -154,6 +155,61 @@ export class PostsService {
         createdAt: post.createdAt.toISOString(),
       };
     });
+
+    return { data, meta: { nextCursor } };
+  }
+
+  /**
+   * `GET /feed` (docs/API.md §7, docs/DATABASE.md §6) — fan-out-on-read:
+   * posts from accounts the caller follows, newest first. Deliberately never
+   * includes the caller's own posts (docs/FEATURES.md #10's explicit
+   * default, matching Instagram) — "who I follow" and "myself" are disjoint
+   * by construction, since `Follow` rows never target the follower's own id.
+   */
+  async getFeed(
+    viewerId: string,
+    query: PaginationQuery,
+  ): Promise<FeedResponse> {
+    const decoded = this.decodeCursorOrThrow(query.cursor);
+
+    const following = await this.prisma.follow.findMany({
+      where: { followerId: viewerId },
+      select: { followingId: true },
+    });
+    if (following.length === 0) {
+      return { data: [], meta: { nextCursor: null } };
+    }
+    const followingIds = following.map((edge) => edge.followingId);
+
+    const rows = await this.prisma.post.findMany({
+      where: {
+        authorId: { in: followingIds },
+        deletedAt: null,
+        ...(decoded && {
+          OR: [
+            { createdAt: { lt: decoded.createdAt } },
+            { createdAt: decoded.createdAt, id: { lt: decoded.id } },
+          ],
+        }),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: query.limit + 1,
+      include: {
+        author: { include: { avatarMedia: true } },
+        media: { include: { media: true }, orderBy: { position: 'asc' } },
+      },
+    });
+
+    const page = rows.slice(0, query.limit);
+    const lastRow = page.at(-1);
+    const nextCursor =
+      rows.length > query.limit && lastRow
+        ? encodeCursor({ createdAt: lastRow.createdAt, id: lastRow.id })
+        : null;
+
+    const data: PostResponse[] = page.map((post) =>
+      toPostResponse(post, this.storage, true),
+    );
 
     return { data, meta: { nextCursor } };
   }

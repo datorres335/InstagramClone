@@ -68,6 +68,9 @@ function createDeps() {
     postMedia: {
       findFirst: jest.fn(),
     },
+    follow: {
+      findMany: jest.fn(),
+    },
   };
   const mediaService = {
     getReadyMediaForAttachment: jest.fn(),
@@ -261,6 +264,97 @@ describe('PostsService', () => {
         where: { authorId: 'user-1', deletedAt: null },
       });
       expect(result).toBe(7);
+    });
+  });
+
+  describe('getFeed', () => {
+    it('returns an empty feed without querying posts when the viewer follows nobody', async () => {
+      const { service, prisma } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([]);
+
+      const result = await service.getFeed('viewer-1', { limit: 20 });
+
+      expect(result).toEqual({ data: [], meta: { nextCursor: null } });
+      expect(prisma.post.findMany).not.toHaveBeenCalled();
+    });
+
+    it('queries only posts authored by followed accounts', async () => {
+      const { service, prisma } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([
+        { followingId: 'author-a' },
+        { followingId: 'author-b' },
+      ]);
+      prisma.post.findMany.mockResolvedValue([fakePostRow()]);
+
+      const result = await service.getFeed('viewer-1', { limit: 20 });
+
+      expect(prisma.follow.findMany).toHaveBeenCalledWith({
+        where: { followerId: 'viewer-1' },
+        select: { followingId: true },
+      });
+      expect(prisma.post.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            authorId: { in: ['author-a', 'author-b'] },
+            deletedAt: null,
+          }),
+        }),
+      );
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].id).toBe('post-1');
+    });
+
+    it('returns a nextCursor when there are more rows than the page limit', async () => {
+      const { service, prisma } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([{ followingId: 'author-a' }]);
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+        fakePostRow({ id: 'post-3' }),
+      ]);
+
+      const result = await service.getFeed('viewer-1', { limit: 2 });
+
+      expect(result.data).toHaveLength(2);
+      expect(result.meta.nextCursor).not.toBeNull();
+    });
+
+    it('rejects a malformed cursor with BadRequestException', async () => {
+      const { service, prisma } = createDeps();
+
+      await expect(
+        service.getFeed('viewer-1', {
+          cursor: 'not-a-real-cursor!!',
+          limit: 20,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.follow.findMany).not.toHaveBeenCalled();
+    });
+
+    it('applies the decoded cursor as a keyset filter', async () => {
+      const { service, prisma } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([{ followingId: 'author-a' }]);
+      prisma.post.findMany.mockResolvedValue([]);
+      const cursor = encodeCursor({
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        id: 'post-9',
+      });
+
+      await service.getFeed('viewer-1', { cursor, limit: 20 });
+
+      expect(prisma.post.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            OR: [
+              { createdAt: { lt: new Date('2026-01-01T00:00:00.000Z') } },
+              {
+                createdAt: new Date('2026-01-01T00:00:00.000Z'),
+                id: { lt: 'post-9' },
+              },
+            ],
+          }),
+        }),
+      );
     });
   });
 

@@ -1,3 +1,4 @@
+import * as React from 'react';
 import {
   fireEvent,
   render,
@@ -19,10 +20,16 @@ jest.mock('../lib/api-client', () => ({
 jest.mock('../lib/auth-context', () => ({
   useAuth: jest.fn(),
 }));
-jest.mock('expo-router', () => ({
-  useLocalSearchParams: jest.fn(() => ({ id: 'post-1' })),
-  router: { replace: jest.fn() },
-}));
+jest.mock('expo-router', () => {
+  const { Text } = jest.requireActual('react-native');
+  return {
+    useLocalSearchParams: jest.fn(() => ({ id: 'post-1' })),
+    router: { replace: jest.fn() },
+    Link: ({ children }: { children: React.ReactNode }) => (
+      <Text>{children}</Text>
+    ),
+  };
+});
 
 const { router } = jest.requireMock('expo-router') as {
   router: { replace: jest.Mock };

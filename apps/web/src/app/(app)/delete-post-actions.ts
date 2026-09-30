@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation';
 
-import { getApiClient } from '../../../../lib/get-api-client';
+import { getApiClient } from '../../lib/get-api-client';
 
 export async function deletePostAction(
   postId: string,

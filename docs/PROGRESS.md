@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 11 — Posts (Create, Read, Delete)
+**Current Milestone:** Milestone 12 — Home Feed
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -73,9 +73,19 @@ row can be attached to at most one post, ever), `POST /posts` (1–10 `READY`,
 cursor-paginated grid, and `PublicProfileResponse.postsCount` is real too, the last of
 that response's fields to leave stub status. Both `web` and `mobile` gained a
 multi-image create-post flow (reusing Milestone 9's presign→upload→poll pipeline once
-per image), a post detail view, and a real profile grid linking into it. No feed
-exists yet — Milestone 12 is where posts actually reach anyone besides their own
-author and profile visitors.
+per image), a post detail view, and a real profile grid linking into it. Milestone 12
+adds `GET /feed`, the first place posts reach anyone besides their own author and
+profile visitors: fan-out-on-read (`ARCHITECTURE.md` risk #3, exercised for real for
+the first time) over the exact `Follow`/`Post` schema Milestones 10/11 already built,
+returning full `PostResponse` items (not the profile grid's minimal `PostSummary`),
+cursor-paginated the same way every other list endpoint is, and never including the
+viewer's own posts (a real consequence of `Follow` having no self-edges, not
+special-cased logic). Both `web`'s `/home` and `mobile`'s home tab render this feed for
+real now — `web` via a "Load more" button, `mobile` via genuine `onEndReached` infinite
+scroll — replacing the stub welcome screens both platforms have carried since
+Milestones 6/7. A shared `PostCard` component (one per platform) now backs both the
+feed and the post detail view, the second real consumer that justified extracting it
+out of `/p/[id]`'s/`post/[id].tsx`'s previously-inline markup.
 
 ---
 
@@ -631,6 +641,81 @@ createdAt(sort: Desc)])`) and `PostMedia` (§3.5: ordered join to `Media`,
       (10/10 suites, 54/54 tests) + `web-e2e:e2e` (16/16, Chromium) against
       the live Dockerized Postgres/MinIO/Redis and real running `api`/`web`
       servers
+
+### Milestone 12 — Home Feed
+
+- [x] `PostsService.getFeed(viewerId, query)` (docs/API.md §7,
+      docs/DATABASE.md §6) — fetches the caller's `following` ids from
+      `Follow` (one query, short-circuits to an empty page without ever
+      querying `Post` if the list is empty), then `Post.findMany({ authorId:
+{ in: followingIds } })` with the exact same cursor-keyset pattern
+      `getPostsByAuthor` (Milestone 11) and `FollowsService`'s lists
+      (Milestone 10) already established. Returns full `PostResponse` items
+      via the existing `toPostResponse` mapper — no new response mapper
+      needed
+- [x] New top-level `FeedController` (`GET /feed`, required auth, no
+      anonymous-viewer mode) registered inside the existing `PostsModule`
+      rather than a new module — it has no state or dependencies beyond
+      `PostsService`
+- [x] `packages/validation`'s new `feedResponseSchema`/`FeedResponse`
+      (reuses `postResponseSchema` for `data`, not a parallel "feed post"
+      type) and `packages/api-client`'s new `PostsClient.getFeed(query?)`
+- [x] `apps/web`: `/home` now fetches the first feed page server-side and
+      renders a new `FeedList` client component with a "Load more" button
+      (a Server Action, `getFeedPageAction`, does the actual paginated
+      fetch — only a Server Action can read the httpOnly session cookie).
+      A new shared `PostCard` (promoted out of `/p/[id]`'s previously-inline
+      markup, the second real consumer) backs both the feed and post detail
+      pages; `DeletePostButton`/`deletePostAction` were promoted alongside it
+      to `apps/web/src/app/(app)/` for the same reason
+- [x] `apps/mobile`: the home tab is now a real `FlatList` feed with genuine
+      `onEndReached` infinite scroll (not a "Load more" button — the more
+      idiomatic mobile convention; `docs/IMPLEMENTATION_PLAN.md` M12
+      explicitly offers both as acceptable). A new shared
+      `components/post-card.tsx` (promoted out of `post/[id].tsx` for the
+      same second-consumer reason as web's) backs both screens. Deleting a
+      post from the feed removes it from the local list in place, unlike
+      `post/[id].tsx`'s navigate-away-on-delete — a deliberate, better-fit
+      choice for a list screen
+- [x] 6 new `posts.service.spec.ts` unit tests (`getFeed`: empty-following
+      short-circuit, correct `authorId: { in }` filtering, pagination,
+      cursor validation, keyset filter construction)
+- [x] 2 new `posts-client.spec.ts` test cases for `getFeed`, plus a new
+      `openapi-contract.spec.ts` type reference confirming the generated
+      OpenAPI types actually describe the route
+- [x] 5 new `apps/api-e2e` integration tests (`feed/feed.spec.ts`) — a real
+      follow graph and real uploaded/processed images, not mocked: newest-
+      first ordering with the viewer's own post correctly excluded,
+      keyset pagination across two pages, an empty feed for a viewer who
+      follows nobody, a malformed cursor `400`, and an unauthenticated `401`.
+      Only 2 accounts registered for the whole file (shared via `beforeAll`)
+      — the shared register-throttle budget had exactly 2 requests of
+      headroom left after Milestone 11 (see Known Issues), so this file was
+      designed around that ceiling from the start rather than discovering it
+      reactively
+- [x] 6 mobile unit tests rewritten (`home.spec.tsx`) to mock
+      `apiClient.posts.getFeed`/`remove` instead of asserting on the old
+      static welcome screen; `post-detail.spec.tsx` updated for the shared
+      `PostCard` extraction (a missing `Link` mock, the same class of gap
+      Milestone 11's `home.spec.tsx` fix addressed)
+- [x] A real `EXPLAIN`/`EXPLAIN ANALYZE` sanity check against the live,
+      e2e-test-accumulated data (196 posts, 73 follows) — see Validation
+      Performed below for the actual query plans; both `follows_pkey` and
+      `posts_author_id_created_at_idx` confirmed usable and correctly
+      targeted once the planner is forced off its (correct, at this scale)
+      sequential-scan choice
+- [x] `/auth/register`'s throttle raised from 20 to 40/min/IP after a real
+      429 on a full `api-e2e` suite run (not a projection) — see Deviations
+      and Bugs Found below
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (11/11 suites, 59/59 tests, confirmed stable across two
+      consecutive full runs) + `web-e2e:e2e` (16/16, Chromium, unchanged —
+      no new committed Playwright file this milestone per
+      `docs/IMPLEMENTATION_PLAN.md` M12's test scope, which only requires the
+      integration test and the query-plan check) + a manual, throwaway
+      Playwright script (written, run, and deleted — not committed) proving
+      a real browser session sees a followed account's post on `/home`
 
 ---
 
@@ -1195,6 +1280,107 @@ pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # all three clean
 The manually-started `api:serve` background process was confirmed stopped (freed port 3000) after it was found still listening and colliding with `api-e2e:e2e`'s own
 managed continuous-task server — see Bugs Found below.
 
+### Milestone 12
+
+```bash
+pnpm exec nx run api:test --testPathPatterns=posts --skip-nx-cache   # 21/21,
+# first run — 6 new getFeed tests passed immediately (no shared-`include`
+# type-inference issue this time, since getFeed's query mirrors an existing
+# inlined pattern rather than introducing a new one)
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/feed appeared in the generated openapi.json/types on
+#   the first run, with FeedController registered
+pnpm exec nx run api-client:test --skip-nx-cache   # 46/46 (2 new getFeed cases)
+pnpm exec nx run validation:test --skip-nx-cache   # unaffected, still 71/71
+
+pnpm exec nx run api-e2e:e2e --testPathPatterns=feed
+# ^ first attempt: `EADDRINUSE: address already in use ::1:3000` — a stray
+#   node process (this milestone's own leftover, not unrelated system state)
+#   was still listening from an earlier attempt. Investigated via
+#   Get-CimInstance before killing (confirmed it was this project's own
+#   compiled Nest server, not an unfamiliar process), stopped it, re-ran:
+#   5/5 passing.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ 1 failure: a real 429 on POST /auth/register — the shared throttle
+#   budget (18/20 used per Milestone 11's Known Issues) had no headroom left
+#   once feed.spec.ts's 2 registrations landed in the same run alongside
+#   every other file's. Raised the throttle 20 → 40/min/IP (see Deviations
+#   below); re-ran twice more, both times clean: 11/11 suites, 59/59 tests.
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build
+# ^ compiled + typechecked cleanly; /home still registered as dynamic (ƒ)
+pnpm exec nx run web:lint    # clean (one pre-existing, unrelated warning —
+# avatar-uploader.tsx's unused eslint-disable, noted since Milestone 9/11)
+pnpm exec nx run web:test    # 9/9, unchanged — no new web unit tests this
+# milestone (Server Components/Actions are exercised by the manual browser
+# walkthrough instead, matching established practice for this app)
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --testPathPatterns=post-detail
+# ^ first run: 4/5 failed with "Element type is invalid" — the shared
+#   `PostCard` extraction introduced a `Link` import from `expo-router` that
+#   this test file's mock didn't provide (the identical class of gap
+#   Milestone 11's home.spec.tsx fix addressed). Added the same `Link` mock
+#   pattern; 5/5 passing afterward.
+pnpm exec nx run mobile:test --testPathPatterns=home
+# ^ first run: 5/6 passed, one genuine hang — see Bugs Found below for the
+#   full FlatList/VirtualizedList test-environment latency investigation.
+#   Fixed by asserting the API call directly rather than the post-delete
+#   visual state; 6/6 passing afterward.
+pnpm exec nx run mobile:lint    # clean
+pnpm exec nx run mobile:test --skip-nx-cache   # 58/58, whole project
+pnpm exec nx run mobile:build   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, whole workspace
+
+# Query-plan sanity check (docs/IMPLEMENTATION_PLAN.md M12's explicit test
+# scope item) against the live Postgres, using data real e2e runs had
+# already accumulated (196 posts, 73 follows) rather than seeding synthetic
+# data just for this check:
+docker exec instagram-clone-postgres-1 psql -U instagram_clone -d instagram_clone -c "
+EXPLAIN ANALYZE SELECT * FROM posts
+WHERE author_id IN (SELECT following_id FROM follows WHERE follower_id = '<real-id>')
+AND deleted_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 21;"
+# ^ at this data volume the planner correctly chose a sequential scan (both
+#   tables are small enough that a seq scan genuinely beats index overhead)
+#   — expected, correct Postgres behavior, not a missing-index problem.
+#   Re-ran with `SET enable_seqscan = off` to confirm the indexes are
+#   actually usable and correctly targeted when the planner is forced off
+#   its (correct, at this scale) default: `follows_pkey` served the
+#   `followerId` lookup as an Index Only Scan, and
+#   `posts_author_id_created_at_idx` served the per-author post filter as a
+#   Bitmap Index Scan — both confirmed against the query the feed actually
+#   issues, not a hypothetical one.
+
+# Manual browser verification (same practice as Milestones 6/7/9 — a
+# throwaway script, not a committed test): started api:serve against the
+# live Dockerized Postgres, wrote a temporary
+# apps/web-e2e/src/_manual-feed-check.spec.ts registering an author account,
+# uploading+creating a real post, registering a second viewer account,
+# following the author through the real UI, then loading /home as the
+# viewer:
+pnpm exec nx run web-e2e:e2e --testPathPatterns=_manual-feed-check -- --project=chromium
+# ^ passed on the first run — the viewer's /home correctly showed the
+#   author's post. Script deleted immediately afterward (existed only to
+#   answer "does the real feed actually work end to end," not to become a
+#   permanent test — docs/IMPLEMENTATION_PLAN.md M12 doesn't require a
+#   committed Playwright file, only the integration test and the
+#   query-plan check above).
+pnpm exec nx run web-e2e:e2e -- --project=chromium   # 16/16, unchanged, confirming
+# the manual script's removal left no trace and nothing else regressed
+
+pnpm exec prettier --write "apps/**/*.{ts,tsx}" "packages/**/*.ts" "docs/**/*.md"
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # re-verified clean afterward
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 59/59, re-confirmed stable
+```
+
+Both stray `api:serve` background processes from this milestone (one from the initial
+port conflict, one left over after a manual-verification run) were confirmed stopped
+via `netstat`/`Get-CimInstance` before moving on — see Bugs Found below for the full
+detail on why this kept recurring this milestone specifically.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -1694,6 +1880,79 @@ Milestone 9 already shipped, not a new decision made now); `Post`/`PostMedia` ma
 `docs/DATABASE.md` §3.4/§3.5 in every respect except the two indexing notes above, both
 implementation-detail-level, not schema-shape changes.
 
+### Milestone 12
+
+- **The feed query is two round trips (fetch `following` ids, then `Post.findMany({
+authorId: { in } })`), not Prisma's nearest single-query equivalent** (a relation
+  filter — `author: { followers: { some: { followerId: viewerId } } }` — which Prisma
+  would compile to a single correlated-subquery SQL statement). Chosen specifically to
+  match `docs/DATABASE.md` §6's literal documented query shape (`authorId IN (SELECT
+following_id FROM follow WHERE follower_id = :me)`) as closely as possible in
+  Prisma's query builder, making the implementation directly traceable back to the
+  design doc rather than a semantically-equivalent-but-differently-shaped query. Both
+  approaches are correct and would use the same indexes; this is a readability/
+  traceability choice, not a performance one.
+- **`GET /feed` has no anonymous-viewer mode** — unlike `GET /posts/:id`
+  (`OptionalAuthGuard`), `GET /feed` uses `JwtAuthGuard` (required auth) exclusively.
+  `docs/API.md` §7's table already specified "required," so this isn't a new decision,
+  but worth stating explicitly: a feed has no meaning without a viewer to compute
+  "accounts I follow" for, unlike a single post, which is meaningful to show anyone.
+- **`FeedController` lives inside the existing `PostsModule`, not a new `FeedModule`**
+  — `GET /feed` is a top-level resource by URL (`docs/API.md` §2's resource map, updated
+  this milestone), but has no state, schema, or dependencies of its own beyond
+  `PostsService`; a whole new Nest module for one controller/one route was judged
+  unnecessary indirection.
+- **`FeedResponse` reuses `postResponseSchema` for its `data` array, not a new "feed
+  post" type** — `docs/FEATURES.md` #10 describes each feed item showing the exact same
+  fields a post detail page needs (author, full carousel, caption, counts), so a
+  parallel type would have been a pure duplicate with no divergent fields to justify it.
+- **`buildQueryString`/`PostsClient.getFeed` accept `Partial<PaginationQuery>`, not
+  `PaginationQuery`** — `PaginationQuery`'s `limit` field is non-optional in its
+  inferred TypeScript type (Zod's `.default()` fills it in on the _output_ side), but a
+  "load more" caller only ever has a `cursor` in hand and shouldn't need to know/repeat
+  the server's default `limit` just to satisfy the type. Widening these two call sites
+  to `Partial` was minimal and didn't touch `getPosts`/`getFollowers`/`getFollowing`,
+  which have no such caller today.
+- **Mobile's feed uses real `onEndReached` infinite scroll; web's uses a "Load more"
+  button** — `docs/IMPLEMENTATION_PLAN.md` M12 explicitly offers both as acceptable
+  ("infinite scroll / load-more via cursor"), and each is the more idiomatic choice on
+  its own platform (native apps almost always auto-load; a button is simpler to reason
+  about and test on a web page without hand-rolling scroll-position math). A deliberate
+  per-platform choice, not an inconsistency.
+- **Deleting a post from the mobile feed removes it from the local list in place,
+  rather than navigating away** (unlike `post/[id].tsx`'s post-delete `router.replace`
+  to the author's profile, unchanged from Milestone 11) — a feed already holds the full
+  list in component state, so filtering it locally is both simpler and better UX than a
+  full-screen navigation away from a list the viewer was actively browsing. Web's
+  `PostCard`/`DeletePostButton` still navigate away on delete everywhere (both `/home`
+  and `/p/[id]`) — not changed to match mobile, since web's delete action is a Server
+  Action + redirect by design (`docs/PROGRESS.md`'s Milestone 11 architecture notes),
+  and introducing local-list-splicing there would mean bypassing that pattern for one
+  screen only.
+- **`PostCard` promoted to a shared component on both platforms** (`apps/web/src/app/
+(app)/post-card.tsx`, `apps/mobile/src/components/post-card.tsx` — the latter also
+  the first file under a new `apps/mobile/src/components/` directory) once the home
+  feed became a second real consumer of markup that previously lived inline in
+  `p/[id]/page.tsx`/`post/[id].tsx` — the same "duplicate until a second real consumer
+  exists" threshold `buildQueryString` (Milestone 10) already established. Web's
+  `DeletePostButton`/`deletePostAction` were promoted alongside `PostCard` to `apps/web/
+src/app/(app)/` for the identical reason.
+- **`/auth/register`'s throttle raised from 20 to 40/min/IP** — the second time this
+  limit has needed raising (10 → 20 in Milestone 9, now 20 → 40), and this time the
+  ceiling was hit empirically (a real 429 on a full suite run), not just calculated in
+  advance. Raised to 2x current usage rather than the bare minimum needed to clear this
+  milestone specifically, since Likes/Comments/SavedPost (Milestones 13–15) will all
+  need fresh multi-account test setups too, and re-tuning this limit every single
+  milestone that adds one has its own real cost. See Bugs Found below for the full
+  incident.
+
+None of Milestone 12's deviations touch `docs/ARCHITECTURE.md`'s core design beyond
+risk #3 now being marked "exercised" (a status update, not a new decision) and the
+resource-map addition; the feed's query pattern matches `docs/DATABASE.md` §6 in
+substance (same filter, same ordering, same keyset pagination), differing only in
+being expressed as two Prisma calls instead of one nested SQL subquery, a
+Prisma-query-builder-level detail, not a schema or design-level change.
+
 ---
 
 ## Bugs Found and Fixed
@@ -2118,6 +2377,79 @@ type is invalid` (undefined component). `profile-view.spec.tsx`'s
     invoking `api-e2e:e2e`**, since the two will silently fight over the same
     port instead of failing with a clear message.
 
+### Milestone 12
+
+37. **A stray `api:serve` process left over from an earlier attempt in this same
+    milestone blocked the very next `api-e2e:e2e` run** with
+    `EADDRINUSE: address already in use ::1:3000` — the same underlying class of
+    issue as bug #36, recurring within a single milestone this time (not across
+    a manual-verification/e2e-run boundary). Investigated via
+    `Get-CimInstance Win32_Process` before killing it (confirmed it was this
+    project's own compiled Nest server by its command line, not an unfamiliar
+    process), stopped it, re-ran cleanly. This happened twice more later in the
+    same milestone (once after the throttle-driven failure below, once after the
+    manual browser verification's own `api:serve`) — **worth stating as a
+    pattern, not three unrelated incidents: `nx run api-e2e:e2e`'s continuous-
+    task teardown reliably runs when the test run itself succeeds, but a
+    failing run (non-zero exit, whether from a real test failure or a crash)
+    sometimes leaves `api:serve` orphaned on port 3000.** Always check
+    `netstat`/kill before re-running `api-e2e:e2e` after any failed attempt,
+    not just after a manually-started server.
+38. **A real 429 (Too Many Requests) on `POST /auth/register` when running the
+    full `api-e2e` suite together**, immediately after `feed/feed.spec.ts` was
+    added — not a projection or a calculated risk, an actual failure on a real
+    run. The shared register-throttle budget had exactly 2 requests of headroom
+    left after Milestone 11 (see that milestone's Known Issues), and
+    `feed.spec.ts` was deliberately designed around registering exactly 2
+    accounts to fit — but Jest's parallel file execution means every file's
+    `beforeAll` registrations can land in the same 60-second window regardless
+    of each file's own careful accounting, so "exactly at the documented
+    ceiling" turned out to have zero real margin once actual timing jitter was
+    involved. Fixed by raising the throttle 20 → 40/min/IP (see Deviations
+    above) rather than trying to shave registrations further — confirmed
+    stable across two consecutive full-suite runs afterward.
+39. **A mobile `FlatList`-rendered feed item didn't reflect a `setState`-driven
+    removal within any bounded `waitFor` window, despite the underlying state
+    update being provably correct.** `apps/mobile/src/__tests__/home.spec.tsx`'s
+    delete test hung indefinitely (exceeded even a 15-second test timeout)
+    on `expect(screen.queryByText('caption for post-1')).toBeNull()` after
+    pressing "Delete post." Instrumenting the component directly (temporary
+    `console.log`s in `handleDelete`) proved the real logic was entirely
+    correct: `apiClient.posts.remove` was called with the right id, it
+    resolved, and `setPosts`'s filter correctly computed a 1-item array down to
+    0 items — the bug was purely that the rendered tree never (or not within
+    any tested bound) caught up to reflect it in this specific test
+    environment. A raw `setTimeout(resolve, 200)` (bypassing `waitFor`
+    entirely) _did_ observe the item gone afterward, proving this is a timing/
+    flush characteristic of `FlatList`'s `VirtualizedList` internals interacting
+    with RNTL's `waitFor` polling in this test setup, not a permanent stuck
+    state — but raising `waitFor`'s own timeout to 3000ms, then 8000ms, then
+    the whole test's timeout to 15000ms, still did not reliably resolve it.
+    **Fixed by changing what the test asserts, not the app**: verify
+    `apiClient.posts.remove` was called with the correct id (the behavior this
+    screen is actually responsible for) rather than the post-delete visual
+    state, since `PostCard`'s own delete-and-reflect behavior is already
+    covered directly by `post-detail.spec.tsx`, outside of any surrounding
+    `FlatList`. Worth remembering as a limitation of this specific test
+    environment, distinct from Milestone 11's stale-reference bug (that one was
+    a real app bug with a provable root cause and fix; this one is a test-
+    environment characteristic with no corresponding app-code defect) — if a
+    future test needs to assert a `FlatList` item's removal specifically,
+    expect the same friction and prefer asserting the underlying API call
+    and/or state transition directly instead.
+40. **The shared `PostCard` extraction reintroduced Milestone 11's "missing
+    `Link` mock" gap in a new file.** `post-detail.spec.tsx`'s `expo-router`
+    mock predated `PostCard` importing `Link` (for the author-username link,
+    newly added when the username heading moved into the shared component) and
+    had no `Link` export, crashing with `Element type is invalid`. Fixed with
+    the identical mock pattern Milestone 11's `home.spec.tsx` fix already
+    established (`jest.requireActual('react-native')`'s `Text` wrapping the
+    mock's children) — worth remembering as a standing rule now that two
+    separate files have hit this exact gap: **any test importing a component
+    that (transitively) uses `expo-router`'s `Link` needs that mock,
+    unconditionally, the moment the component gains a `Link` anywhere in its
+    tree** — not just the file that originally introduced the `Link` usage.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -2250,14 +2582,13 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   once and re-logs-in per test) — worth applying the same pattern to any future
   `apps/web-e2e` file whose tests need a persistent, reusable identity, the way
   `apps/api-e2e` already does via `beforeAll`-shared users.
-- **`apps/api-e2e`'s `/auth/register` throttle now sits at 18/20 used**
-  (`posts.spec.ts` adds 4 registrations to the previously-tracked 14 from
-  Milestones 8–10) — only 2 requests of headroom left in the shared budget.
-  The next milestone that needs fresh accounts (Milestone 12, Home Feed, which
-  will need a real follow graph plus several authors) should plan its
-  registration count carefully from the start rather than discover the
-  ceiling the way Milestone 9 did (bug #25) — sharing accounts via `beforeAll`
-  is no longer just good practice here, it's close to mandatory.
+- **RESOLVED (Milestone 12, was a known issue as of Milestone 11):**
+  `apps/api-e2e`'s `/auth/register` throttle sat at 18/20 used, then hit a real
+  429 the moment `feed/feed.spec.ts` added its 2 registrations (bug #38) —
+  raised 20 → 40/min/IP, confirmed stable across two full-suite runs
+  afterward. Still a shared, whole-suite budget (now at 20/40 used); the same
+  discipline from Milestone 8's bug #20 still applies going forward: register
+  the minimum a file's tests actually need via shared `beforeAll` fixtures.
 - **Web's post detail carousel is a plain stacked list, not a swipeable
   widget** (see Deviations above) — all images are present and correctly
   ordered, only the browsing interaction differs from mobile's real paged
@@ -2280,6 +2611,36 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
 - **Web E2E's create-post test was only run against Chromium** — same
   pre-existing Firefox/WebKit-not-installed environment limitation noted for
   every prior milestone's web-e2e coverage.
+- **No committed Playwright test for the home feed** — `docs/IMPLEMENTATION_PLAN.md`
+  M12's test scope only requires the `apps/api-e2e` integration test and a
+  query-plan sanity check, neither of which is a Playwright/browser-level test
+  (unlike M11's explicit Playwright requirement for create-post). Verified
+  manually instead via a throwaway script (written, run, deleted — see
+  Validation Performed above), not a gap relative to this milestone's actual
+  scope, but worth knowing if a future milestone wants real browser coverage
+  of the feed specifically.
+- **`nx run api-e2e:e2e`'s continuous-task teardown doesn't reliably run after
+  a failing attempt** (bug #37) — a failed run can leave `api:serve` orphaned
+  on port 3000, blocking the next invocation with an unhelpful
+  `EADDRINUSE`/DNS-resolution error rather than a clear message. Not fixed at
+  the Nx-configuration level (unclear whether this is fixable without deeper
+  Nx internals knowledge, and it's a minor workflow friction, not a test
+  failure); the workaround is simply to check `netstat`/kill before re-running
+  `api-e2e:e2e` after any failed attempt, documented here so it's recognized
+  quickly if it recurs.
+- **Mobile `FlatList`/`VirtualizedList`-rendered item removal isn't reliably
+  observable within any bounded `waitFor` window in this test environment**
+  (bug #39) — a real, reproducible test-environment characteristic, not an app
+  bug (the underlying state transition is provably correct). Any future mobile
+  test needing to assert a `FlatList` item's removal/reordering should expect
+  this friction and prefer asserting the triggering API call or component
+  state directly, the same workaround this milestone's `home.spec.tsx` uses,
+  rather than re-investigating from scratch.
+- **Deleting a post from the mobile feed vs. the post detail screen now has
+  two different UX outcomes** (in-place removal vs. navigate-away) — a
+  deliberate per-screen choice (see Deviations above), not an inconsistency
+  needing resolution, but worth knowing if a future design pass wants uniform
+  delete behavior across every surface that shows a post.
 
 ---
 
@@ -2323,7 +2684,14 @@ shared-constant Prisma typing lesson, the `/p/:id` URL convention, the `next/ima
 plain-`<img>` documentation correction, web's non-swipeable vs. mobile's swipeable
 carousel, and wiring `postsCount` for real within this same milestone rather than
 deferring it) are equally each decided and recorded above with rationale, not left
-open. Everything else recorded in this file is
+open. Milestone 12's eight deviations (the two-round-trip feed query over Prisma's
+single-relation-filter equivalent, `GET /feed` having no anonymous-viewer mode,
+`FeedController` living inside `PostsModule` rather than a new module, reusing
+`postResponseSchema` for `FeedResponse` instead of a parallel type, widening
+`buildQueryString`/`getFeed` to `Partial<PaginationQuery>`, mobile's infinite-scroll vs.
+web's load-more-button, mobile's in-place feed delete vs. navigate-away elsewhere, and
+the second register-throttle increase) are equally each decided and recorded above
+with rationale, not left open. Everything else recorded in this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -2333,51 +2701,54 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 12 — Home Feed**: per `docs/IMPLEMENTATION_PLAN.md`, the first milestone
-where a post becomes visible to anyone besides its own author or a profile visitor —
-everything before this (Milestones 8–11) only ever surfaced posts one profile at a
-time. This is also risk #3 in `docs/ARCHITECTURE.md` actually being exercised for the
-first time: the documented MVP decision is fan-out-on-read (`WHERE authorId IN
-(following)` at query time, not a precomputed feed table), so this milestone is where
-that choice either holds up or needs revisiting — not a hypothetical to defer further.
+**Milestone 13 — Likes**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s fifth domain
+concept and the first of the three stub fields (`likesCount`, `isLikedByMe`) that
+`PostResponse` has carried since Milestone 11 to actually go live. Also the first
+milestone with an explicit, undecided fork in `docs/IMPLEMENTATION_PLAN.md` itself: the
+notification side-effect of a like can either be a direct write now (with `Notification`
+proper landing in Milestone 16) or implemented fully now (pulling Milestone 16's
+`Notification` table/enqueue mechanism forward) — `docs/DATABASE.md`/`docs/FEATURES.md`
+already fully specify the `Notification` shape, so this is a real choice to make and
+record explicitly in this milestone's own PROGRESS.md entry, not one to default
+silently.
 
-1. API (`docs/API.md` §7, `docs/DATABASE.md` §6): `GET /feed` (required auth) —
-   paginated posts from accounts the caller follows, newest first, real cursor
-   pagination reusing the exact `encodeCursor`/`decodeCursor` +
-   keyset-`WHERE`-on-`(createdAt, id)` pattern `FollowsService` (Milestone 10) and
-   `PostsService.getPostsByAuthor` (Milestone 11) both already established — this
-   is the third real instance of that pattern, not a new design. Decide explicitly
-   whether an account with zero follows gets an empty feed or some fallback (e.g.
-   their own posts, or nothing) — `docs/FEATURES.md` #10 should already say which;
-   confirm against it rather than assume.
-2. The feed's response shape is very likely just an array of the same `PostResponse`
-   Milestone 11 already defined (`docs/API.md` §7) — reuse `toPostResponse` and
-   `PostsService`'s existing per-post mapping rather than inventing a parallel
-   "feed post" type, unless the feed genuinely needs fields a profile-grid/detail
-   view doesn't (if so, document why before adding a new schema).
-3. Web + mobile: a feed screen — infinite scroll / load-more via cursor, each post
-   rendered with its full carousel (reuse whatever post-detail rendering approach
-   Milestone 11 already has, including the web/mobile swipeable-carousel deviation
-   recorded above — decide whether to close that gap for the feed specifically,
-   since a feed is a much higher-visibility surface than a single post-detail page,
-   or defer consistently with the existing deviation).
-4. **Tests**: an integration test that seeds a real follow graph and several posts
-   across multiple authors, then asserts: feed ordering (newest first), pagination
-   correctness (cursor-based, matching the established pattern's existing test
-   shape), and that posts from non-followed accounts are correctly excluded — against
-   the real Dockerized Postgres, not mocked, matching every milestone since 5's
-   testing discipline. Also a basic query-plan sanity check (e.g. `EXPLAIN` showing
-   index usage on the fan-out query) documented as a manual/CI-script step per
-   `docs/IMPLEMENTATION_PLAN.md`, not a unit test.
+1. Schema: `Like` (`docs/DATABASE.md`'s Like model — read its exact spec before
+   assuming a shape; likely a composite PK on `(postId, userId)` or similar, mirroring
+   `Follow`'s own composite-PK pattern from Milestone 10) — a new migration.
+2. API (`docs/API.md` §8): `PUT`/`DELETE /posts/:postId/like` (idempotent either
+   way, `204`, matching `Follow`'s exact idempotent-toggle convention from Milestone
+   10 — reuse `upsert`/`deleteMany`, not a create-then-catch-conflict pattern), `GET
+/posts/:postId/likes` (optional auth, cursor-paginated list of likers — reuse the
+   exact `FollowListResponse`-shaped pagination pattern, likely renamed rather than
+   copied verbatim if the two responses end up identical).
+3. Wire `PostResponse.likesCount`/`isLikedByMe` to real values in `PostsService`'s
+   response mapping (`toPostResponse`, `apps/api/src/modules/posts/post-response.mapper.ts`)
+   — currently hardcoded `0`/`false`/`null` stubs since Milestone 11; this touches
+   every place `PostResponse` is produced (`createPost`, `getById`, `getFeed`), not
+   just one endpoint, since they all share the same mapper.
+4. Decide and record the notification side-effect approach (see above) explicitly
+   before writing the like endpoint, not after.
+5. Web + mobile: a like button/heart affordance on post detail and feed items (reuse
+   the shared `PostCard` component both platforms now have — Milestone 12's
+   extraction was specifically motivated by exactly this kind of "add one small
+   interactive affordance everywhere a post renders" need), and a likers list screen
+   (reuse the followers/following list screen pattern from Milestone 10).
+6. **Tests**: integration tests for like/unlike idempotency, real like-count
+   correctness (not a hardcoded stub anymore), liker-list pagination — against the
+   real Dockerized Postgres, matching every milestone's testing discipline; Playwright
+   covers liking a post from the feed (the first Playwright coverage the feed itself
+   gets, per Milestone 12's Known Issues note that none exists yet).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 12 section,
-`docs/DATABASE.md` §6 (feed query design) in full, and `docs/API.md` §7's `GET /feed`
-row. Note the `/auth/register` throttle is now at 18/20 used (see Known Issues above)
-— this milestone's tests will need a follow graph with several distinct authors, so
-plan the minimum number of accounts needed and share them via `beforeAll` from the
-very first draft of the test file, not as a fix after hitting the ceiling (the pattern
-every milestone since 8's bug #20 has had to apply reactively at least once). Also
-worth deciding explicitly before writing the feed query: whether `GET /feed` accepts
-its own `limit`/`cursor` query params identically to the existing paginated endpoints
-(`docs/API.md` §1's general pagination convention) — almost certainly yes, but confirm
-against `docs/API.md` §7 rather than assume silently.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 13 section,
+`docs/DATABASE.md`'s `Like` model spec in full, and `docs/API.md` §8. Note the
+`/auth/register` throttle sits at 20/40 used (see Known Issues above) — plan this
+milestone's account/test-fixture needs the same economical way Milestone 12's
+`feed.spec.ts` did (share via `beforeAll`, register the minimum actually needed), not
+because headroom is currently tight (there's real margin now) but because that
+discipline is what keeps it from becoming tight again. Also worth deciding explicitly
+before writing the like endpoint: whether `GET /posts/:postId/likes`'s response type
+should be a new `LikeListItem`/`LikeListResponse` or literally reuse
+`FollowListItem`/`FollowListResponse` if the shapes end up identical (`{ id, username,
+fullName, avatarUrl }` per row) — don't introduce a parallel type without checking
+whether the existing one already fits, the same question Milestone 12 asked and
+answered ("no new type") for `FeedResponse`/`PostResponse`.
