@@ -153,6 +153,7 @@ export default function ProfileScreen() {
             <>
               <Link href="/profile/edit">Edit profile</Link>
               <Link href="/post/new">New post</Link>
+              <Link href="/profile/saved">Saved posts</Link>
             </>
           )}
           {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (

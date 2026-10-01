@@ -4,24 +4,34 @@ import { AuthModule } from '../auth/auth.module';
 import { CommentsModule } from '../comments/comments.module';
 import { LikesModule } from '../likes/likes.module';
 import { MediaModule } from '../media/media.module';
+import { SavedPostsModule } from '../saved-posts/saved-posts.module';
 import { FeedController } from './feed.controller';
+import { MeSavedController } from './me-saved.controller';
 import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 
 @Module({
   // MediaModule exports MediaService, used to validate each mediaId is the
   // caller's own, READY, POST_IMAGE-purpose media (docs/API.md §7).
-  // LikesModule/CommentsModule export their services, used to resolve real
-  // likesCount/isLikedByMe (Milestone 13) and commentsCount (Milestone 14) on
-  // every PostResponse — the same dependency shape as MediaModule; neither
-  // imports PostsModule back (each does its own small, self-contained
+  // LikesModule/CommentsModule/SavedPostsModule export their services, used
+  // to resolve real likesCount/isLikedByMe (Milestone 13), commentsCount
+  // (Milestone 14), and isSavedByMe (Milestone 15) on every PostResponse —
+  // the same dependency shape as MediaModule; none of them import
+  // PostsModule back (each does its own small, self-contained
   // post-existence check), so this isn't circular.
-  imports: [AuthModule, MediaModule, LikesModule, CommentsModule],
-  // FeedController lives here rather than its own module — `GET /feed`
-  // (Milestone 12) is a top-level resource by URL, but it's really just
-  // another read path over PostsService, with no state or dependencies of
-  // its own that would justify a separate module.
-  controllers: [PostsController, FeedController],
+  imports: [
+    AuthModule,
+    MediaModule,
+    LikesModule,
+    CommentsModule,
+    SavedPostsModule,
+  ],
+  // FeedController/MeSavedController live here rather than their own
+  // modules — `GET /feed` (Milestone 12) and `GET /me/saved` (Milestone 15)
+  // are both top-level resources by URL, but each is really just another
+  // read path over PostsService, with no state or dependencies of its own
+  // that would justify a separate module.
+  controllers: [PostsController, FeedController, MeSavedController],
   providers: [PostsService],
   // UsersModule needs getPostsByAuthor for GET /users/:username/posts (the
   // profile grid) — the same dependency shape MediaModule/FollowsModule

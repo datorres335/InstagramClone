@@ -185,7 +185,7 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Comment`, `POST`/`GET/DELETE
 /posts/:postId/comments` (`API.md` §9).
 
-### 13. Saved Posts
+### 13. Saved Posts (implemented Milestone 15)
 
 - Bookmark a post privately (not visible to other users, matching Instagram's own
   "Saved" behavior); view your saved posts in a dedicated list.

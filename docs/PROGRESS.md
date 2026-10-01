@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 14 — Comments
+**Current Milestone:** Milestone 15 — Saved Posts
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -105,7 +105,24 @@ codebase; every other one is newest-first), and `DELETE
 authorization check (the comment's author OR the post's author). Both `web` and
 `mobile` gained a comment thread + add-comment form on the post detail page only (not
 the feed, per `docs/FEATURES.md` #12). Same `Notification`-deferral decision Milestone
-13 already made, applied identically rather than re-litigated.
+13 already made, applied identically rather than re-litigated. Milestone 15 adds
+`apps/api`'s eighth domain module, `SavedPostsModule`, and is the last of
+`PostResponse`'s three original stub fields (`isSavedByMe`) to go live — closing out
+the stub-now-fill-later arc every field has carried since Milestone 11. A new
+`SavedPost` table (composite PK on `(userId, postId)`, plus an explicit secondary
+index on `(userId, createdAt DESC)` the PK's own implicit index can't serve),
+`PUT`/`DELETE /posts/:postId/save` (idempotent either way, matching
+`Follow`/`Like`'s exact toggle convention), and `GET /me/saved` — the first endpoint
+in this codebase with **no anonymous or other-viewer case at all** (saves are private
+to the saver by definition, so it's required-auth-only, unlike every other paginated
+list). `GET /me/saved` returns a distinctly-named but structurally-identical type to
+`FeedResponse` (`SavedPostsResponse`), full `PostResponse` items. `SavedPostsController`
+and `MeSavedController` are split across two modules (the latter living inside
+`PostsModule`, alongside `FeedController`) to avoid a circular module dependency.
+Both `web` and `mobile` gained a save/unsave bookmark button on the shared `PostCard`
+and a dedicated "Saved posts" list screen reachable only from the viewer's own
+profile. No `Notification` side effect — saving was never described as a notified
+action in the first place, so there was nothing to defer.
 
 ---
 
@@ -884,6 +901,92 @@ userId`)
       projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
       `api-e2e:e2e` (13/13 suites, 85/85 tests, confirmed stable across two
       consecutive runs) + `web-e2e:e2e` (18/18, Chromium)
+
+### Milestone 15 — Saved Posts
+
+- [x] `prisma/schema.prisma` — `SavedPost` (docs/DATABASE.md §3.9: composite
+      PK `(userId, postId)`, both FKs `onDelete: Cascade`, plus an explicit
+      secondary index on `(userId, createdAt DESC)` since a composite PK's
+      own implicit index is ordered by `(userId, postId)`, not `createdAt`)
+      and the reverse `User.savedPosts`/`Post.savedBy` relations — a new
+      migration, hand-placed via the same `prisma migrate diff` +
+      `migrate deploy` workaround every prior migration has used (stderr
+      redirected away from the output file from the start this time)
+- [x] `apps/api/src/modules/saved-posts/` — `SavedPostsModule`/
+      `SavedPostsController`/`SavedPostsService`, `apps/api`'s eighth domain
+      module. `save`/`unsave`/`getSavedPostIdsForViewer` all do their own
+      small, self-contained post-existence check (`findActivePost`, the same
+      trade-off `LikesService`/`CommentsService` already established);
+      `getSavedStateForPosts` is the batched per-page method mirroring
+      `LikesService.getLikeStateForPosts`'s shape, minus the count half
+- [x] `apps/api/src/modules/posts/me-saved.controller.ts` — `MeSavedController`
+      (`GET /me/saved`) lives inside `PostsModule`, not `SavedPostsModule`,
+      the same "host it where the data pipeline already lives" choice
+      `FeedController` made in Milestone 12 — it needs `PostsService`'s full
+      post-rendering pipeline, and `PostsModule` already depends on
+      `SavedPostsModule` one-way (for `isSavedByMe`), so the reverse
+      dependency would be circular
+- [x] Three endpoints wired: `PUT`/`DELETE /posts/:postId/save` (idempotent
+      either way, `204`, matching `Follow`/`Like`'s exact toggle convention),
+      `GET /me/saved` (required auth — no anonymous or other-viewer case
+      exists for this endpoint at all)
+- [x] `PostsService`/`post-response.mapper.ts` updated to take a real
+      `isSavedByMe: boolean | null` at every `PostResponse` call site
+      (`createPost` hardcodes `false` without querying; `getById`/`getFeed`
+      both call the new `SavedPostsService.getSavedStateForPosts`, run via
+      `Promise.all` alongside the existing `LikesService`/`CommentsService`
+      calls); the now-unused `isViewerAuthenticated` parameter (only ever
+      used to derive this stub) removed from `toPostResponse` entirely
+- [x] New `PostsService.getSavedPosts(viewerId, query)` method — fetches the
+      saved post-id list from `SavedPostsService`, re-sorts the resulting
+      `Post` rows to match that order (`findMany({ where: { id: { in } } })`
+      doesn't preserve input order), and maps each to a full `PostResponse`
+      via the existing `toPostResponse`/`LikesService`/`CommentsService`
+      pipeline with `isSavedByMe` hardcoded `true`
+- [x] `packages/validation`'s new `saved-post.ts` (`savedPostsResponseSchema`/
+      `SavedPostsResponse`) — a distinctly-named type rather than literally
+      reusing `FeedResponse`, even though the wrapper shape is structurally
+      identical, since a saved-posts list and a feed are different concepts
+- [x] `packages/api-client`'s new `savedPosts` namespace (`save`/`unsave`/
+      `getSaved`)
+- [x] `apps/web`: a `SaveButton` client component (local state, no
+      `router.refresh()`, the same `LikeButton` pattern) wired into the
+      shared `PostCard`, plus a dedicated `/saved` page (`saved/page.tsx` +
+      `saved-posts-list.tsx` + `actions.ts`, mirroring `/home`'s
+      page/feed-list/actions split) reachable only from the viewer's own
+      profile (`[username]/page.tsx`'s `isOwnProfile` block)
+- [x] `apps/mobile`: a `components/save-button.tsx` (direct `apiClient`
+      calls, the same `LikeButton` pattern) wired into the shared
+      `PostCard`, plus a dedicated `profile/saved.tsx` screen (flat file,
+      matching `followers.tsx`/`following.tsx`/`edit.tsx`'s convention),
+      reachable from the own-profile `isOwnProfile` block; real delete
+      support wired in too (a saved post can be the viewer's own) rather
+      than leaving `PostCard`'s delete button a dead no-op
+- [x] 11 new `saved-posts.service.spec.ts` unit tests, 7 new `PostsService`
+      tests (`createPost` not querying `SavedPostsService`, `getById`
+      reporting real `isSavedByMe`, `getFeed`'s batched saved-state call,
+      and a new `getSavedPosts` describe block: empty-list short-circuit,
+      id-order re-sorting, batched like/comment fetching with `isSavedByMe`
+      hardcoded true, filtering ids that no longer resolve to an active
+      post, and `nextCursor` propagation), 5 new `saved-posts-client.spec.ts`
+      cases, 3 new `openapi-contract.spec.ts` type references
+- [x] 7 new mobile unit tests (`save-button.spec.tsx`: save/unsave/error
+      cases; `saved-posts.spec.tsx`: newest-first rendering, empty state,
+      load-more pagination, delete-your-own-saved-post)
+- [x] 9 new `apps/api-e2e` integration tests (`saved-posts/saved-posts.spec.ts`)
+      — real accounts/posts, not mocked: save/unsave idempotency, `isSavedByMe`
+      true/false/null across viewer states, `404` for a nonexistent post,
+      `401` unauthenticated, newest-saved-first keyset pagination, that
+      `GET /me/saved` never leaks another user's saves, and a malformed-cursor
+      `400`
+- [x] 1 new `apps/web-e2e` Playwright test (`save-post.spec.ts`, Chromium) —
+      a real browser save→persists-after-reload→unsave→persists-after-reload
+      round trip across the post detail page and the `/saved` list, per
+      `docs/IMPLEMENTATION_PLAN.md` M15's explicit Playwright requirement
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (14/14 suites, 94/94 tests) + `web-e2e:e2e` (19/19,
+      Chromium, confirmed stable across two consecutive clean runs)
 
 ---
 
@@ -1775,6 +1878,108 @@ several points this milestone (before the first `comments.spec.ts` run, and twic
 during the web-e2e debugging session above) — each confirmed via `Get-CimInstance`
 before stopping, the same standing characteristic Milestones 12–13 already documented.
 
+### Milestone 15
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding SavedPost
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  2>/dev/null > prisma/migrations/20260930200001_0007_saved_post/migration.sql
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d saved_posts — composite PK, the
+# secondary (userId, createdAt DESC) index, both FKs ON DELETE CASCADE, all
+# matched schema.prisma exactly.
+
+pnpm exec nx run api:test --testPathPatterns=saved-posts --skip-nx-cache   # 11/11,
+# first run — every SavedPostsService test passed immediately.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed SavedPostsController/MeSavedController registered correctly in
+#   the real Nest boot log: PUT/DELETE /posts/:postId/save, GET /me/saved.
+
+pnpm exec nx run api:test --testPathPatterns=posts.service.spec --skip-nx-cache
+# ^ first run: 8 failures, all TypeError: Cannot read properties of
+#   undefined (reading 'getSavedStateForPosts') — createDeps() hadn't been
+#   given a savedPostsService mock yet even though PostsService's
+#   constructor already required one. Added the mock (defaulting to
+#   false/null by auth state, the same pattern likesService/commentsService
+#   already established) plus the new getSavedPosts describe block; re-ran:
+#   43/43, first clean run after the fix.
+pnpm exec nx run api:test --skip-nx-cache   # 170/170, whole project
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/posts/{postId}/save and /api/v1/me/saved appeared in
+#   the generated openapi.json/types on the first run.
+pnpm exec nx run api-client:test --skip-nx-cache   # 61/61 (5 new saved-posts-client.spec.ts cases)
+pnpm exec nx run api-client:build --skip-nx-cache   # clean
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache
+# ^ compiled + typechecked cleanly; new /saved route appeared in the route
+#   manifest alongside the existing ones.
+pnpm exec nx run web:lint --skip-nx-cache    # clean (same pre-existing,
+# unrelated avatar-uploader.tsx warning noted since Milestone 9)
+pnpm exec nx run web:test --skip-nx-cache    # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --testPathPatterns="save-button|saved-posts" --skip-nx-cache
+# ^ 7/7, first run — both new test files passed immediately.
+pnpm exec nx run mobile:lint --skip-nx-cache    # clean
+pnpm exec nx run mobile:test --skip-nx-cache    # 80/80, whole project
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, whole workspace
+
+pnpm exec nx run api-e2e:e2e --testPathPatterns=saved-posts --skip-nx-cache
+# ^ first attempt: 9/9 failed with a 404 on /auth/register (not a throttle
+#   429) — a stray unrelated dev server on this machine (a different
+#   project's SvelteKit `npm run dev`, not this repo's) was already
+#   listening on 127.0.0.1:3000 when Nx's global-setup ran its
+#   waitForPortOpen(3000) check, which matched that unrelated listener
+#   instead of waiting for this repo's own api:serve (still mid-webpack-build
+#   at that moment) to actually come up — confirmed by the Nest boot log
+#   printing only after the test run had already failed. Not a real bug in
+#   this milestone's code; re-ran once the real server had time to finish
+#   starting: 9/9 passed cleanly. See Bugs Found below.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 14/14 suites, 94/94 tests
+
+nx run api:serve   # started manually — web-e2e's own webServer only manages web:dev
+pnpm exec nx run web-e2e:e2e --grep="saved posts" -- --project=chromium
+# ^ first attempt: 0 useful filtering — the same Milestone 14 bug #29/#45
+#   pitfall (combining --grep with a trailing -- --project=chromium on one
+#   invocation silently drops the --grep filter) resurfaced, running all 19
+#   tests instead of 1. Re-ran with --grep and --project combined after the
+#   trailing -- instead (`-- --grep "saved posts" --project=chromium`),
+#   which filters correctly per the documented fix.
+pnpm exec nx run web-e2e:e2e -- --grep "saved posts" --project=chromium
+# ^ first real attempt with proper filtering: failed once on the final
+#   post-unsave reload assertion (post still listed after unsaving) — passed
+#   cleanly on an immediate identical re-run with no code changes,
+#   consistent with the already-documented Next dev-server first-compile
+#   latency for a brand-new route's Server Actions (this was `/saved`'s and
+#   `save-actions.ts`'s first-ever exercise in this dev server process, the
+#   same class of flake `comment-post.spec.ts` hit in Milestone 14). Not
+#   fixed with a padded timeout, for the same reason recorded there.
+pnpm exec nx run web-e2e:e2e -- --project=chromium   # 18 passed, 1 failed
+# ^ the failure was comment-post.spec.ts's own already-documented reload
+#   flake (Milestone 14 bug #46), not a regression or anything related to
+#   this milestone's new test. Restarted api:serve to reset its in-memory
+#   throttle counter (the documented Milestone 13 global-throttle-collision
+#   workaround) before re-running.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # 19/19, clean
+
+pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "prisma/**/*.ts"
+# ^ only flagged apps/web/next-env.d.ts, a Next-generated file unrelated to
+#   this milestone; everything this milestone touched was already formatted.
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, re-confirmed stable
+```
+
+Two stray `api:serve` processes (left running from earlier in this same session, not
+freshly spawned this milestone) were found still listening on port 3000 at the start
+of this milestone's e2e work — each confirmed via `Get-CimInstance` before stopping,
+the same standing characteristic every prior milestone from 12 onward has documented.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -2471,6 +2676,66 @@ matches `docs/DATABASE.md` §3.8 in every respect except the two FK `onDelete` b
 now spelled out explicitly (both already the correct, expected choice — not a schema
 or design-level change, just filling in detail the original section left implicit).
 
+### Milestone 15
+
+- **No `Notification` side effect, and not even a deferral** — unlike Milestones 13/14
+  (likes, comments), `docs/FEATURES.md` #13 never describes saving a post as something
+  the post's author is notified about in the first place (Instagram's own saved-posts
+  feature is silent to the post's author), so there's no decision to make or defer
+  here at all, just an absence of one.
+- **`GET /me/saved` is required-auth-only, with no anonymous or other-viewer mode** —
+  every other paginated list endpoint in this codebase (`GET /posts/:postId/likes`,
+  `GET /feed`, `GET /posts/:postId/comments`) has some notion of "view as a different
+  or anonymous viewer." A saved-posts list has none: saves are private to the saver by
+  definition, so `GET /me/saved` only ever means "my own list," making optional auth
+  meaningless here rather than merely unused.
+- **`SavedPostsResponse` is a distinctly-named type, not a literal reuse of
+  `FeedResponse`** — revisits the exact decision Milestone 13 made the other way for
+  `GET /posts/:postId/likes` (reusing `FollowListResponse` verbatim). The wrapper shape
+  (`{ data: PostResponse[], meta: { nextCursor } }`) is structurally identical to
+  `feedResponseSchema`'s, but a saved-posts list and a feed are different concepts by
+  name, and naming the type after what it represents keeps call sites self-documenting
+  — judged differently from the likers-list case because a likers list and a followers
+  list really are the same _kind_ of list (both "users related to X"), while a feed and
+  a saved-posts list aren't the same kind of list despite sharing a shape.
+- **`SavedPostsService` does its own small, self-contained post-existence check
+  (`findActivePost`) rather than depending on `PostsModule`, `LikesModule`, or
+  `CommentsModule`** — the identical trade-off `LikesService`/`CommentsService` already
+  make, now a third instance of the pattern (fourth counting
+  `FollowsService`/`UsersService`'s `findActiveUserByUsername` precedent). Reusing
+  `LikesModule`'s or `CommentsModule`'s check was considered and rejected: importing
+  either module just for one four-line query would be an arbitrary dependency with no
+  other justification, duplicating it a third time is consistent with the precedent.
+- **`MeSavedController` lives inside `PostsModule`, not `SavedPostsModule`** — the
+  identical "host it where the data pipeline already lives" choice `FeedController`
+  made in Milestone 12. `GET /me/saved` needs `PostsService`'s full post-rendering
+  pipeline (`LikesService`/`CommentsService` batching + `toPostResponse`), and
+  `PostsModule` already depends on `SavedPostsModule` one-way (for `isSavedByMe`), so
+  hosting the controller in `SavedPostsModule` and calling back into `PostsService`
+  would be circular. `SavedPostsController` (`PUT`/`DELETE /posts/:postId/save`)
+  stays in `SavedPostsModule` itself, since those two routes need nothing from
+  `PostsService`.
+- **`toPostResponse`'s `isViewerAuthenticated` parameter removed entirely, not just
+  reinterpreted** — it existed only to derive the `isSavedByMe` stub
+  (`isViewerAuthenticated ? false : null`); now that `isSavedByMe` is a real computed
+  value passed in directly, the parameter had no remaining purpose. Removed rather
+  than left in place unused, consistent with `CLAUDE.md`'s "don't leave half-finished
+  implementations" guidance.
+- **Mobile's `profile/saved.tsx` wires up real delete support, not a no-op** — a saved
+  post can be the viewer's own (saving your own post is allowed; nothing in
+  `docs/FEATURES.md` #13 forbids it), so the shared `PostCard`'s delete affordance
+  renders there too. Passing a no-op `onDelete` would leave a dead "Delete post"
+  button for that case; implementing the real `apiClient.posts.remove` + local-list
+  filter (mirroring `(tabs)/home.tsx`'s existing `handleDelete`) was simpler and more
+  correct than either suppressing the button for this one screen or shipping a button
+  that does nothing when pressed.
+
+None of Milestone 15's deviations touch `docs/ARCHITECTURE.md`'s core design;
+`SavedPost` matches `docs/DATABASE.md` §3.9 exactly as specified (composite PK, the
+explicit secondary index, both FK `onDelete: Cascade` behaviors) — no schema or
+design-level surprises, only the two module-boundary/type-naming judgment calls
+recorded above.
+
 ---
 
 ## Bugs Found and Fixed
@@ -3089,6 +3354,45 @@ deploy`. Worth remembering for every future `prisma migrate diff`
     diagnosis. Flagged here as a genuinely open item (see Known Issues below) rather
     than asserted as understood.
 
+### Milestone 15
+
+48. **`apps/api-e2e`'s `global-setup.ts` can match the wrong listener on port 3000,
+    starting the test run before this repo's own `api:serve` has actually finished
+    booting.** The first `saved-posts.spec.ts` run failed all 9 tests with a `404` on
+    `/auth/register` — not a `429` (the usual register-throttle suspect), a genuine
+    "route doesn't exist" response. Root cause: this development machine had an
+    unrelated project's dev server (a different repo's `npm run dev`, SvelteKit)
+    already listening on `127.0.0.1:3000` at the time, left over from earlier work
+    outside this repo entirely. `global-setup.ts`'s `waitForPortOpen(3000)` only checks
+    that _something_ accepts a connection on the port, not that it's _this_ app — it
+    matched the unrelated listener and let the test run start immediately, while this
+    repo's own freshly-rebuilt `api:serve` (triggered by the same `nx run api-e2e:e2e`
+    invocation's `dependsOn`) was still mid-webpack-build. Confirmed by the timing: the
+    Nest "application successfully started" boot log didn't print until _after_ the
+    test run had already failed. Not a bug in this milestone's `SavedPostsService`/
+    controllers — re-running the exact same command once the real server had time to
+    finish starting passed all 9 tests cleanly. Not fixed at the `global-setup.ts`
+    level (that would mean teaching it to distinguish "a server" from "this server,"
+    e.g. by polling a known route until it responds correctly rather than just
+    checking the TCP port is open — a reasonable future hardening, but speculative
+    work beyond this milestone's scope for a failure mode that's specific to this one
+    development machine's other, unrelated running processes, not something a fresh
+    clone or CI would ever hit). Recorded here so the symptom (`404` instead of the
+    usual throttle `429`, immediately after a fresh `api:build`) is recognizable if it
+    recurs, rather than being mistaken for a real regression.
+49. **Bug #47's intermittent `mobile:test`-inside-`run-many` flake recurred three more
+    times this milestone**, and this time the specific failing assertion was actually
+    captured (every prior occurrence resolved via Nx's auto-retry before it could be
+    inspected): `comment-section.spec.tsx`'s "deletes a comment and removes it from
+    the list" test's `expect(screen.queryByText(...)).toBeNull()` assertion received a
+    stale React Fiber node object instead of `null`. Standalone `mobile:test` reruns
+    passed 80/80 both times immediately after, consistent with #47's original
+    "`run-many`-only, never standalone" characterization — this doesn't change the
+    diagnosis, just narrows it from "some timing-sensitive test" to specifically this
+    one RTL cleanup-timing-sensitive assertion, still without a confirmed root cause or
+    a fix. Nothing in this milestone's own `save-button.spec.tsx`/`saved-posts.spec.tsx`
+    was involved in any occurrence.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -3311,11 +3615,21 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   correctly isolate one test, including combined with a trailing
   `-- --project=chromium`.
 - **An intermittent, unresolved `mobile:test` flake inside `nx run-many`
-  batches** (bug #47) — reproducible twice this milestone, not reproducible
-  standalone either time, no root cause confirmed. If this recurs with enough
-  frequency to capture the actual failing assertion, that's the next concrete
-  step; until then, treat a `mobile:test` failure inside a `run-many` batch as
-  worth an immediate standalone re-run before assuming a real regression.
+  batches** (bug #47) — reproducible twice in Milestone 14, then three more
+  times in a row in Milestone 15 (still only inside `run-many` batches, still
+  never reproducible when `mobile:test` was immediately re-run standalone
+  afterward — confirmed clean at 80/80 both times it was retried standalone
+  this milestone). Every occurrence so far has been the same specific test,
+  `comment-section.spec.tsx`'s "deletes a comment and removes it from the
+  list" (an `expect(...).toBeNull()` assertion receiving a stale React Fiber
+  node instead), which narrows the hypothesis from "any timing-sensitive
+  test" to specifically a React Testing Library `queryByText`/cleanup timing
+  issue under `run-many`'s parallel CPU contention — still not root-caused or
+  fixed, since reproducing it in isolation (needed to actually debug it)
+  continues to fail. Treat a `mobile:test` failure inside a `run-many` batch
+  as worth an immediate standalone re-run before assuming a real regression;
+  if it starts failing standalone too, or failing on a different test, that
+  would be the signal this is no longer just `run-many` contention.
 - **A single, low-frequency `web-e2e` flake tied to Next dev-server
   first-compile latency** (bug #46) — `comment-post.spec.ts`'s reload-based
   persistence check timed out once, confirmed via direct database/API
@@ -3389,7 +3703,17 @@ direction, the two-way `deleteComment` ownership check implemented as a plain `|
 rather than a general permission abstraction, web's comments-count-as-link-only
 design, mobile's `View`-to-`ScrollView` conversion on the post detail screen, and
 rendering the comment list as a plain `.map()` on both platforms) are equally each
-decided and recorded above with rationale, not left open. Everything else recorded in
+decided and recorded above with rationale, not left open. Milestone 15's seven
+deviations (no `Notification` side effect at all rather than a deferral, `GET
+/me/saved` being required-auth-only with no anonymous/other-viewer mode, naming
+`SavedPostsResponse` distinctly rather than reusing `FeedResponse` verbatim —
+revisiting Milestone 13's likers-list decision the other way, `SavedPostsService`
+doing its own post-existence check rather than depending on another domain module,
+`MeSavedController` living inside `PostsModule` rather than `SavedPostsModule`, fully
+removing `toPostResponse`'s now-unused `isViewerAuthenticated` parameter rather than
+leaving it in place, and mobile's `profile/saved.tsx` wiring up real delete support
+instead of a no-op) are equally each decided and recorded above with rationale, not
+left open. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -3400,61 +3724,58 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 15 — Saved Posts**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s eighth
-domain module and the last of `PostResponse`'s three original stub fields
-(`isSavedByMe`) to go live — once this lands, every field `PostResponse` has carried
-since Milestone 11 is real, closing out that stub-now-fill-later arc entirely. The
-smallest of the three in scope: no likers-list-equivalent (`GET /me/saved` is the
-caller's own list only, never another user's), and no count to expose on
-`PostResponse` at all — only the boolean `isSavedByMe`.
+**Milestone 16 — Notifications**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s
+ninth domain module, and the first milestone to actually build the `Notification`
+pipeline that Milestones 13/14 both explicitly deferred rather than implementing as a
+side effect of a narrower-scoped feature. This is the biggest milestone since
+Milestone 9's media pipeline: a new table, a BullMQ producer/consumer pair, and real
+list/unread-count/mark-read UI on both platforms.
 
-1. Schema: `SavedPost` (`docs/DATABASE.md` §3.9 — read its exact spec before assuming
-   a shape: composite PK `(userId, postId)`, **plus an explicit secondary index**
-   `(userId, createdAt DESC)` — unlike `Like`'s single extra index on `postId` alone,
-   a composite PK's implicit index is ordered by its own two columns, not by
-   `createdAt`, so "this user's saved posts, newest first" genuinely needs a second,
-   different index, not just the PK) — a new migration.
-2. API (`docs/API.md` §10): `PUT`/`DELETE /posts/:postId/save` (idempotent either
-   way, `204`, matching `Follow`/`Like`'s exact toggle convention — reuse `upsert`/
-   `deleteMany`), `GET /me/saved` (required auth — unlike `GET /posts/:postId/likes`,
-   there is no "optional auth, anyone can view" case here at all; saved posts are
-   private by definition, docs/FEATURES.md #13 — paginated, newest-first, the caller's
-   own saves only).
-3. Decide the response shape for `GET /me/saved`'s list items: full `PostResponse`
-   (matching `GET /feed`'s choice in Milestone 12 — each item needs to render as a
-   real post card) or something narrower. `docs/FEATURES.md` #13 says "view your saved
-   posts in a dedicated list," which reads like a real post-rendering surface, not a
-   thumbnail grid — lean toward reusing `PostResponse` and `toPostResponse` directly
-   unless a concrete reason not to turns up while implementing.
-4. Wire `PostResponse.isSavedByMe` to a real value in `PostsService`'s response
-   mapping — a new `SavedPostsService.getSavedStateForPosts(postIds, viewerId)`-shaped
-   batched method, mirroring `LikesService.getLikeStateForPosts`'s exact shape minus
-   the count half (just a `Set`/`Map<string, boolean>` of which posts the viewer
-   saved), called from the same `getById`/`getFeed` sites (`createPost` still
-   hardcodes `false` without querying, the same reasoning already applied twice).
-5. Web + mobile: a save/unsave bookmark affordance on the shared `PostCard` (reuse
-   the exact `LikeButton` pattern — local state, no `router.refresh()` on web, direct
-   `apiClient` calls on mobile), and a dedicated "Saved posts" list screen reachable
-   from the viewer's own profile (not anyone else's — there is no public "this user's
-   saved posts" concept, unlike the likers-list pattern Milestone 13 built).
-6. **Tests**: integration tests for save/unsave idempotency and the `GET /me/saved`
-   endpoint (including that it never leaks another user's saves) — against the real
-   Dockerized Postgres, matching every milestone's testing discipline; Playwright
-   covers saving a post and finding it in the saved list.
+1. Schema: `Notification` (`docs/DATABASE.md` §3.10 — `recipientId`/`actorId`
+   (nullable, for future system notifications) FKs, `type` enum
+   (`FOLLOW`/`LIKE`/`COMMENT`), nullable `postId`/`commentId` FKs both
+   `onDelete: Cascade`, `isRead`, `createdAt`; index on
+   `(recipientId, isRead, createdAt DESC)` for the list/badge query) — a new
+   migration. Check whether this table was already created as part of Milestone 13's
+   deferral note before assuming it doesn't exist yet.
+2. Wire producers: liking a post, commenting on a post, and following a user each
+   enqueue a notification-creation job (BullMQ, the same queue infrastructure
+   Milestone 9's media pipeline already established) — **except self-actions** (liking/
+   commenting on your own post) must not notify yourself, the same "who I follow and
+   myself are disjoint by construction" discipline `GET /feed` already applies, just
+   enforced explicitly here since nothing else makes it automatic for notifications.
+   A consumer turns each job into a real `Notification` row.
+3. API (`docs/API.md` §12): list (paginated, newest-first — the standard convention
+   every other list but comments uses), unread count, mark-read.
+4. Web + mobile: a notifications UI with a polling interval for the unread badge count
+   (no WebSocket/SSE infrastructure exists in this codebase yet, and
+   `docs/ARCHITECTURE.md` doesn't call for adding one here — polling is explicitly
+   the documented approach).
+5. **Tests**: an integration test that liking/commenting/following another user
+   produces the expected notification row (via the job queue, awaited in test mode —
+   check how Milestone 9's media-processing tests awaited BullMQ jobs and reuse that
+   pattern rather than inventing a new one), and that self-actions produce none;
+   Playwright covers seeing a notification after another test user's action
+   (API-seeded setup, not two real concurrent browser sessions, per
+   `docs/IMPLEMENTATION_PLAN.md`'s own note).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 15 section,
-`docs/DATABASE.md` §3.9 (`SavedPost`) in full, and `docs/API.md` §10. The
-`/auth/register` throttle has comfortable headroom (roughly 26/40 used — 23 before
-Milestone 14, 3 more registered by `comments.spec.ts`); keep applying the standing
-share-via-`beforeAll` discipline regardless, since that's what keeps it from becoming
-tight again, not because it's close to a ceiling right now. For any single-file
-`apps/web-e2e` Playwright run this milestone, use `--grep="<name>"`, **not**
-`--testPathPatterns`— the latter is a Jest flag that silently runs the entire suite
-instead of filtering (discovered this milestone, see Known Issues above; every
-Playwright single-file run from here forward should use `--grep`). Also worth deciding
-explicitly before writing the save endpoint: whether `SavedPostsService` needs its own
-small post-existence check (the `LikesService`/`CommentsService` pattern) or can reuse
-one of theirs — `SavedPostsModule` importing `LikesModule` or `CommentsModule` just for
-that one tiny check would be an odd, arbitrary dependency; duplicating the same
-four-line `findActivePost` a third time is almost certainly the right call, consistent
-with the precedent, not a design smell.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 16 section in
+full, `docs/DATABASE.md` §3.10 (`Notification`), and `docs/API.md` §12. Decide early
+whether `NotificationsModule` needs its own post/comment/user-existence checks or can
+reuse the producer side's already-validated IDs (the job is only ever enqueued after
+`LikesService`/`CommentsService`/`FollowsService` have already confirmed the target
+exists, so a second existence check inside the consumer may be genuinely redundant
+here, unlike every prior milestone's `findActivePost` duplication — worth deciding
+deliberately rather than copying the pattern reflexively). The `/auth/register`
+throttle has comfortable headroom (roughly 29/40 used — 26 before Milestone 15, 3 more
+registered by `saved-posts.spec.ts`); keep applying the standing share-via-`beforeAll`
+discipline regardless. For any single-file `apps/web-e2e` Playwright run, use
+`--grep "<name>"` placed **after** the trailing `--` together with `--project=chromium`
+(e.g. `nx run web-e2e:e2e -- --grep "name" --project=chromium`), **never**
+`--testPathPatterns` and **never** `--grep=X` before a separate trailing `--` block —
+both of those silently either run the whole suite or drop the filter, confirmed twice
+now (Milestones 14 and 15); the `-- --grep ... --project=...` combined form is the
+only one confirmed reliable. If running the full `apps/web-e2e` suite twice in a row
+against the same long-lived `api:serve` process, expect the workspace-wide 100
+req/min/IP throttle to trip on the second run — restart `api:serve` between full-suite
+re-runs to reset its in-memory counter, the same standing Milestone 13 workaround.

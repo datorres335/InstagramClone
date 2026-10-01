@@ -281,13 +281,37 @@ endpoint in this codebase needing one, unlike every prior single-owner delete ch
 **No `Notification` side effect**, for the identical reason Milestone 13 recorded for
 likes (see §8) — deferred to Milestone 16 in full, not implemented partially now.
 
-## 10. Saved Posts
+## 10. Saved Posts (implemented Milestone 15)
 
 | Method & path                | Auth     | Notes                                      |
 | ---------------------------- | -------- | ------------------------------------------ |
 | `PUT /posts/:postId/save`    | required | Idempotent; `204`                          |
 | `DELETE /posts/:postId/save` | required | Idempotent; `204`                          |
 | `GET /me/saved`              | required | Paginated list of the caller's saved posts |
+
+`PUT`/`DELETE` mirror `Like`/`Follow`'s exact idempotent-toggle convention
+(`upsert`/`deleteMany`), both `404` for a nonexistent/soft-deleted post. `GET /me/saved`
+is **required auth, unlike every other paginated list in this codebase** — a saved
+posts list has no "someone else's saved posts" concept (saves are private to the
+saver), so there's no anonymous/other-viewer case to support at all, unlike
+`GET /posts/:postId/likes` or `GET /feed`. Returns `SavedPostsResponse` — full
+`PostResponse` items (`{ data: PostResponse[], meta: { nextCursor } }`), the same
+choice `GET /feed` made, structurally identical to `FeedResponse` but a distinctly
+named type (`packages/validation/src/lib/saved-post.ts`) since a saved-posts list and
+a feed are different concepts, newest-saved-first via the same opaque base64
+`(createdAt, id)` cursor every other newest-first list uses. `PostResponse.isSavedByMe`
+(§7) is real as of this milestone, computed by `SavedPostsService.getSavedStateForPosts`
+— batched per page, the same shape `LikesService.getLikeStateForPosts` established
+(Milestone 13). `SavedPostsController` (`PUT`/`DELETE /posts/:postId/save`) and
+`MeSavedController` (`GET /me/saved`) are split across two modules: `SavedPostsModule`
+owns the former, while the latter lives inside `PostsModule` alongside `FeedController`
+— it needs `PostsService`'s full post-rendering pipeline
+(`LikesService`/`CommentsService` batching + `toPostResponse`), and `PostsModule`
+already depends on `SavedPostsModule` one-way (for `isSavedByMe`), so hosting it in
+`SavedPostsModule` and calling back into `PostsService` would be circular.
+**No `Notification` side effect** — saving isn't a social action the post's author is
+notified about in the first place (unlike likes/comments), so this isn't even a
+deferral; `docs/FEATURES.md` #13 never describes one.
 
 ## 11. Search & Explore
 

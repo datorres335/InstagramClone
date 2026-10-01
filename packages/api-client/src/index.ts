@@ -7,5 +7,6 @@ export * from './lib/http-client';
 export * from './lib/likes-client';
 export * from './lib/media-client';
 export * from './lib/posts-client';
+export * from './lib/saved-posts-client';
 export * from './lib/token-storage';
 export * from './lib/users-client';

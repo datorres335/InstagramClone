@@ -12,6 +12,7 @@ import {
 import type { PostResponse } from '@instagram-clone/validation';
 
 import { LikeButton } from './like-button';
+import { SaveButton } from './save-button';
 
 interface PostCardProps {
   post: PostResponse;
@@ -83,6 +84,9 @@ export function PostCard({
       <Link href={{ pathname: '/post/[id]', params: { id: post.id } }}>
         {post.commentsCount} comments
       </Link>
+      {post.isSavedByMe !== null && (
+        <SaveButton postId={post.id} initialIsSaved={post.isSavedByMe} />
+      )}
       {isAuthor && (
         <View>
           <Pressable

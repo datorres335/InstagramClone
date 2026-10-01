@@ -31,18 +31,18 @@ export type PostWithRelations = Post & {
 /**
  * `likesCount`/`isLikedByMe` are real as of Milestone 13 (`likeState`,
  * computed by `LikesService.getLikeStateForPosts` — batched per page, not
- * per post). `commentsCount` is real as of Milestone 14 (`commentsCount`,
- * computed by `CommentsService.getCommentCountForPosts` the same way).
- * `isSavedByMe` is still stubbed, following the same null-for-anonymous,
- * real-boolean-for-authenticated convention `isFollowedByMe` established
- * (Milestone 10) — a real value lands with `SavedPost` (Milestone 15).
+ * per post). `commentsCount` is real as of Milestone 14. `isSavedByMe` is
+ * real as of Milestone 15 (computed by
+ * `SavedPostsService.getSavedStateForPosts`, the identical batched,
+ * null-for-anonymous shape) — the last of `PostResponse`'s three original
+ * stub fields to go live.
  */
 export function toPostResponse(
   post: PostWithRelations,
   storage: StorageService,
-  isViewerAuthenticated: boolean,
   likeState: LikeState,
   commentsCount: number,
+  isSavedByMe: boolean | null,
 ): PostResponse {
   return {
     id: post.id,
@@ -73,7 +73,7 @@ export function toPostResponse(
     likesCount: likeState.likesCount,
     commentsCount,
     isLikedByMe: likeState.isLikedByMe,
-    isSavedByMe: isViewerAuthenticated ? false : null,
+    isSavedByMe,
     createdAt: post.createdAt.toISOString(),
   };
 }

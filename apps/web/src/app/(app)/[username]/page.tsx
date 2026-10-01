@@ -64,6 +64,7 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
         <>
           <Link href="/profile/edit">Edit profile</Link>
           <Link href="/posts/new">New post</Link>
+          <Link href="/saved">Saved posts</Link>
         </>
       )}
       {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (

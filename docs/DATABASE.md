@@ -244,19 +244,20 @@ originally) and is the correct choice regardless — a reply losing its parent p
 rather than being deleted or blocking the parent's own deletion, though this is purely
 theoretical in the MVP since no code path ever sets `parentCommentId`.
 
-### 3.9 `SavedPost`
+### 3.9 `SavedPost` (implemented Milestone 15)
 
 | Column    | Type        | Constraints                                   |
 | --------- | ----------- | --------------------------------------------- |
-| userId    | uuid        | FK → `User.id`, not null                      |
+| userId    | uuid        | FK → `User.id`, not null, `onDelete: Cascade` |
 | postId    | uuid        | FK → `Post.id`, not null, `onDelete: Cascade` |
 | createdAt | timestamptz | default `now()`                               |
 
-Composite PK (`userId`, `postId`). Secondary index not needed beyond the PK since the
-only query pattern is "this user's saved posts, newest first" →
-`WHERE userId = :me ORDER BY createdAt DESC`, served by extending the PK's leading
-column with a sort — add index(`userId`, `createdAt DESC`) explicitly, since a composite
-PK's implicit index is ordered by (`userId`, `postId`), not by `createdAt`.
+Composite PK (`userId`, `postId`), the same "doubles as the uniqueness constraint and
+the primary 'has :userId saved :postId' access path" role `Like`'s composite PK plays.
+Unlike `Like`, the _other_ real query here is "this user's saved posts, newest first" →
+`WHERE userId = :me ORDER BY createdAt DESC`, which the PK's own implicit index
+(ordered by `userId`, `postId`) can't serve — so an explicit secondary index on
+(`userId`, `createdAt DESC`) is needed too, index(`userId`, `createdAt DESC`).
 
 ### 3.10 `Notification`
 

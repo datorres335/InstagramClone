@@ -12,6 +12,7 @@ import type {
   PaginationQuery,
   PostResponse,
   PostSummary,
+  SavedPostsResponse,
   UserPostsResponse,
 } from '@instagram-clone/validation';
 
@@ -21,8 +22,10 @@ import { CommentsService } from '../comments/comments.service';
 import { LikesService } from '../likes/likes.service';
 import { MediaService } from '../media/media.service';
 import { resolveVariantUrls } from '../media/media-response.mapper';
+import { SavedPostsService } from '../saved-posts/saved-posts.service';
 import { StorageService } from '../../storage/storage.service';
 import { toPostResponse } from './post-response.mapper';
+import type { PostWithRelations } from './post-response.mapper';
 
 @Injectable()
 export class PostsService {
@@ -32,6 +35,7 @@ export class PostsService {
     private readonly storage: StorageService,
     private readonly likesService: LikesService,
     private readonly commentsService: CommentsService,
+    private readonly savedPostsService: SavedPostsService,
   ) {}
 
   /** `POST /posts` (docs/API.md §7) — 1–10 images, all the caller's own `READY` `POST_IMAGE` media, none already attached elsewhere. */
@@ -84,15 +88,16 @@ export class PostsService {
       },
     });
 
-    // A freshly created post always has 0 likes/comments and isn't liked by
-    // its own creator yet — no need to query LikesService/CommentsService
-    // for a post that didn't exist a moment ago.
+    // A freshly created post always has 0 likes/comments, isn't liked, and
+    // isn't saved by its own creator yet — no need to query
+    // LikesService/CommentsService/SavedPostsService for a post that didn't
+    // exist a moment ago.
     return toPostResponse(
       post,
       this.storage,
-      true,
       { likesCount: 0, isLikedByMe: false },
       0,
+      false,
     );
   }
 
@@ -102,16 +107,17 @@ export class PostsService {
     viewerId: string | undefined,
   ): Promise<PostResponse> {
     const post = await this.findActivePost(postId);
-    const [likeState, commentCounts] = await Promise.all([
+    const [likeState, commentCounts, savedState] = await Promise.all([
       this.likesService.getLikeStateForPosts([postId], viewerId),
       this.commentsService.getCommentCountForPosts([postId]),
+      this.savedPostsService.getSavedStateForPosts([postId], viewerId),
     ]);
     return toPostResponse(
       post,
       this.storage,
-      viewerId !== undefined,
       likeState.get(postId) ?? { likesCount: 0, isLikedByMe: null },
       commentCounts.get(postId) ?? 0,
+      savedState.get(postId) ?? null,
     );
   }
 
@@ -232,17 +238,79 @@ export class PostsService {
 
     // Batched for the whole page — one pair of queries each, not one per post.
     const postIds = page.map((post) => post.id);
-    const [likeStates, commentCounts] = await Promise.all([
+    const [likeStates, commentCounts, savedStates] = await Promise.all([
       this.likesService.getLikeStateForPosts(postIds, viewerId),
       this.commentsService.getCommentCountForPosts(postIds),
+      this.savedPostsService.getSavedStateForPosts(postIds, viewerId),
     ]);
     const data: PostResponse[] = page.map((post) =>
       toPostResponse(
         post,
         this.storage,
-        true,
         likeStates.get(post.id) ?? { likesCount: 0, isLikedByMe: false },
         commentCounts.get(post.id) ?? 0,
+        savedStates.get(post.id) ?? false,
+      ),
+    );
+
+    return { data, meta: { nextCursor } };
+  }
+
+  /**
+   * `GET /me/saved` (docs/API.md §10) — the caller's own saved posts, newest
+   * first, as full `PostResponse` items (the same choice `GET /feed` made).
+   * `SavedPostsService` only knows the paginated `postId` list; this method
+   * does the actual Post lookup + `LikesService`/`CommentsService` batching +
+   * `toPostResponse` mapping, the same pipeline `getFeed` uses — living here
+   * rather than in `SavedPostsService` avoids a circular `PostsModule`
+   * dependency (`PostsModule` already depends on `SavedPostsModule` for
+   * `isSavedByMe`).
+   */
+  async getSavedPosts(
+    viewerId: string,
+    query: PaginationQuery,
+  ): Promise<SavedPostsResponse> {
+    const { postIds, nextCursor } =
+      await this.savedPostsService.getSavedPostIdsForViewer(viewerId, query);
+    if (postIds.length === 0) {
+      return { data: [], meta: { nextCursor } };
+    }
+
+    const rows = await this.prisma.post.findMany({
+      where: { id: { in: postIds }, deletedAt: null },
+      include: {
+        author: { include: { avatarMedia: true } },
+        media: { include: { media: true }, orderBy: { position: 'asc' } },
+      },
+    });
+
+    // `findMany({ where: { id: { in } } })` doesn't preserve the input
+    // order — re-sort to match the saved-newest-first order the id list
+    // was already fetched in.
+    const postById = new Map(rows.map((row) => [row.id, row]));
+    const orderedPosts = postIds
+      .map((id) => postById.get(id))
+      .filter((row): row is PostWithRelations => row !== undefined);
+
+    const [likeStates, commentCounts] = await Promise.all([
+      this.likesService.getLikeStateForPosts(
+        orderedPosts.map((post) => post.id),
+        viewerId,
+      ),
+      this.commentsService.getCommentCountForPosts(
+        orderedPosts.map((post) => post.id),
+      ),
+    ]);
+
+    const data: PostResponse[] = orderedPosts.map((post) =>
+      toPostResponse(
+        post,
+        this.storage,
+        likeStates.get(post.id) ?? { likesCount: 0, isLikedByMe: false },
+        commentCounts.get(post.id) ?? 0,
+        // Every item in this list is, by definition, saved by the viewer —
+        // no need to query SavedPostsService.getSavedStateForPosts again.
+        true,
       ),
     );
 

@@ -39,6 +39,9 @@ type _CreateCommentRoute = paths['/api/v1/posts/{postId}/comments']['post'];
 type _ListCommentsRoute = paths['/api/v1/posts/{postId}/comments']['get'];
 type _DeleteCommentRoute =
   paths['/api/v1/posts/{postId}/comments/{commentId}']['delete'];
+type _SaveRoute = paths['/api/v1/posts/{postId}/save']['put'];
+type _UnsaveRoute = paths['/api/v1/posts/{postId}/save']['delete'];
+type _MeSavedRoute = paths['/api/v1/me/saved']['get'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

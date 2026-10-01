@@ -102,12 +102,24 @@ function createDeps() {
       Promise.resolve(new Map(postIds.map((id) => [id, 0]))),
     ),
   };
+  // Defaults to false/null by auth state for every post, mirroring
+  // likesService/commentsService's defaulting pattern above — tests that
+  // care about a real value override this mock explicitly.
+  const savedPostsService = {
+    getSavedStateForPosts: jest.fn((postIds: string[], viewerId?: string) =>
+      Promise.resolve(
+        new Map(postIds.map((id) => [id, viewerId ? false : null])),
+      ),
+    ),
+    getSavedPostIdsForViewer: jest.fn(),
+  };
   const service = new PostsService(
     prisma as never,
     mediaService as never,
     storage as never,
     likesService as never,
     commentsService as never,
+    savedPostsService as never,
   );
   return {
     service,
@@ -116,6 +128,7 @@ function createDeps() {
     storage,
     likesService,
     commentsService,
+    savedPostsService,
   };
 }
 
@@ -153,9 +166,15 @@ describe('PostsService', () => {
       expect(result.media[0].url).toBe('http://minio.test/media-1/feed.webp');
     });
 
-    it('returns 0 likesCount/commentsCount and false isLikedByMe without querying LikesService/CommentsService', async () => {
-      const { service, prisma, mediaService, likesService, commentsService } =
-        createDeps();
+    it('returns 0 likesCount/commentsCount, false isLikedByMe/isSavedByMe without querying LikesService/CommentsService/SavedPostsService', async () => {
+      const {
+        service,
+        prisma,
+        mediaService,
+        likesService,
+        commentsService,
+        savedPostsService,
+      } = createDeps();
       mediaService.getReadyMediaForAttachment.mockResolvedValue(
         fakeReadyMedia('media-1'),
       );
@@ -168,9 +187,11 @@ describe('PostsService', () => {
 
       expect(likesService.getLikeStateForPosts).not.toHaveBeenCalled();
       expect(commentsService.getCommentCountForPosts).not.toHaveBeenCalled();
+      expect(savedPostsService.getSavedStateForPosts).not.toHaveBeenCalled();
       expect(result.likesCount).toBe(0);
       expect(result.isLikedByMe).toBe(false);
       expect(result.commentsCount).toBe(0);
+      expect(result.isSavedByMe).toBe(false);
     });
 
     it('preserves array order as carousel position', async () => {
@@ -302,6 +323,22 @@ describe('PostsService', () => {
         'post-1',
       ]);
       expect(result.commentsCount).toBe(3);
+    });
+
+    it('reports a real isSavedByMe from SavedPostsService', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue(fakePostRow());
+      savedPostsService.getSavedStateForPosts.mockResolvedValue(
+        new Map([['post-1', true]]),
+      );
+
+      const result = await service.getById('post-1', 'viewer-1');
+
+      expect(savedPostsService.getSavedStateForPosts).toHaveBeenCalledWith(
+        ['post-1'],
+        'viewer-1',
+      );
+      expect(result.isSavedByMe).toBe(true);
     });
   });
 
@@ -481,6 +518,31 @@ describe('PostsService', () => {
       expect(result.data[1].isLikedByMe).toBe(false);
       expect(result.data[1].commentsCount).toBe(0);
     });
+
+    it('fetches saved state for the whole page in one batched call', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      prisma.follow.findMany.mockResolvedValue([{ followingId: 'author-a' }]);
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+      savedPostsService.getSavedStateForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', true],
+          ['post-2', false],
+        ]),
+      );
+
+      const result = await service.getFeed('viewer-1', { limit: 20 });
+
+      expect(savedPostsService.getSavedStateForPosts).toHaveBeenCalledTimes(1);
+      expect(savedPostsService.getSavedStateForPosts).toHaveBeenCalledWith(
+        ['post-1', 'post-2'],
+        'viewer-1',
+      );
+      expect(result.data[0].isSavedByMe).toBe(true);
+      expect(result.data[1].isSavedByMe).toBe(false);
+    });
   });
 
   describe('getPostsByAuthor', () => {
@@ -562,6 +624,112 @@ describe('PostsService', () => {
           },
         }),
       );
+    });
+  });
+
+  describe('getSavedPosts', () => {
+    it('returns an empty page without querying posts when there are no saved ids', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      savedPostsService.getSavedPostIdsForViewer.mockResolvedValue({
+        postIds: [],
+        nextCursor: null,
+      });
+
+      const result = await service.getSavedPosts('viewer-1', { limit: 20 });
+
+      expect(result).toEqual({ data: [], meta: { nextCursor: null } });
+      expect(prisma.post.findMany).not.toHaveBeenCalled();
+    });
+
+    it('re-sorts posts to match the saved-newest-first id order', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      savedPostsService.getSavedPostIdsForViewer.mockResolvedValue({
+        postIds: ['post-2', 'post-1'],
+        nextCursor: null,
+      });
+      // findMany({ where: { id: { in } } }) doesn't guarantee input order —
+      // return them in the "wrong" order to prove the service re-sorts.
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+
+      const result = await service.getSavedPosts('viewer-1', { limit: 20 });
+
+      expect(result.data.map((post) => post.id)).toEqual(['post-2', 'post-1']);
+    });
+
+    it('fetches like state and comment counts for the page in one batched call each, and hardcodes isSavedByMe true', async () => {
+      const {
+        service,
+        prisma,
+        savedPostsService,
+        likesService,
+        commentsService,
+      } = createDeps();
+      savedPostsService.getSavedPostIdsForViewer.mockResolvedValue({
+        postIds: ['post-1', 'post-2'],
+        nextCursor: null,
+      });
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+      likesService.getLikeStateForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', { likesCount: 2, isLikedByMe: true }],
+          ['post-2', { likesCount: 0, isLikedByMe: false }],
+        ]),
+      );
+      commentsService.getCommentCountForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', 4],
+          ['post-2', 0],
+        ]),
+      );
+
+      const result = await service.getSavedPosts('viewer-1', { limit: 20 });
+
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledTimes(1);
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledWith(
+        ['post-1', 'post-2'],
+        'viewer-1',
+      );
+      expect(commentsService.getCommentCountForPosts).toHaveBeenCalledTimes(1);
+      expect(savedPostsService.getSavedStateForPosts).not.toHaveBeenCalled();
+      expect(result.data[0].isSavedByMe).toBe(true);
+      expect(result.data[1].isSavedByMe).toBe(true);
+      expect(result.data[0].likesCount).toBe(2);
+      expect(result.data[0].commentsCount).toBe(4);
+    });
+
+    it('filters out any ids that no longer resolve to an active post', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      savedPostsService.getSavedPostIdsForViewer.mockResolvedValue({
+        postIds: ['post-1', 'post-deleted'],
+        nextCursor: null,
+      });
+      // Soft-deleted/missing posts are filtered by the where clause, so
+      // findMany only returns the still-active one.
+      prisma.post.findMany.mockResolvedValue([fakePostRow({ id: 'post-1' })]);
+
+      const result = await service.getSavedPosts('viewer-1', { limit: 20 });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].id).toBe('post-1');
+    });
+
+    it('propagates the nextCursor from SavedPostsService', async () => {
+      const { service, prisma, savedPostsService } = createDeps();
+      savedPostsService.getSavedPostIdsForViewer.mockResolvedValue({
+        postIds: ['post-1'],
+        nextCursor: 'opaque-cursor',
+      });
+      prisma.post.findMany.mockResolvedValue([fakePostRow({ id: 'post-1' })]);
+
+      const result = await service.getSavedPosts('viewer-1', { limit: 1 });
+
+      expect(result.meta.nextCursor).toBe('opaque-cursor');
     });
   });
 });
