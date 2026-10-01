@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 13 — Likes
+**Current Milestone:** Milestone 14 — Comments
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -95,6 +95,17 @@ matching `Follow`'s exact toggle convention), and `GET /posts/:postId/likes`
 Both `web` and `mobile` gained a like/unlike button on the shared `PostCard` (feed and
 post detail) and a likers list screen. No `Notification` side effect yet — deferred to
 Milestone 16 by design, not an oversight (see this milestone's Deviations entry).
+Milestone 14 adds `apps/api`'s seventh domain module, `CommentsModule`, and is the
+second of `PostResponse`'s three original stub fields (`commentsCount`) to go live —
+`isSavedByMe` (Milestone 15) is the last one remaining. A new `Comment` table (flat
+only — `parentCommentId` exists in the schema but the API never sets it),
+`POST`/`GET /posts/:postId/comments` (the first oldest-first paginated list in this
+codebase; every other one is newest-first), and `DELETE
+/posts/:postId/comments/:commentId` with this codebase's first two-way delete
+authorization check (the comment's author OR the post's author). Both `web` and
+`mobile` gained a comment thread + add-comment form on the post detail page only (not
+the feed, per `docs/FEATURES.md` #12). Same `Notification`-deferral decision Milestone
+13 already made, applied identically rather than re-litigated.
 
 ---
 
@@ -796,6 +807,83 @@ createdAt(sort: Desc)])`) and `PostMedia` (§3.5: ordered join to `Media`,
       `api-e2e:e2e` (12/12 suites, 69/69 tests, confirmed stable) +
       `web-e2e:e2e` (17/17, Chromium, confirmed stable once run with proper
       spacing from a prior full run — see Bugs Found below)
+
+### Milestone 14 — Comments
+
+- [x] `prisma/schema.prisma` — `Comment` (docs/DATABASE.md §3.8: `postId`/
+      `authorId` FKs both `onDelete: Cascade`, a self-referential nullable
+      `parentCommentId` with `onDelete: SetNull`, soft-delete `deletedAt` —
+      the third and last soft-deletable model alongside `User`/`Post`) and
+      the reverse `User.comments`/`Post.comments` relations — a new
+      migration, hand-placed via the same `prisma migrate diff` +
+      `migrate deploy` workaround every prior migration has used (this time
+      with stderr properly redirected away from the output file, avoiding
+      Milestone 13's update-banner-pollution bug)
+- [x] `apps/api/src/modules/comments/` — `CommentsModule`/
+      `CommentsController`/`CommentsService`, `apps/api`'s seventh domain
+      module. `createComment`/`getComments` both do their own small,
+      self-contained post-existence check (`findActivePost`, not a
+      `PostsModule` dependency — the same trade-off `LikesService`
+      established); `getComments` is the first paginated list in this
+      codebase ordered oldest-first (`gt` keyset comparisons, not `lt`);
+      `deleteComment` is the first endpoint needing a genuine two-way
+      ownership check (`comment.authorId === userId || post.authorId ===
+userId`)
+- [x] Three endpoints wired: `POST`/`GET /posts/:postId/comments`, `DELETE
+/posts/:postId/comments/:commentId` (`403` for a third party, `404` for a
+      missing comment)
+- [x] `PostsService`/`post-response.mapper.ts` updated to take a real
+      `commentsCount: number` at every `PostResponse` call site
+      (`createPost` hardcodes `0` without querying; `getById`/`getFeed` both
+      call the new `CommentsService.getCommentCountForPosts`, run via
+      `Promise.all` alongside the existing `LikesService` call at each site)
+- [x] `packages/validation`'s new `comment.ts` (`createCommentInputSchema`,
+      `commentResponseSchema`, `commentListResponseSchema`) — `CommentResponse.author`
+      reuses `post.ts`'s `postAuthorSchema` (newly exported for this, its
+      second real consumer), not a duplicate author shape
+- [x] `packages/api-client`'s new `comments` namespace (`create`/`list`/
+      `remove`)
+- [x] `apps/web`: a `CommentSection` client component (local state, add/
+      delete/load-more) on the post detail page only — `PostCard`'s comments
+      count is just a link to the post detail page from the feed, not an
+      inline thread. `FollowButton`/`FollowListItem`/`follow-actions.ts`
+      stay in their Milestone 13 shared location; no further promotion
+      needed this milestone
+- [x] `apps/mobile`: a `components/comment-section.tsx` (plain `.map()`, not
+      a `FlatList` — it renders inside `post/[id].tsx`'s now-`ScrollView`-
+      wrapped content, and a same-direction `FlatList`-in-`ScrollView`
+      nesting is the real nesting React Native warns about, unlike the
+      feed's horizontal-in-vertical carousel nesting). `post/[id].tsx`
+      converted from a plain `View` to a `ScrollView` to fit the new content
+      below `PostCard`
+- [x] 13 new `comments.service.spec.ts` unit tests, 1 new `PostsService`
+      test confirming the real `CommentsService` wiring (plus the existing
+      createPost/getFeed tests' assertions widened in place to also check
+      `commentsCount`, not new tests themselves), 5 new
+      `comments-client.spec.ts` cases, 3 new `openapi-contract.spec.ts`
+      type references
+- [x] 8 new mobile unit tests (`comment-section.spec.tsx`) covering the
+      empty state, posting, the two delete-permission cases (comment author,
+      moderating post author), hiding delete for a third party, hiding the
+      form for an anonymous viewer, and load-more pagination; 2
+      `post-detail.spec.tsx` assertions rescoped from a bare
+      `getByRole('heading')` to `{ name: '@alice' }` once `CommentSection`'s
+      own "Comments" heading made the bare query ambiguous
+- [x] 16 new `apps/api-e2e` integration tests (`comments/comments.spec.ts`)
+      — real accounts/post, not mocked: create, validation (empty body, over
+      2200 chars), `404` for a nonexistent post, `401` unauthenticated,
+      oldest-first keyset pagination, anonymous `GET`, both delete-permission
+      cases plus the third-party `403`, `404` for a missing comment, and
+      confirmation that `PostResponse.commentsCount` is real on both
+      `GET /posts/:id` and `GET /feed`
+- [x] 1 new `apps/web-e2e` Playwright test (`comment-post.spec.ts`,
+      Chromium) — a real browser comment→persists-after-reload→delete round
+      trip on the post detail page, per `docs/IMPLEMENTATION_PLAN.md` M14's
+      explicit Playwright requirement
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (13/13 suites, 85/85 tests, confirmed stable across two
+      consecutive runs) + `web-e2e:e2e` (18/18, Chromium)
 
 ---
 
@@ -1568,6 +1656,125 @@ the exact recurring pattern Milestone 12's bug #37 already documented. This is n
 clearly a standing characteristic of this workflow, not a one-off — see Known Issues
 below.
 
+### Milestone 14
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding Comment
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  2>/dev/null > prisma/migrations/20260930000001_0006_comment/migration.sql
+# ^ stderr explicitly redirected away from the output file this time —
+#   avoided Milestone 13's update-banner-pollution bug entirely rather than
+#   catching and fixing it after the fact. Clean SQL on the first attempt.
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d comments — both FKs, the
+# self-referential parentCommentId FK (ON DELETE SET NULL, Prisma's own
+# default), both indexes all matched the schema.prisma design exactly.
+
+pnpm exec nx run api:test --testPathPatterns=comments --skip-nx-cache   # 13/13,
+# first run — every CommentsService test passed immediately.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed CommentsModule/CommentsController registered correctly in the
+#   real Nest boot log: POST/GET /posts/:postId/comments, DELETE
+#   /posts/:postId/comments/:commentId.
+
+pnpm exec nx run api:test --testPathPatterns=posts --skip-nx-cache   # 25/25,
+# first run once posts.service.spec.ts's createDeps() gained the new
+# commentsService mock (defaulting to 0 for every post, the same pattern
+# likesService's default mock already established) — the new
+# commentsCount-from-CommentsService test also passed immediately.
+pnpm exec nx run api:test --skip-nx-cache   # 152/152, whole project
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/posts/{postId}/comments and
+#   /api/v1/posts/{postId}/comments/{commentId} appeared in the generated
+#   openapi.json/types on the first run.
+pnpm exec nx run api-client:test --skip-nx-cache   # 56/56 (5 new comments-client.spec.ts cases)
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+pnpm exec nx run validation:test --skip-nx-cache   # 77/77 (6 new comment.spec.ts cases)
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache
+# ^ compiled + typechecked cleanly; /p/[id] unchanged as a route (comments
+#   render within the existing page, no new route needed).
+pnpm exec nx run web:lint --skip-nx-cache    # clean (same pre-existing,
+# unrelated avatar-uploader.tsx warning noted since Milestone 9)
+pnpm exec nx run web:test --skip-nx-cache    # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --skip-nx-cache
+# ^ first run: 6 failures, all in post-detail.spec.tsx — `apiClient.comments`
+#   was undefined in that file's mock (PostScreen now calls
+#   `apiClient.comments.list` alongside `apiClient.posts.getById`). Added the
+#   mock plus a `beforeEach` default resolved value; re-ran: 2 new failures,
+#   both `getByRole('heading')` now matching 2 elements once
+#   `CommentSection`'s own "Comments" heading rendered alongside the
+#   username's — rescoped both assertions to `{ name: '@alice' }`. 6/6
+#   passing afterward (plus a 6th, genuinely new, authenticated-viewer
+#   like-toggle case added in the same pass).
+pnpm exec nx run mobile:test --testPathPatterns=comment-section --skip-nx-cache   # 8/8, first run
+pnpm exec nx run mobile:lint --skip-nx-cache    # clean
+pnpm exec nx run mobile:test --skip-nx-cache    # 73/73, whole project
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, whole workspace
+# ^ one incidental finding: `mobile:test` was flagged by Nx as "flaky" twice
+#   during this milestone's `run-many` batches (failed once within the batch,
+#   passed every time run standalone immediately after) — investigated, not
+#   reproducible in isolation; recorded as an open, unresolved intermittent
+#   characteristic rather than a fixed bug (see Known Issues below).
+
+pnpm exec nx run api-e2e:e2e --testPathPatterns=comments --skip-nx-cache   # 16/16,
+# first real run — full create/list/delete pipeline against the real
+# Postgres, no mocking.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 13/13 suites, 85/85 tests, confirmed
+# stable across two consecutive runs.
+
+nx run api:serve   # started manually — web-e2e's own webServer only manages web:dev
+pnpm exec nx run web-e2e:e2e --testPathPatterns=comment-post -- --project=chromium
+# ^ first attempt: `testPathPatterns` is a Jest flag and does nothing for
+#   this Playwright project — every invocation had actually been running
+#   all 17-18 tests this whole time, not just the targeted file (a
+#   previously-undiscovered mistake in this project's own test-running
+#   habit, not an Nx/Playwright bug). Switched to the correct Playwright
+#   filter, `--grep`, confirmed it isolates a single spec file correctly.
+pnpm exec nx run web-e2e:e2e --grep="comment on a post" --project=chromium
+# ^ first real attempt with proper filtering: a strict-mode violation —
+#   `getByRole('button', { name: 'Post' })` substring-matched both the
+#   comment form's "Post" button and the post's own "Delete post" button.
+#   Fixed with `{ name: 'Post', exact: true }`; the same ambiguity then hit
+#   the "Delete" button against "Delete post" — fixed identically. Also hit
+#   the already-documented global-throttle collision (bug #42) from
+#   repeated back-to-back full-suite runs during this same debugging
+#   session; restarting api:serve cleared it. Once both selector fixes
+#   landed: passed on a clean run, though a later identical re-run showed
+#   one `page.reload()`-after-comment assertion timing out — confirmed via
+#   direct `psql`/`curl` against the real API that the comment had
+#   genuinely persisted correctly server-side, then confirmed the test
+#   passed cleanly on a subsequent retry with no code changes at all,
+#   consistent with Next dev-server first-compile latency for a
+#   newly-touched route's Server Actions (`comment-actions.ts`) rather than
+#   a real bug — see Bugs Found below.
+pnpm exec nx run web-e2e:e2e -- --project=chromium   # 18/18, whole suite together
+
+pnpm exec prettier --write "apps/**/*.{ts,tsx}" "packages/**/*.ts" "docs/**/*.md"
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ one incidental mobile:test failure within the batch again, not
+#   reproducible standalone immediately after (same open characteristic
+#   noted above) — re-ran the batch once more: 28/28 clean.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # all three clean
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 85/85, re-confirmed stable
+```
+
+Multiple stray `api:serve` processes were found still listening on port 3000 at
+several points this milestone (before the first `comments.spec.ts` run, and twice more
+during the web-e2e debugging session above) — each confirmed via `Get-CimInstance`
+before stopping, the same standing characteristic Milestones 12–13 already documented.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -2206,6 +2413,64 @@ matches `docs/DATABASE.md` §3.7 exactly (the "two queries, not one combined que
 implementation note is a Prisma-query-builder-level detail, the same class of note
 Milestone 12's feed query already established, not a schema or design-level change).
 
+### Milestone 14
+
+- **No `Notification` side effect for comments, deferred to Milestone 16 in full** —
+  the identical choice and reasoning Milestone 13 already recorded for likes, applied
+  without re-litigating it: `docs/FEATURES.md` #12 describes commenting as generating a
+  notification for the post's author, but building `Notification`'s whole table/
+  enqueue/consumer/list-endpoint/UI as a side effect of "Comments" would be a much
+  larger scope expansion than this milestone's own title suggests, conflicting with
+  `CLAUDE.md`'s "do not implement future features unless explicitly requested in the
+  current milestone." `docs/FEATURES.md` #12 updated to describe this explicitly.
+- **`CommentResponse.author` reuses `post.ts`'s `postAuthorSchema` (newly exported for
+  this), not a duplicate author shape** — a comment's author is the identical minimal
+  shape (`{ id, username, fullName, avatarUrl }`) a post's author already is. This is
+  the second real consumer of that shape (the first being `PostResponse.author` itself),
+  crossing this codebase's "duplicate until a second real consumer exists" threshold —
+  exporting it was simpler than either duplicating it or inventing a shared
+  `packages/validation/src/lib/author.ts` file for a two-field reuse.
+- **`CommentsService` does its own small, self-contained post-existence check
+  (`findActivePost`) rather than depending on `PostsModule`** — the identical trade-off
+  `LikesService` already makes (Milestone 13) for the identical reason: `PostsModule`
+  depends on `CommentsModule` for `commentsCount`, so the reverse dependency would be
+  circular regardless of duplication preferences. Now the second instance of this
+  specific pattern (third counting `FollowsService`/`UsersService`'s
+  `findActiveUserByUsername` precedent).
+- **`GET /posts/:postId/comments` is oldest-first, with `gt` (not `lt`) keyset
+  comparisons** — the one paginated list in this codebase that isn't newest-first,
+  per `docs/API.md` §9's explicit "standard comment-thread convention." The
+  `encodeCursor`/`decodeCursor` utility itself is direction-agnostic (just an opaque
+  `(createdAt, id)` pair), so only the `WHERE`/`ORDER BY` clauses needed to flip, not
+  the cursor encoding itself.
+- **`deleteComment`'s two-way ownership check is the first genuine multi-owner
+  authorization case in this codebase** — every prior delete endpoint (`DELETE
+/posts/:id`) checked a single owner. Implemented as a plain `||` check
+  (`comment.authorId === userId || post.authorId === userId`) rather than a more
+  general "can this user moderate this resource" abstraction, since there's exactly
+  one case needing it today — introducing a generic permission system for a single
+  call site would be speculative.
+- **Web's comments count is just a link to the post detail page from `PostCard`, not
+  an inline thread** — a comment thread doesn't fit a feed card's compact shape the
+  way the like button does (`docs/FEATURES.md` #12 confirms comments render on the
+  post detail page only). The actual `CommentSection` (list + add-comment form) lives
+  on `/p/[id]/page.tsx` only, below the shared `PostCard`.
+- **Mobile's `post/[id].tsx` converted from a plain `View` to a `ScrollView`** to fit
+  the new `CommentSection` content below `PostCard` — the screen's content now
+  routinely exceeds one screen height once a post has any comments, which wasn't a
+  concern before this milestone.
+- **`CommentSection` renders its comment list as a plain `.map()`, not a `FlatList`,
+  on both platforms** — it renders inside content that's already scrollable (the
+  post detail `ScrollView` on mobile; a plain web page on web), and a comment list is
+  bounded by the same pagination page size every other list in this app already uses,
+  so virtualization has no benefit here, the identical reasoning Milestone 11 applied
+  to the capped-at-10 create-post image row.
+
+None of Milestone 14's deviations touch `docs/ARCHITECTURE.md`'s core design; `Comment`
+matches `docs/DATABASE.md` §3.8 in every respect except the two FK `onDelete` behaviors
+now spelled out explicitly (both already the correct, expected choice — not a schema
+or design-level change, just filling in detail the original section left implicit).
+
 ---
 
 ## Bugs Found and Fixed
@@ -2756,6 +3021,74 @@ deploy`. Worth remembering for every future `prisma migrate diff`
     should be treated as a routine step for future milestones, not an
     occasional troubleshooting step.
 
+### Milestone 14
+
+44. **Two mobile test files broke the moment `post/[id].tsx`/`PostCard` gained new
+    dependencies, the same recurring class of break Milestones 11–13 each hit once.**
+    `post-detail.spec.tsx`'s `apiClient` mock had no `comments` namespace at all —
+    `PostScreen` now calls `apiClient.comments.list` alongside
+    `apiClient.posts.getById` in the same `Promise.all`, crashing every test with
+    `TypeError: Cannot read properties of undefined (reading 'list')`. Fixed by adding
+    the namespace to the mock plus a `beforeEach` default resolved empty page. Once
+    that compiled, two further failures appeared: `CommentSection`'s own "Comments"
+    `role="heading"` text made two previously-bare `screen.getByRole('heading')`
+    queries ambiguous ("Found multiple elements with role: heading"). Fixed by
+    rescoping both to `{ name: '@alice' }`. Worth restating the lesson Milestone 11's
+    bug #33 already drew in a new form: **any screen-level test that queries by a
+    bare, unnamed role (`heading`, `button`, etc.) is implicitly assuming it's the
+    only one of that role on the screen — a shared component gaining a second one of
+    that role breaks every such query simultaneously**, the same fragility class as
+    the missing-`Link`-mock pattern, just for ARIA roles instead of mocked modules.
+45. **A whole session of `apps/web-e2e` filtering attempts turned out to have been
+    silently broken since at least Milestone 12 (possibly earlier): `--testPathPatterns`
+    is a Jest flag with no meaning to a Playwright project, so every
+    `nx run web-e2e:e2e --testPathPatterns=X` invocation this project has ever run
+    actually executed the full suite, not just file `X`.** This went unnoticed because
+    the full suite reliably passed anyway (so "17/18 passed" looked like confirmation
+    the filter worked), and because Milestone 10's bug #29 had already established
+    that Nx/Playwright flag combinations in this project are finicky, making a silently
+    no-op flag easy to misattribute to that same class of quirk rather than recognize
+    as a different, more basic mistake (the wrong tool's flag entirely). Discovered
+    only because this milestone's web-e2e debugging needed genuine isolation (to tell
+    a real test bug apart from suite-wide throttle noise) and the "filtered" run kept
+    showing far more test output than one file could produce. **Fixed by using
+    Playwright's own filter, `--grep="<test or describe name>"`, which does correctly
+    isolate a single test** — confirmed empirically (a `--grep` run showed exactly one
+    test's output; a `--testPathPatterns` run always showed the whole suite's).
+    `--grep` and a trailing `-- --project=chromium` combined correctly in this same
+    session, which is worth noting since Milestone 10's bug #29 found that combination
+    broken for an _unprefixed_ `--grep` flag specifically — passing both through the
+    trailing `--` together avoided whatever that earlier interaction was. **Every
+    future `apps/web-e2e` single-file run in this project should use `--grep`, never
+    `--testPathPatterns`** (that flag belongs to the Jest-based `apps/api-e2e`/unit
+    test projects only).
+46. **A single `web-e2e` test intermittently failed on a `page.reload()` assertion
+    with no underlying data bug** — `comment-post.spec.ts`'s persistence check
+    (comment visible after a full page reload) timed out once, then passed cleanly on
+    an immediate identical re-run with zero code changes. Directly verified via `psql`
+    and a raw `curl` against the running API that the comment had already persisted
+    correctly in Postgres at the time of the failure, ruling out a real backend or
+    `CommentsService` bug. The most plausible explanation, consistent with this being
+    the first ever exercise of `comment-actions.ts`'s Server Actions in this dev
+    server process: Next's dev server (`next dev`, Turbopack) compiles each route's
+    code on first access, and the reload's fetch may have landed inside that one-time
+    compilation window, pushing past the default 5000ms assertion timeout. Not fixed
+    with a padded timeout (the test passes reliably otherwise, and padding a timeout
+    to paper over a dev-only compilation characteristic would mask a real future
+    regression just as easily) — recorded as a known, low-frequency flake tied to
+    dev-server warm-up for a brand-new route's Server Actions, not a reason to
+    distrust the test or the feature.
+47. **Two intermittent `mobile:test` failures inside `nx run-many -t lint test build`
+    batches, neither reproducible when `mobile:test` was immediately re-run standalone
+    afterward.** No specific failing assertion was captured either time (both resolved
+    before the failure output could be inspected, since Nx's "flaky task" auto-retry
+    re-ran and passed before this could be investigated further). Unlike the other
+    bugs in this list, this one is recorded without a confirmed root cause or fix —
+    plausibly CPU/resource contention from `nx run-many`'s parallel task execution
+    affecting a timing-sensitive test, but that's a hypothesis, not a verified
+    diagnosis. Flagged here as a genuinely open item (see Known Issues below) rather
+    than asserted as understood.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -2949,11 +3282,12 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   deliberate per-screen choice (see Deviations above), not an inconsistency
   needing resolution, but worth knowing if a future design pass wants uniform
   delete behavior across every surface that shows a post.
-- **No `Notification` row is created when a post is liked** — a deliberate,
-  documented Milestone 13 deviation (see above), not an oversight. The like
-  feature is functionally complete without it; a real notification will exist
-  once Milestone 16 implements `Notification` for real, at which point liking
-  (and following, and commenting) all need to start enqueuing one.
+- **No `Notification` row is created when a post is liked or commented on** — a
+  deliberate, documented decision (Milestone 13 for likes, Milestone 14 for
+  comments — see each milestone's Deviations above), not an oversight. Both
+  features are functionally complete without it; real notifications will exist
+  once Milestone 16 implements `Notification` for real, at which point liking,
+  following, and commenting all need to start enqueuing one.
 - **The global 100 req/min/IP throttle, not just the `/auth/register`-specific
   one, can be tripped by running the full `web-e2e`/`api-e2e` suite twice in
   quick succession against the same server process** (bug #42) — a real,
@@ -2967,6 +3301,28 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   (`{ id, thumbnailUrl, createdAt }`); adding a count there would be a real,
   separate schema/response-shape decision for a future milestone, not
   something this one silently missed.
+- **`nx run web-e2e:e2e --testPathPatterns=X` has silently run the whole suite
+  instead of just file `X` since at least Milestone 12** (bug #45) — a Jest
+  flag with no meaning to this Playwright project. Every prior milestone's
+  "ran the filtered file, it passed" validation step was actually "ran the
+  whole suite, it passed," which happened to still be true every time but
+  was never actually testing what it claimed to. Use `--grep="<name>"`
+  instead for any future single-file `apps/web-e2e` run — confirmed to
+  correctly isolate one test, including combined with a trailing
+  `-- --project=chromium`.
+- **An intermittent, unresolved `mobile:test` flake inside `nx run-many`
+  batches** (bug #47) — reproducible twice this milestone, not reproducible
+  standalone either time, no root cause confirmed. If this recurs with enough
+  frequency to capture the actual failing assertion, that's the next concrete
+  step; until then, treat a `mobile:test` failure inside a `run-many` batch as
+  worth an immediate standalone re-run before assuming a real regression.
+- **A single, low-frequency `web-e2e` flake tied to Next dev-server
+  first-compile latency** (bug #46) — `comment-post.spec.ts`'s reload-based
+  persistence check timed out once, confirmed via direct database/API
+  inspection to be a timing artifact (the data was already correct
+  server-side), not a real bug. Expect any _new_ route's first Playwright
+  exercise in a fresh `next dev` process to occasionally need a retry for
+  this reason; not worth padding timeouts preemptively.
 
 ---
 
@@ -3025,7 +3381,16 @@ doing its own post-existence check rather than depending on `PostsModule`, promo
 `FollowButton`/`FollowListItem`/`follow-actions.ts` to a shared web directory, mobile's
 flat `post/likes.tsx` route, and web's `LikeButton` using local state instead of
 `router.refresh()`) are equally each decided and recorded above with rationale, not
-left open. Everything else recorded in this file is
+left open. Milestone 14's eight deviations (deferring the `Notification` side effect
+to Milestone 16, exporting and reusing `postAuthorSchema` for `CommentResponse.author`
+instead of a duplicate type, `CommentsService` doing its own post-existence check
+rather than depending on `PostsModule`, the oldest-first `gt`-keyset pagination
+direction, the two-way `deleteComment` ownership check implemented as a plain `||`
+rather than a general permission abstraction, web's comments-count-as-link-only
+design, mobile's `View`-to-`ScrollView` conversion on the post detail screen, and
+rendering the comment list as a plain `.map()` on both platforms) are equally each
+decided and recorded above with rationale, not left open. Everything else recorded in
+this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md` where it touches those docs. None of it
@@ -3035,56 +3400,61 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 14 — Comments**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s seventh
-domain module and the second of `PostResponse`'s three original stub fields
-(`commentsCount`) to go live — `isSavedByMe` (Milestone 15) is the last one remaining
-after this. Flat (non-threaded) comments only, per `docs/FEATURES.md` #12 — the
-`parentCommentId` column exists in `docs/DATABASE.md` §3.8's schema but the API never
-accepts it from the client in the MVP, so don't build threading UI/logic that has
-nothing real to attach to.
+**Milestone 15 — Saved Posts**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s eighth
+domain module and the last of `PostResponse`'s three original stub fields
+(`isSavedByMe`) to go live — once this lands, every field `PostResponse` has carried
+since Milestone 11 is real, closing out that stub-now-fill-later arc entirely. The
+smallest of the three in scope: no likers-list-equivalent (`GET /me/saved` is the
+caller's own list only, never another user's), and no count to expose on
+`PostResponse` at all — only the boolean `isSavedByMe`.
 
-1. Schema: `Comment` (`docs/DATABASE.md` §3.8 — read its exact spec before assuming a
-   shape; expect `id`, `postId`, `authorId`, `body`, `parentCommentId` (nullable, never
-   set by the API), `createdAt`, a soft-delete `deletedAt` per `docs/DATABASE.md` §7's
-   "`User`, `Post`, and `Comment` carry `deletedAt`" — the third and last soft-deletable
-   model) — a new migration.
-2. API (`docs/API.md` §9): `POST /posts/:postId/comments` (body `{ body }`, max 2200
-   chars, matching `Post.caption`'s own length cap), `GET /posts/:postId/comments`
-   (optional auth, paginated **oldest-first** — the opposite sort direction from every
-   other paginated list this codebase has built so far, all of which are newest-first;
-   confirm the cursor-keyset direction flips correctly rather than copying
-   `getPostsByAuthor`'s `desc` ordering by reflex), `DELETE
-/posts/:postId/comments/:commentId` (author-or-post-author soft delete — the first
-   endpoint in this codebase needing a two-way ownership check, unlike `DELETE
-/posts/:id`'s single-owner check).
-3. Wire `PostResponse.commentsCount` to a real value the same way Milestone 13 wired
-   `likesCount` — a new `CommentsService.getCommentCountForPosts`-shaped batched method
-   (or fold into a combined engagement-counts lookup if that ends up cleaner; decide
-   and record whichever is chosen), called from the same three `PostsService` sites
-   (`createPost` hardcodes 0 without querying, `getById`/`getFeed` query for real).
-4. Web + mobile: a comment input + list on the post detail page (not the feed — a
-   comment thread doesn't fit a feed card's compact shape the way a like button does;
-   confirm this against `docs/FEATURES.md` #12 rather than assume), and confirm
-   whether the delete permission's two-way ownership check needs a new UI affordance
-   (a comment author deleting their own comment vs. a post author moderating comments
-   on their own post) or if a single "Delete" control suffices for both cases.
-5. Decide the same notification-side-effect question Milestone 13 already answered
-   for likes ("defer to Milestone 16, not implemented as a side effect now") —
-   `docs/FEATURES.md` #12 says commenting also generates a notification for the post's
-   author; apply the identical, already-recorded reasoning rather than re-litigating it.
-6. **Tests**: integration tests for create/list/delete (including the
-   author-or-post-author delete permission check, the one genuinely new authorization
-   shape this milestone introduces) — against the real Dockerized Postgres, matching
-   every milestone's testing discipline; Playwright covers commenting on a post.
+1. Schema: `SavedPost` (`docs/DATABASE.md` §3.9 — read its exact spec before assuming
+   a shape: composite PK `(userId, postId)`, **plus an explicit secondary index**
+   `(userId, createdAt DESC)` — unlike `Like`'s single extra index on `postId` alone,
+   a composite PK's implicit index is ordered by its own two columns, not by
+   `createdAt`, so "this user's saved posts, newest first" genuinely needs a second,
+   different index, not just the PK) — a new migration.
+2. API (`docs/API.md` §10): `PUT`/`DELETE /posts/:postId/save` (idempotent either
+   way, `204`, matching `Follow`/`Like`'s exact toggle convention — reuse `upsert`/
+   `deleteMany`), `GET /me/saved` (required auth — unlike `GET /posts/:postId/likes`,
+   there is no "optional auth, anyone can view" case here at all; saved posts are
+   private by definition, docs/FEATURES.md #13 — paginated, newest-first, the caller's
+   own saves only).
+3. Decide the response shape for `GET /me/saved`'s list items: full `PostResponse`
+   (matching `GET /feed`'s choice in Milestone 12 — each item needs to render as a
+   real post card) or something narrower. `docs/FEATURES.md` #13 says "view your saved
+   posts in a dedicated list," which reads like a real post-rendering surface, not a
+   thumbnail grid — lean toward reusing `PostResponse` and `toPostResponse` directly
+   unless a concrete reason not to turns up while implementing.
+4. Wire `PostResponse.isSavedByMe` to a real value in `PostsService`'s response
+   mapping — a new `SavedPostsService.getSavedStateForPosts(postIds, viewerId)`-shaped
+   batched method, mirroring `LikesService.getLikeStateForPosts`'s exact shape minus
+   the count half (just a `Set`/`Map<string, boolean>` of which posts the viewer
+   saved), called from the same `getById`/`getFeed` sites (`createPost` still
+   hardcodes `false` without querying, the same reasoning already applied twice).
+5. Web + mobile: a save/unsave bookmark affordance on the shared `PostCard` (reuse
+   the exact `LikeButton` pattern — local state, no `router.refresh()` on web, direct
+   `apiClient` calls on mobile), and a dedicated "Saved posts" list screen reachable
+   from the viewer's own profile (not anyone else's — there is no public "this user's
+   saved posts" concept, unlike the likers-list pattern Milestone 13 built).
+6. **Tests**: integration tests for save/unsave idempotency and the `GET /me/saved`
+   endpoint (including that it never leaks another user's saves) — against the real
+   Dockerized Postgres, matching every milestone's testing discipline; Playwright
+   covers saving a post and finding it in the saved list.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 14 section,
-`docs/DATABASE.md` §3.8 (`Comment`) in full, and `docs/API.md` §9. The `/auth/register`
-throttle sits at roughly 23/40 used (20 before Milestone 13, 3 more registered by
-`likes.spec.ts`) — real headroom remains, but keep applying the standing
-share-via-`beforeAll` discipline rather than registering fresh per test. Also worth
-deciding explicitly before writing the comment endpoints: whether `CommentResponse`
-needs its own new type in `packages/validation` (almost certainly yes — a comment has
-its own shape, `{ id, author, body, createdAt }` at minimum, unlike Milestone 13's
-likers list which could reuse `FollowListResponse` verbatim) — don't reach for reuse
-reflexively just because the last two milestones both found an existing type to reuse;
-confirm shape-identity before assuming it again.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 15 section,
+`docs/DATABASE.md` §3.9 (`SavedPost`) in full, and `docs/API.md` §10. The
+`/auth/register` throttle has comfortable headroom (roughly 26/40 used — 23 before
+Milestone 14, 3 more registered by `comments.spec.ts`); keep applying the standing
+share-via-`beforeAll` discipline regardless, since that's what keeps it from becoming
+tight again, not because it's close to a ceiling right now. For any single-file
+`apps/web-e2e` Playwright run this milestone, use `--grep="<name>"`, **not**
+`--testPathPatterns`— the latter is a Jest flag that silently runs the entire suite
+instead of filtering (discovered this milestone, see Known Issues above; every
+Playwright single-file run from here forward should use `--grep`). Also worth deciding
+explicitly before writing the save endpoint: whether `SavedPostsService` needs its own
+small post-existence check (the `LikesService`/`CommentsService` pattern) or can reuse
+one of theirs — `SavedPostsModule` importing `LikesModule` or `CommentsModule` just for
+that one tiny check would be an odd, arbitrary dependency; duplicating the same
+four-line `findActivePost` a third time is almost certainly the right call, consistent
+with the precedent, not a design smell.

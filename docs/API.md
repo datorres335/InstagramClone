@@ -190,10 +190,10 @@ this section only specified the fields at a high level before implementation):
 `{ id, author: { id, username, fullName, avatarUrl }, caption, location, media:
 [{ id, url, thumbnailUrl, width, height, blurhash, altText, position }], likesCount,
 commentsCount, isLikedByMe, isSavedByMe, createdAt }`. `likesCount`/`isLikedByMe` are
-real as of Milestone 13 (§8). `commentsCount` is still hardcoded `0` and `isSavedByMe`
-still stubbed `false` for an authenticated viewer / `null` for anonymous (the same
-null-for-anonymous convention `isFollowedByMe` established in Milestone 10) until
-`Comment`/`SavedPost` exist (Milestones 14/15).
+real as of Milestone 13 (§8), `commentsCount` real as of Milestone 14 (§9). `isSavedByMe`
+is the only field left stubbed `false` for an authenticated viewer / `null` for
+anonymous (the same null-for-anonymous convention `isFollowedByMe` established in
+Milestone 10) until `SavedPost` exists (Milestone 15).
 
 **`PostSummary`** (the profile-grid tile shape returned by `GET
 /users/:username/posts`, deliberately minimal): `{ id, thumbnailUrl, createdAt }` —
@@ -257,13 +257,29 @@ table/enqueue/consumer/list-endpoint/UI as a side effect of "Likes" would be
 implementing most of Milestone 16 early, well beyond this milestone's own scope
 (see `docs/PROGRESS.md`'s Milestone 13 deviations).
 
-## 9. Comments
+## 9. Comments (implemented Milestone 14)
 
 | Method & path                               | Auth                                     | Notes                                                                                                                                    |
 | ------------------------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /posts/:postId/comments`              | required                                 | Body `{ body }` (max 2200 chars); MVP never accepts `parentCommentId` from the client even though the column exists (`DATABASE.md` §3.8) |
 | `GET /posts/:postId/comments`               | optional                                 | Paginated, oldest-first (standard comment-thread convention)                                                                             |
 | `DELETE /posts/:postId/comments/:commentId` | required (comment author or post author) | Soft delete                                                                                                                              |
+
+**`CommentResponse`**: `{ id, author: { id, username, fullName, avatarUrl }, body,
+createdAt }` — `author` reuses the same minimal shape `PostResponse.author` already
+has (`postAuthorSchema`, exported from `packages/validation/src/lib/post.ts`), not a
+duplicate type. `GET`'s list shape is `{ data: CommentResponse[], meta: { nextCursor }
+}`, cursor-paginated with the same opaque base64 `(createdAt, id)` pair every other
+list endpoint uses — but with `gt` comparisons instead of `lt` in the keyset `WHERE`,
+since this is the only paginated list in this codebase that's oldest-first rather than
+newest-first. `PostResponse.commentsCount` (§7) is real as of this milestone,
+computed by `CommentsService.getCommentCountForPosts` — batched per page, the same
+shape `LikesService.getLikeStateForPosts` established (Milestone 13), minus the
+per-viewer dimension a comment count doesn't need. The delete permission is a
+two-way check (`comment.authorId === userId || post.authorId === userId`) — the first
+endpoint in this codebase needing one, unlike every prior single-owner delete check.
+**No `Notification` side effect**, for the identical reason Milestone 13 recorded for
+likes (see §8) — deferred to Milestone 16 in full, not implemented partially now.
 
 ## 10. Saved Posts
 

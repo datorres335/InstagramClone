@@ -16,6 +16,7 @@ jest.mock('../lib/api-client', () => ({
   apiClient: {
     posts: { getById: jest.fn(), remove: jest.fn() },
     likes: { like: jest.fn(), unlike: jest.fn() },
+    comments: { list: jest.fn(), create: jest.fn(), remove: jest.fn() },
   },
 }));
 jest.mock('../lib/auth-context', () => ({
@@ -68,6 +69,9 @@ const fakePost = {
 describe('PostScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest
+      .mocked(apiClient.comments.list)
+      .mockResolvedValue({ data: [], meta: { nextCursor: null } });
   });
 
   it('renders the post once it loads', async () => {
@@ -82,7 +86,7 @@ describe('PostScreen', () => {
     render(<PostScreen />);
 
     await waitFor(() =>
-      expect(screen.getByRole('heading')).toHaveTextContent('@alice'),
+      expect(screen.getByRole('heading', { name: '@alice' })).toBeTruthy(),
     );
     expect(screen.getByText('Hello world')).toBeTruthy();
     expect(screen.getByText('San Francisco')).toBeTruthy();
@@ -137,7 +141,7 @@ describe('PostScreen', () => {
     render(<PostScreen />);
 
     await waitFor(() =>
-      expect(screen.getByRole('heading')).toHaveTextContent('@alice'),
+      expect(screen.getByRole('heading', { name: '@alice' })).toBeTruthy(),
     );
     expect(screen.queryByText('Delete post')).toBeNull();
   });

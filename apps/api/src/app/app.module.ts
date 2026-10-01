@@ -11,6 +11,7 @@ import { HttpExceptionFilter } from '../common/filters/http-exception.filter';
 import { API_ENV, ConfigModule } from '../config/config.module';
 import { HealthModule } from '../health/health.module';
 import { AuthModule } from '../modules/auth/auth.module';
+import { CommentsModule } from '../modules/comments/comments.module';
 import { FollowsModule } from '../modules/follows/follows.module';
 import { LikesModule } from '../modules/likes/likes.module';
 import { MediaModule } from '../modules/media/media.module';
@@ -31,6 +32,7 @@ import { StorageModule } from '../storage/storage.module';
     FollowsModule,
     PostsModule,
     LikesModule,
+    CommentsModule,
     // A modest workspace-wide default (docs/API.md §1); AuthController
     // overrides this with stricter per-route limits via @Throttle().
     // In-memory storage (the default) — not the Redis-backed storage

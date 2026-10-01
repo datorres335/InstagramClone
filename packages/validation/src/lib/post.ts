@@ -23,7 +23,8 @@ export const createPostInputSchema = z.object({
 });
 export type CreatePostInput = z.infer<typeof createPostInputSchema>;
 
-const postAuthorSchema = z.object({
+/** The minimal author shape embedded in a post or comment response — exported for `comment.ts`'s second real use of the identical shape (Milestone 14). */
+export const postAuthorSchema = z.object({
   id: z.uuid(),
   username: usernameSchema,
   fullName: z.string().nullable(),

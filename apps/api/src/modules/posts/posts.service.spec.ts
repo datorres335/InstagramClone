@@ -94,13 +94,29 @@ function createDeps() {
       ),
     ),
   };
+  // Defaults to 0 comments for every post, so every pre-existing test's
+  // expectations hold without changes — tests that care about a real value
+  // override this mock explicitly, the same pattern `likesService` above uses.
+  const commentsService = {
+    getCommentCountForPosts: jest.fn((postIds: string[]) =>
+      Promise.resolve(new Map(postIds.map((id) => [id, 0]))),
+    ),
+  };
   const service = new PostsService(
     prisma as never,
     mediaService as never,
     storage as never,
     likesService as never,
+    commentsService as never,
   );
-  return { service, prisma, mediaService, storage, likesService };
+  return {
+    service,
+    prisma,
+    mediaService,
+    storage,
+    likesService,
+    commentsService,
+  };
 }
 
 describe('PostsService', () => {
@@ -137,8 +153,9 @@ describe('PostsService', () => {
       expect(result.media[0].url).toBe('http://minio.test/media-1/feed.webp');
     });
 
-    it('returns 0 likesCount and false isLikedByMe without querying LikesService', async () => {
-      const { service, prisma, mediaService, likesService } = createDeps();
+    it('returns 0 likesCount/commentsCount and false isLikedByMe without querying LikesService/CommentsService', async () => {
+      const { service, prisma, mediaService, likesService, commentsService } =
+        createDeps();
       mediaService.getReadyMediaForAttachment.mockResolvedValue(
         fakeReadyMedia('media-1'),
       );
@@ -150,8 +167,10 @@ describe('PostsService', () => {
       });
 
       expect(likesService.getLikeStateForPosts).not.toHaveBeenCalled();
+      expect(commentsService.getCommentCountForPosts).not.toHaveBeenCalled();
       expect(result.likesCount).toBe(0);
       expect(result.isLikedByMe).toBe(false);
+      expect(result.commentsCount).toBe(0);
     });
 
     it('preserves array order as carousel position', async () => {
@@ -268,6 +287,21 @@ describe('PostsService', () => {
       );
       expect(result.likesCount).toBe(5);
       expect(result.isLikedByMe).toBe(true);
+    });
+
+    it('reports a real commentsCount from CommentsService', async () => {
+      const { service, prisma, commentsService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue(fakePostRow());
+      commentsService.getCommentCountForPosts.mockResolvedValue(
+        new Map([['post-1', 3]]),
+      );
+
+      const result = await service.getById('post-1', 'viewer-1');
+
+      expect(commentsService.getCommentCountForPosts).toHaveBeenCalledWith([
+        'post-1',
+      ]);
+      expect(result.commentsCount).toBe(3);
     });
   });
 
@@ -408,8 +442,8 @@ describe('PostsService', () => {
       );
     });
 
-    it('fetches like state for the whole page in one batched call', async () => {
-      const { service, prisma, likesService } = createDeps();
+    it('fetches like state and comment counts for the whole page in one batched call each', async () => {
+      const { service, prisma, likesService, commentsService } = createDeps();
       prisma.follow.findMany.mockResolvedValue([{ followingId: 'author-a' }]);
       prisma.post.findMany.mockResolvedValue([
         fakePostRow({ id: 'post-1' }),
@@ -421,6 +455,12 @@ describe('PostsService', () => {
           ['post-2', { likesCount: 0, isLikedByMe: false }],
         ]),
       );
+      commentsService.getCommentCountForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', 7],
+          ['post-2', 0],
+        ]),
+      );
 
       const result = await service.getFeed('viewer-1', { limit: 20 });
 
@@ -429,10 +469,17 @@ describe('PostsService', () => {
         ['post-1', 'post-2'],
         'viewer-1',
       );
+      expect(commentsService.getCommentCountForPosts).toHaveBeenCalledTimes(1);
+      expect(commentsService.getCommentCountForPosts).toHaveBeenCalledWith([
+        'post-1',
+        'post-2',
+      ]);
       expect(result.data[0].likesCount).toBe(2);
       expect(result.data[0].isLikedByMe).toBe(true);
+      expect(result.data[0].commentsCount).toBe(7);
       expect(result.data[1].likesCount).toBe(0);
       expect(result.data[1].isLikedByMe).toBe(false);
+      expect(result.data[1].commentsCount).toBe(0);
     });
   });
 

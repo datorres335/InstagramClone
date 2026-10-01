@@ -17,6 +17,7 @@ import type {
 
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CommentsService } from '../comments/comments.service';
 import { LikesService } from '../likes/likes.service';
 import { MediaService } from '../media/media.service';
 import { resolveVariantUrls } from '../media/media-response.mapper';
@@ -30,6 +31,7 @@ export class PostsService {
     private readonly mediaService: MediaService,
     private readonly storage: StorageService,
     private readonly likesService: LikesService,
+    private readonly commentsService: CommentsService,
   ) {}
 
   /** `POST /posts` (docs/API.md §7) — 1–10 images, all the caller's own `READY` `POST_IMAGE` media, none already attached elsewhere. */
@@ -82,13 +84,16 @@ export class PostsService {
       },
     });
 
-    // A freshly created post always has 0 likes and isn't liked by its own
-    // creator yet — no need to query LikesService for a post that didn't
-    // exist a moment ago.
-    return toPostResponse(post, this.storage, true, {
-      likesCount: 0,
-      isLikedByMe: false,
-    });
+    // A freshly created post always has 0 likes/comments and isn't liked by
+    // its own creator yet — no need to query LikesService/CommentsService
+    // for a post that didn't exist a moment ago.
+    return toPostResponse(
+      post,
+      this.storage,
+      true,
+      { likesCount: 0, isLikedByMe: false },
+      0,
+    );
   }
 
   /** `GET /posts/:id` (docs/API.md §7) — optional auth, only changes `isLikedByMe`/`isSavedByMe`. */
@@ -97,15 +102,16 @@ export class PostsService {
     viewerId: string | undefined,
   ): Promise<PostResponse> {
     const post = await this.findActivePost(postId);
-    const likeState = await this.likesService.getLikeStateForPosts(
-      [postId],
-      viewerId,
-    );
+    const [likeState, commentCounts] = await Promise.all([
+      this.likesService.getLikeStateForPosts([postId], viewerId),
+      this.commentsService.getCommentCountForPosts([postId]),
+    ]);
     return toPostResponse(
       post,
       this.storage,
       viewerId !== undefined,
       likeState.get(postId) ?? { likesCount: 0, isLikedByMe: null },
+      commentCounts.get(postId) ?? 0,
     );
   }
 
@@ -224,17 +230,19 @@ export class PostsService {
         ? encodeCursor({ createdAt: lastRow.createdAt, id: lastRow.id })
         : null;
 
-    // Batched for the whole page — one pair of queries, not one per post.
-    const likeStates = await this.likesService.getLikeStateForPosts(
-      page.map((post) => post.id),
-      viewerId,
-    );
+    // Batched for the whole page — one pair of queries each, not one per post.
+    const postIds = page.map((post) => post.id);
+    const [likeStates, commentCounts] = await Promise.all([
+      this.likesService.getLikeStateForPosts(postIds, viewerId),
+      this.commentsService.getCommentCountForPosts(postIds),
+    ]);
     const data: PostResponse[] = page.map((post) =>
       toPostResponse(
         post,
         this.storage,
         true,
         likeStates.get(post.id) ?? { likesCount: 0, isLikedByMe: false },
+        commentCounts.get(post.id) ?? 0,
       ),
     );
 

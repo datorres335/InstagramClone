@@ -5,3 +5,4 @@ export * from './lib/post';
 export * from './lib/profile';
 export * from './lib/media';
 export * from './lib/follow';
+export * from './lib/comment';

@@ -49,7 +49,7 @@ export function PostCard({ post, isAuthor }: PostCardProps) {
           />
         )}
         {' · '}
-        {post.commentsCount} comments
+        <Link href={`/p/${post.id}`}>{post.commentsCount} comments</Link>
       </p>
       {isAuthor && (
         <DeletePostButton

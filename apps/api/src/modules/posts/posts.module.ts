@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
+import { CommentsModule } from '../comments/comments.module';
 import { LikesModule } from '../likes/likes.module';
 import { MediaModule } from '../media/media.module';
 import { FeedController } from './feed.controller';
@@ -10,12 +11,12 @@ import { PostsService } from './posts.service';
 @Module({
   // MediaModule exports MediaService, used to validate each mediaId is the
   // caller's own, READY, POST_IMAGE-purpose media (docs/API.md §7).
-  // LikesModule exports LikesService, used to resolve real
-  // likesCount/isLikedByMe on every PostResponse (Milestone 13) — the same
-  // dependency shape as MediaModule; LikesModule never imports PostsModule
-  // back (it does its own small, self-contained post-existence check), so
-  // this isn't circular.
-  imports: [AuthModule, MediaModule, LikesModule],
+  // LikesModule/CommentsModule export their services, used to resolve real
+  // likesCount/isLikedByMe (Milestone 13) and commentsCount (Milestone 14) on
+  // every PostResponse — the same dependency shape as MediaModule; neither
+  // imports PostsModule back (each does its own small, self-contained
+  // post-existence check), so this isn't circular.
+  imports: [AuthModule, MediaModule, LikesModule, CommentsModule],
   // FeedController lives here rather than its own module — `GET /feed`
   // (Milestone 12) is a top-level resource by URL, but it's really just
   // another read path over PostsService, with no state or dependencies of

@@ -217,24 +217,32 @@ Composite PK (`userId`, `postId`) — doubles as the uniqueness constraint (a us
 only like a post once) and the primary access path ("has this user liked this post").
 Secondary index (`postId`) for "count/list likers of a post" and like-count aggregates.
 
-### 3.8 `Comment`
+### 3.8 `Comment` (implemented Milestone 14)
 
-| Column                            | Type        | Constraints                                   |
-| --------------------------------- | ----------- | --------------------------------------------- |
-| id                                | uuid        | PK                                            |
-| postId                            | uuid        | FK → `Post.id`, not null, `onDelete: Cascade` |
-| authorId                          | uuid        | FK → `User.id`, not null                      |
-| body                              | text        | not null, max ~2200 chars                     |
-| parentCommentId                   | uuid        | FK → `Comment.id`, nullable                   |
-| createdAt / updatedAt / deletedAt | timestamptz | see conventions                               |
+| Column                            | Type        | Constraints                                      |
+| --------------------------------- | ----------- | ------------------------------------------------ |
+| id                                | uuid        | PK                                               |
+| postId                            | uuid        | FK → `Post.id`, not null, `onDelete: Cascade`    |
+| authorId                          | uuid        | FK → `User.id`, not null, `onDelete: Cascade`    |
+| body                              | text        | not null, max ~2200 chars                        |
+| parentCommentId                   | uuid        | FK → `Comment.id`, nullable, `onDelete: SetNull` |
+| createdAt / updatedAt / deletedAt | timestamptz | see conventions                                  |
 
-Indexes: index(`postId`, `createdAt`) for paginated comment listing; index
-(`parentCommentId`).
+Indexes: index(`postId`, `createdAt`) for paginated comment listing — a plain B-tree,
+not a partial `WHERE deletedAt IS NULL` index (Prisma has no portable partial-index
+syntax, the same deviation already recorded for `User.deletedAt`/`Post`'s own index);
+index(`parentCommentId`).
 
 `parentCommentId` is included in the schema from the start even though the MVP feature
 (`FEATURES.md` #12, "Comments") only requires **flat** comments — reserving the column
 now avoids an awkward migration to add threading later, and the MVP API simply never
 lets a client set it (always `null`) while the column and index already exist.
+`authorId`'s `onDelete: Cascade` matches every other `User`-owned row in this schema
+(`Post`, `Like`, `Follow`); `parentCommentId`'s `onDelete: SetNull` is Prisma's own
+default for a nullable self-relation (not explicitly specified in this section
+originally) and is the correct choice regardless — a reply losing its parent pointer
+rather than being deleted or blocking the parent's own deletion, though this is purely
+theoretical in the MVP since no code path ever sets `parentCommentId`.
 
 ### 3.9 `SavedPost`
 
@@ -315,7 +323,8 @@ the current milestone."
 | Followers / following list                                                                       | Served by `Follow`'s composite PK (following-list direction) and the secondary (`followingId`, `followerId`) index (followers direction), each paginated by `createdAt`.                                                                                                                                                                                                                                                                                                                                                                                     |
 | Explore page                                                                                     | `Post`s from accounts the user does _not_ follow, ranked by a simple recency+engagement heuristic for MVP (e.g. like-count within the last N days) — computed with an aggregate query, not a precomputed ranking table; acceptable at MVP scale, called out as a scaling risk below.                                                                                                                                                                                                                                                                         |
 | User search                                                                                      | `SELECT ... WHERE username % :query OR full_name % :query ORDER BY similarity(username, :query) DESC LIMIT :n` using `pg_trgm`'s `%` similarity operator against the GIN trigram index.                                                                                                                                                                                                                                                                                                                                                                      |
-| Post detail/feed likes count + is-liked-by-me — **implemented Milestone 13**                     | Two queries per page, not one combined query with subqueries: `SELECT postId, COUNT(*) FROM likes WHERE postId IN (:ids) GROUP BY postId` for counts, and `SELECT postId FROM likes WHERE userId = :me AND postId IN (:ids)` for the viewer's own likes — run via `Promise.all`, batched for a whole page (e.g. the feed) in one pair of calls, not per-post. Comments count is still the hardcoded `0` stub until `Comment` lands (Milestone 14).                                                                                                           |
+| Post detail/feed likes count + is-liked-by-me — **implemented Milestone 13**                     | Two queries per page, not one combined query with subqueries: `SELECT postId, COUNT(*) FROM likes WHERE postId IN (:ids) GROUP BY postId` for counts, and `SELECT postId FROM likes WHERE userId = :me AND postId IN (:ids)` for the viewer's own likes — run via `Promise.all`, batched for a whole page (e.g. the feed) in one pair of calls, not per-post.                                                                                                                                                                                                |
+| Post detail/feed comments count — **implemented Milestone 14**                                   | `SELECT postId, COUNT(*) FROM comments WHERE postId IN (:ids) AND deletedAt IS NULL GROUP BY postId`, batched for a whole page the same way the likes count is, minus the per-viewer dimension a comment count doesn't need.                                                                                                                                                                                                                                                                                                                                 |
 
 ## 7. Soft Delete
 

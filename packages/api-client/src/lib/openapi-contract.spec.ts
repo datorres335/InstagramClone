@@ -35,6 +35,10 @@ type _FeedRoute = paths['/api/v1/feed']['get'];
 type _LikeRoute = paths['/api/v1/posts/{postId}/like']['put'];
 type _UnlikeRoute = paths['/api/v1/posts/{postId}/like']['delete'];
 type _LikersRoute = paths['/api/v1/posts/{postId}/likes']['get'];
+type _CreateCommentRoute = paths['/api/v1/posts/{postId}/comments']['post'];
+type _ListCommentsRoute = paths['/api/v1/posts/{postId}/comments']['get'];
+type _DeleteCommentRoute =
+  paths['/api/v1/posts/{postId}/comments/{commentId}']['delete'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

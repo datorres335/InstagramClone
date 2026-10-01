@@ -63,8 +63,9 @@ model User {
   following Follow[] @relation("Follower")
   followers Follow[] @relation("Following")
 
-  posts Post[] @relation("AuthoredPosts")
-  likes Like[]
+  posts    Post[]    @relation("AuthoredPosts")
+  likes    Like[]
+  comments Comment[]
 
   @@index([deletedAt])
   @@map("users")
@@ -195,8 +196,9 @@ model Post {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
-  media PostMedia[]
-  likes Like[]
+  media    PostMedia[]
+  likes    Like[]
+  comments Comment[]
 
   // Serves "posts by this user, newest first" (profile grid, docs/DATABASE.md
   // §3.4) — a plain B-tree, not the partial `WHERE deletedAt IS NULL` index
@@ -253,4 +255,39 @@ model Like {
   @@id([userId, postId])
   @@index([postId])
   @@map("likes")
+}
+
+/// A flat comment on a post (docs/DATABASE.md §3.8, docs/FEATURES.md #12).
+/// `parentCommentId` is reserved for future threaded replies — the API
+/// never sets it in the MVP, so every comment is effectively top-level; the
+/// self-relation exists so the column/index are in place without an
+/// awkward later migration, not because threading is implemented now.
+/// The third and last soft-deletable model (docs/DATABASE.md §7), alongside
+/// `User` and `Post`.
+model Comment {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  postId String @map("post_id") @db.Uuid
+  post   Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id") @db.Uuid
+  author   User   @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  body String
+
+  parentCommentId String?   @map("parent_comment_id") @db.Uuid
+  parentComment   Comment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
+  replies         Comment[] @relation("CommentReplies")
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz
+
+  // Serves "comments on this post, oldest first" (docs/DATABASE.md §3.8) —
+  // a plain B-tree, not a partial `WHERE deletedAt IS NULL` index, the same
+  // Prisma-has-no-partial-index deviation already recorded for
+  // `User.deletedAt` (Milestone 2) and `Post`'s own index (Milestone 11).
+  @@index([postId, createdAt])
+  @@index([parentCommentId])
+  @@map("comments")
 }

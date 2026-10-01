@@ -4,6 +4,7 @@ import { ApiError } from '@instagram-clone/api-client';
 
 import { getApiClient } from '../../../../lib/get-api-client';
 import { PostCard } from '../../post-card';
+import { CommentSection } from './comment-section';
 
 interface PostPageProps {
   params: Promise<{ id: string }>;
@@ -29,12 +30,22 @@ export default async function PostPage({ params }: PostPageProps) {
     throw error;
   }
 
-  const viewer = await apiClient.auth.session();
+  const [viewer, comments] = await Promise.all([
+    apiClient.auth.session(),
+    apiClient.comments.list(id),
+  ]);
   const isAuthor = viewer?.username === post.author.username;
 
   return (
     <main>
       <PostCard post={post} isAuthor={isAuthor} />
+      <CommentSection
+        postId={post.id}
+        initialComments={comments.data}
+        initialNextCursor={comments.meta.nextCursor}
+        viewerUsername={viewer?.username ?? null}
+        postAuthorUsername={post.author.username}
+      />
     </main>
   );
 }

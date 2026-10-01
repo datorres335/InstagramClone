@@ -80,7 +80,9 @@ export function PostCard({
           initialLikesCount={post.likesCount}
         />
       )}
-      <Text>{post.commentsCount} comments</Text>
+      <Link href={{ pathname: '/post/[id]', params: { id: post.id } }}>
+        {post.commentsCount} comments
+      </Link>
       {isAuthor && (
         <View>
           <Pressable

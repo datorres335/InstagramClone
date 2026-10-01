@@ -161,17 +161,25 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Like` (`DATABASE.md` §3.7), `PUT`/`DELETE
 /posts/:postId/like`, `GET /posts/:postId/likes` (`API.md` §8).
 
-### 12. Comments
+### 12. Comments (implemented Milestone 14)
 
-- Flat (non-threaded) comments on a post, paginated oldest-first.
-- Commenting generates a `Notification` for the post's author (unless commenting on
-  one's own post).
+- Flat (non-threaded) comments on a post, paginated oldest-first. Rendered on the post
+  detail page only, not the feed — a comment thread doesn't fit a feed card's compact
+  shape the way the like button does; `PostCard`'s comments count is just a link to the
+  post detail page from the feed.
+- **Deviation, deliberately not implemented this milestone**: commenting does not
+  currently generate a `Notification` for the post's author, for the identical reason
+  Milestone 13 recorded for likes (`docs/PROGRESS.md`'s Milestone 13 deviations) —
+  deferred to Milestone 16 in full rather than implementing `Notification`'s whole
+  table/enqueue/consumer/list-endpoint/UI as a side effect of "Comments." The comment
+  feature itself is functionally complete without it.
 - Either the comment's author or the post's author may delete a comment (standard
-  moderation baseline).
-- **Explicit MVP scope decision**: `Comment.parentCommentId` exists in the schema
-  (`DATABASE.md` §3.8) but the API never accepts it from clients in the MVP — comments
-  are flat. Threaded replies are additive later (new API field + UI), not a schema
-  change.
+  moderation baseline) — implemented as a real two-way authorization check, the first
+  one this codebase needed (every prior delete endpoint checked a single owner).
+- **Explicit MVP scope decision, confirmed as-implemented**: `Comment.parentCommentId`
+  exists in the schema (`DATABASE.md` §3.8) but the API never accepts it from clients
+  in the MVP — comments are flat. Threaded replies are additive later (new API field +
+  UI), not a schema change.
 - **Out of scope**: comment likes, @mentions-as-links within comments, comment editing
   (delete-and-recreate is the MVP workflow for corrections).
 - Entities/endpoints: `Comment`, `POST`/`GET/DELETE

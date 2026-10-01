@@ -1,10 +1,20 @@
 import { useLocalSearchParams, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { ApiError } from '@instagram-clone/api-client';
-import type { PostResponse } from '@instagram-clone/validation';
+import type {
+  CommentListResponse,
+  PostResponse,
+} from '@instagram-clone/validation';
 
+import { CommentSection } from '../../components/comment-section';
 import { PostCard } from '../../components/post-card';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
@@ -15,6 +25,7 @@ export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { user: viewer } = useAuth();
   const [post, setPost] = useState<PostResponse | null>(null);
+  const [comments, setComments] = useState<CommentListResponse | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -24,10 +35,12 @@ export default function PostScreen() {
     let cancelled = false;
     setLoading(true);
     setNotFound(false);
-    apiClient.posts
-      .getById(id)
-      .then((result) => {
-        if (!cancelled) setPost(result);
+    Promise.all([apiClient.posts.getById(id), apiClient.comments.list(id)])
+      .then(([postResult, commentsResult]) => {
+        if (!cancelled) {
+          setPost(postResult);
+          setComments(commentsResult);
+        }
       })
       .catch((caught) => {
         if (cancelled) return;
@@ -79,7 +92,7 @@ export default function PostScreen() {
   const isAuthor = viewer?.username === post.author.username;
 
   return (
-    <View style={styles.container}>
+    <ScrollView style={styles.container}>
       <PostCard
         post={post}
         isAuthor={isAuthor}
@@ -87,7 +100,16 @@ export default function PostScreen() {
         error={error}
         onDelete={handleDelete}
       />
-    </View>
+      {comments && (
+        <CommentSection
+          postId={post.id}
+          initialComments={comments.data}
+          initialNextCursor={comments.meta.nextCursor}
+          viewerUsername={viewer?.username ?? null}
+          postAuthorUsername={post.author.username}
+        />
+      )}
+    </ScrollView>
   );
 }
 
