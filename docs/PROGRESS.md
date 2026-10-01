@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 15 — Saved Posts
+**Current Milestone:** Milestone 16 — Notifications
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -122,7 +122,24 @@ and `MeSavedController` are split across two modules (the latter living inside
 Both `web` and `mobile` gained a save/unsave bookmark button on the shared `PostCard`
 and a dedicated "Saved posts" list screen reachable only from the viewer's own
 profile. No `Notification` side effect — saving was never described as a notified
-action in the first place, so there was nothing to defer.
+action in the first place, so there was nothing to defer. Milestone 16 adds
+`apps/api`'s ninth domain module, `NotificationsModule`, and is the first milestone to
+actually build the `Notification` pipeline Milestones 13/14 both explicitly deferred —
+the biggest milestone since Milestone 9's media pipeline. A new `Notification` table
+(nullable `postId`/`commentId` FKs rather than a polymorphic reference, requiring
+named Prisma relations for `recipientId`/`actorId`'s double reference to `User`), a
+dedicated `notifications` BullMQ queue (the same in-process-worker pattern
+`MediaProcessor` established), and three required-auth-only endpoints: `GET
+/notifications` (paginated, newest-first), `GET /notifications/unread-count` (the
+poll target), and `POST /notifications/mark-read`. `LikesService.like`,
+`CommentsService.createComment`, and `FollowsService.follow` each enqueue a
+notification job after their own action succeeds — `NotificationsService
+.enqueueNotification` centrally guards against self-notification, and `like`/`follow`
+additionally skip enqueuing on an idempotent repeat call so re-liking/re-following
+doesn't spam duplicates (`createComment` always enqueues, since every comment is
+genuinely new). Both `web` and `mobile` gained a poll-based unread badge on their main
+authenticated screen and a dedicated notifications list where opening the screen
+itself marks everything read, per `docs/FEATURES.md` #16's explicit UX.
 
 ---
 
@@ -986,6 +1003,94 @@ userId`)
 - [x] Full validation passing: `nx run-many -t lint test build` (11
       projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
       `api-e2e:e2e` (14/14 suites, 94/94 tests) + `web-e2e:e2e` (19/19,
+      Chromium, confirmed stable across two consecutive clean runs)
+
+### Milestone 16 — Notifications
+
+- [x] `prisma/schema.prisma` — `NotificationType` enum (`FOLLOW`/`LIKE`/
+      `COMMENT`) and `Notification` (docs/DATABASE.md §3.10: `recipientId`
+      FK `onDelete: Cascade`, nullable `actorId` FK `onDelete: SetNull`,
+      nullable `postId`/`commentId` FKs both `onDelete: Cascade`, `isRead`,
+      index on `(recipientId, isRead, createdAt DESC)`) and the two named
+      reverse relations on `User` (`notificationsReceived`/
+      `notificationsSent`, required since the model references `User`
+      twice) plus `Post.notifications`/`Comment.notifications` — a new
+      migration, hand-placed via the same `prisma migrate diff` +
+      `migrate deploy` workaround every prior migration has used
+- [x] `apps/api/src/modules/notifications/` — `NotificationsModule`/
+      `NotificationsController`/`NotificationsService`/
+      `NotificationsProcessor`, `apps/api`'s ninth domain module. A
+      dedicated `notifications` BullMQ queue (`BullModule.registerQueue`),
+      the same in-process-worker pattern `MediaProcessor` established
+      (Milestone 9) — `NotificationsProcessor` does no existence check on
+      any id in the job, unlike every other domain service's
+      `findActivePost`-style duplication, since the producer side has
+      already confirmed every id is real by the time a job is enqueued
+- [x] `NotificationsService.enqueueNotification` centrally guards against
+      self-notification (`if (recipientId === actorId) return`) — a single
+      source of truth rather than trusting every producer to remember it
+- [x] Three endpoints wired: `GET /notifications` (paginated, newest-first),
+      `GET /notifications/unread-count`, `POST /notifications/mark-read`
+      (`204`, always scoped by `recipientId: userId` server-side even when
+      the client supplies explicit `notificationIds`) — all three
+      required-auth-only, the first set of endpoints besides `GET /me/saved`
+      with no anonymous or other-viewer case at all
+- [x] `LikesService.like` and `FollowsService.follow` both updated to check
+      for a genuine state transition (an existence query before their
+      `upsert`) before enqueuing a notification — re-liking/re-following
+      something you already liked/followed no longer spams a duplicate
+      notification; `CommentsService.createComment` enqueues unconditionally
+      (every comment is genuinely new, no idempotent-repeat case exists)
+- [x] `packages/validation`'s new `notification.ts`
+      (`notificationResponseSchema`/`notificationListResponseSchema`/
+      `unreadCountResponseSchema`/`markReadInputSchema`) — `actor` reuses
+      `postAuthorSchema` (its third real consumer), `post` reuses
+      `postSummarySchema` verbatim, `comment` is a new minimal `{ id, body }`
+      shape
+- [x] `packages/api-client`'s new `notifications` namespace (`list`/
+      `getUnreadCount`/`markRead`)
+- [x] `apps/web`: a shared `NotificationBadge` client component (polls
+      `getUnreadNotificationCountAction` every 30s, seeded with a
+      server-fetched `initialCount`) wired into `/home`'s header, plus a
+      dedicated `/notifications` page (`page.tsx` + `notifications-list.tsx` + `actions.ts`, mirroring `/saved`'s page/list/actions split) that
+      marks everything read as a side effect of loading, after fetching the
+      list so the initial render still reflects each notification's real
+      pre-open `isRead` state
+- [x] `apps/mobile`: a shared `components/notification-badge.tsx` (direct
+      `apiClient` polling, the same pattern) wired into `(tabs)/home.tsx`'s
+      header, plus a new auto-registered `(tabs)/notifications.tsx` tab
+      screen (infinite-scroll pagination mirroring `(tabs)/home.tsx`, same
+      mark-read-on-open behavior as web)
+- [x] 13 new `notifications.service.spec.ts`/`notifications.processor.spec.ts`
+      unit tests, 6 new tests across `likes.service.spec.ts`/
+      `comments.service.spec.ts`/`follows.service.spec.ts` confirming the
+      new notification-producer wiring (including the
+      no-notification-on-repeat-like/-follow cases), 5 new
+      `notifications-client.spec.ts` cases, 3 new `openapi-contract.spec.ts`
+      type references
+- [x] 9 new mobile unit tests (`notification-badge.spec.tsx`: seeded initial
+      count, zero-count rendering, polling refresh via fake timers;
+      `notifications-screen.spec.tsx`: all three notification-type render
+      cases, mark-read-on-load, empty state, load-more pagination); 1
+      existing `home.spec.tsx` mock updated with a `notifications.getUnreadCount`
+      default
+- [x] 7 new `apps/api-e2e` integration tests (`notifications/notifications.spec.ts`)
+      — real accounts/posts, not mocked, against the real in-process BullMQ
+      worker (polled for up to 10s per assertion, the same discipline
+      `media-pipeline.spec.ts` established for its own async job): FOLLOW/
+      LIKE/COMMENT notifications land for the recipient and never for a
+      self-action, `GET /notifications/unread-count` reflects reality and
+      `POST /notifications/mark-read` clears it, a recipient's list never
+      leaks another user's notifications, `401` unauthenticated on all
+      three endpoints, `400` on a malformed cursor
+- [x] 1 new `apps/web-e2e` Playwright test (`notifications.spec.ts`,
+      Chromium) — API-seeded setup rather than two real browser sessions
+      (Playwright's `request` fixture makes the triggering follow call
+      directly against the real API while only the viewer gets a browser
+      page), per `docs/IMPLEMENTATION_PLAN.md` M16's explicit note
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (15/15 suites, 101/101 tests) + `web-e2e:e2e` (20/20,
       Chromium, confirmed stable across two consecutive clean runs)
 
 ---
@@ -1980,6 +2085,144 @@ freshly spawned this milestone) were found still listening on port 3000 at the s
 of this milestone's e2e work — each confirmed via `Get-CimInstance` before stopping,
 the same standing characteristic every prior milestone from 12 onward has documented.
 
+### Milestone 16
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts   # clean after adding Notification
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  2>/dev/null > prisma/migrations/20261001200100_0008_notification/migration.sql
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d notifications — the enum, both
+# FK onDelete behaviors (recipientId CASCADE, actorId SET NULL), the
+# postId/commentId CASCADE FKs, and the composite index all matched
+# schema.prisma exactly.
+
+pnpm exec nx run api:test --testPathPatterns=notifications --skip-nx-cache   # 13/13,
+# first run — every NotificationsService/Processor test passed immediately.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed NotificationsModule/NotificationsController registered
+#   correctly in the real Nest boot log: GET /notifications, GET
+#   /notifications/unread-count, POST /notifications/mark-read. The boot
+#   log printed cleanly but `app.listen()` then failed with
+#   EADDRINUSE :3000 — an unrelated SvelteKit/json-server dev server from
+#   two other projects on this machine was already bound there (confirmed
+#   via Get-CimInstance; neither touched at this point in the milestone).
+#   Not a problem with this milestone's code — the DI graph and route
+#   registration had already both succeeded by the time the bind failed.
+
+pnpm exec nx run api:test --testPathPatterns="likes.service|comments.service|follows.service" --skip-nx-cache
+# ^ first run: 2 failures (likes, comments) with "Cannot read properties of
+#   undefined (reading 'enqueueNotification')" — createDeps() in both spec
+#   files hadn't been given a notificationsService mock yet even though
+#   each service's constructor already required one. follows.service.spec.ts
+#   didn't fail outright, but for the wrong reason: its prisma.follow.findUnique
+#   mock had no default, so `await undefined` made `isFollowing` return
+#   `true` by default, silently skipping the new notification code path
+#   in the "idempotent by construction" test without ever exercising it.
+#   Fixed by adding the notificationsService mock to all three createDeps()
+#   helpers (defaulting to a plain jest.fn(), the same pattern
+#   likesService/commentsService's mocks already established elsewhere),
+#   adding an explicit prisma.follow.findUnique.mockResolvedValue(null) to
+#   follows.service.spec.ts's existing tests, and adding new tests for the
+#   enqueue-on-new-like/-follow/-comment and skip-on-repeat-like/-follow
+#   cases. Re-ran: 46/46, first clean run after the fix.
+pnpm exec nx run api:test --skip-nx-cache   # 188/188, whole project
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/notifications, /api/v1/notifications/unread-count,
+#   and /api/v1/notifications/mark-read appeared in the generated
+#   openapi.json/types on the first run.
+pnpm exec nx run api-client:test --skip-nx-cache   # 66/66 (5 new notifications-client.spec.ts cases)
+pnpm exec nx run api-client:build --skip-nx-cache   # clean
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache
+# ^ compiled + typechecked cleanly; new /notifications route appeared in
+#   the route manifest alongside the existing ones.
+pnpm exec nx run web:lint --skip-nx-cache
+# ^ first run: 1 new error, Unexpected empty arrow function
+#   (@typescript-eslint/no-empty-function) in notification-badge.tsx's
+#   `.catch(() => {})`. Fixed by switching to an explicit try/catch with a
+#   one-line comment instead of a silently-empty catch callback, the same
+#   shape every other polling/fire-and-forget call site in this codebase
+#   already uses. Re-ran: clean (plus the same pre-existing, unrelated
+#   avatar-uploader.tsx warning noted since Milestone 9).
+pnpm exec nx run web:test --skip-nx-cache    # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --skip-nx-cache
+# ^ first run: 3 failures, all in home.spec.tsx — HomeScreen now calls
+#   apiClient.notifications.getUnreadCount() alongside apiClient.posts.getFeed()
+#   in the same Promise.all, and the mock had no notifications namespace at
+#   all, throwing and landing every assertion in the error branch instead.
+#   Fixed by adding the namespace to the mock plus a beforeEach default
+#   resolved { count: 0 }. Re-ran: 80/80, clean.
+pnpm exec nx run mobile:test --testPathPatterns="notification-badge|notifications-screen" --skip-nx-cache   # 9/9, first run
+pnpm exec nx run mobile:lint --skip-nx-cache    # clean
+pnpm exec nx run mobile:test --skip-nx-cache    # 89/89, whole project
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, whole workspace, clean first try
+
+pnpm exec prisma format --config prisma.config.ts
+# ^ `prettier --write` has no parser for `.prisma` files (confirmed by its
+#   own error message); this is the correct dedicated tool, the same the
+#   way `prisma validate`/`prisma migrate` already are.
+
+# Port 3000 was still occupied by the two other-project dev servers noted
+# above. api-e2e's tests don't actually require exactly port 3000 — both
+# global-setup.ts and test-setup.ts already read PORT/HOST from the
+# environment — so every api-e2e run below used `PORT=3100` rather than
+# touching either unrelated process.
+PORT=3100 pnpm exec nx run api-e2e:e2e --testPathPatterns=notifications --skip-nx-cache
+# ^ 7/7, first real run — follow/like/comment all produced the expected
+#   notification via the real BullMQ worker within the poll window, and
+#   self-actions never did.
+PORT=3100 pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 15/15 suites, 101/101 tests
+
+# web-e2e's NEXT_PUBLIC_API_URL is read at server-module-load time from
+# apps/web's own env, not overridable per-run the way api-e2e's PORT is —
+# so this one genuinely needed port 3000 itself. Asked the person running
+# this session how to proceed; they chose to stop both other-project dev
+# servers temporarily (confirmed via Get-CimInstance identity first, same
+# as always) rather than skip the test or have them free it manually.
+nx run api:serve   # started manually on :3000 — web-e2e's own webServer only manages web:dev
+pnpm exec nx run web-e2e:e2e -- --grep "notifications" --project=chromium   # 1/1, first run
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 19 passed, 1 failed (save-post.spec.ts's own already-documented M15
+#   reload flake — Next dev-server first-compile latency, not a regression).
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ ran again immediately after the above — 16 failed. This is the
+#   documented Milestone 13 global-100-req/min/IP-throttle collision from
+#   running the full suite twice in quick succession against the same
+#   long-lived api:serve process, not a real regression (confirmed by the
+#   sheer breadth of unrelated failures). Restarted api:serve (confirmed
+#   via Get-CimInstance before killing, as always) to reset its in-memory
+#   counter.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 19 passed, 1 failed again — comment-post.spec.ts's own already-
+#   documented M14 reload flake (bug #46), not this milestone's test.
+#   Restarted api:serve once more and ran a final time:
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # 20/20, clean
+
+pnpm exec prettier --write apps/api-e2e/src/notifications/notifications.spec.ts
+pnpm exec prettier --write apps/web-e2e/src/notifications.spec.ts
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # 28/28 tasks, re-confirmed stable
+pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "prisma/**/*.ts"
+# ^ only flagged apps/web/next-env.d.ts again, same pre-existing Next-
+#   generated file, unrelated.
+```
+
+Both other-project dev servers stopped for the `web-e2e` run above (the SvelteKit
+tutorial and the json-server tutorial, each on this same machine, each confirmed via
+`Get-CimInstance` before stopping) were left stopped afterward with port 3000 freed —
+they are the person's own separate projects to restart whenever they next need them,
+not this repo's concern.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -2736,6 +2979,79 @@ explicit secondary index, both FK `onDelete: Cascade` behaviors) — no schema o
 design-level surprises, only the two module-boundary/type-naming judgment calls
 recorded above.
 
+### Milestone 16
+
+- **A dedicated `notifications` BullMQ queue, not literally reusing `media`'s** —
+  `docs/ARCHITECTURE.md` risk #10 says notification creation is "enqueued via BullMQ
+  (same worker as media)." Read as "the same in-process-worker _pattern_
+  `MediaProcessor` established," not "the literal same named queue" — mixing
+  unrelated job payload shapes (`MediaProcessingJob` vs. `NotificationJob`) into one
+  queue would be an odd, unforced coupling with no actual benefit; BullMQ's own
+  convention is one queue per job type, and every other BullMQ consumer in this
+  codebase (just `MediaModule` so far) already registers its own queue by name.
+- **`NotificationsService.enqueueNotification` centrally guards against
+  self-notification, rather than each producer checking its own case** — a single
+  source of truth (`if (recipientId === actorId) return`) is harder to forget than
+  three separate checks in `LikesService`/`CommentsService`/`FollowsService`, and the
+  self-follow case is already blocked earlier by `ConflictException` anyway, so this
+  guard is pure defense-in-depth for that one producer specifically.
+- **`like`/`follow` skip enqueuing on an idempotent repeat call; `createComment`
+  never needs to** — `like`/`follow`'s existing idempotent-`upsert` convention means a
+  repeat `PUT` is a legitimate, expected no-op call; enqueuing a notification on every
+  repeat would spam the recipient with duplicates for something that didn't actually
+  change. Checked via a `findUnique`/`isFollowing` existence query _before_ the
+  `upsert`, one extra read each. `createComment` has no equivalent repeat-call
+  concept — every `POST` creates a genuinely new row — so it enqueues unconditionally,
+  relying on `enqueueNotification`'s self-notification guard alone.
+- **`NotificationsProcessor` does no existence check on `recipientId`/`actorId`/
+  `postId`/`commentId` before writing** — the one domain-service pattern this
+  milestone deliberately does _not_ copy from `LikesService`/`CommentsService`/
+  `SavedPostsService`'s `findActivePost` precedent. Every id reaching the processor
+  was already validated by whichever producer enqueued the job (the like/comment/
+  follow itself couldn't have succeeded against a nonexistent post/user), so a second
+  check here would be genuinely redundant, not just a different flavor of the same
+  trade-off — this was `docs/PROGRESS.md`'s own Milestone 15 Next-Milestone note
+  flagging it as a decision to make deliberately rather than copy reflexively, and
+  the deliberate decision is: don't.
+- **`actor`/`post`/`comment` all reuse or near-reuse existing shapes rather than
+  inventing new ones** — `actor` reuses `postAuthorSchema` verbatim (its third real
+  consumer), `post` reuses `postSummarySchema` verbatim (the same minimal grid-tile
+  shape already proven sufficient to link to and preview a post), and only `comment`
+  (a bare `{ id, body }`) is genuinely new, since no existing type was ever that
+  minimal. Consistent with this codebase's recurring "reuse when the shape is
+  genuinely identical" threshold (Milestone 13's `FollowListResponse` reuse being the
+  clearest precedent).
+- **Opening the notifications screen marks everything read as a side effect of the
+  page load itself, with no separate per-notification "mark read" UI control** —
+  `docs/FEATURES.md` #16 states this explicitly ("marking as read happens on opening
+  the notifications screen"), so there was no design choice to make here, only an
+  implementation one: fetch the list first, then call `markRead()`, so the same
+  render that triggers the mark-read still shows each notification's real pre-open
+  state rather than everything already looking read the moment the page appears.
+- **The web/mobile unread badge lives only on the main authenticated landing screen
+  (`/home` on web, the Home tab on mobile), not on every page** — neither platform has
+  a shared persistent layout/chrome wrapping every authenticated page (each page
+  builds its own inline header independently, the standing convention since
+  Milestone 6), so adding the badge everywhere would mean duplicating the same
+  polling component across every single page for marginal benefit; the main landing
+  screen is where every session starts, making it the one unambiguous place a badge
+  needs to exist at all for this MVP.
+- **Mobile's `(tabs)/notifications.tsx` is a new auto-registered tab (no `tabBarBadge`
+  count on the tab bar itself)** — `(tabs)/_layout.tsx` has no explicit `<Tabs.Screen>`
+  children today (tabs are auto-generated from files), and wiring a numeric
+  `tabBarBadge` would require converting every existing auto-tab to an explicit one
+  just to add this one option — a bigger structural change than this milestone calls
+  for. The unread count is visible on the Home tab's own header instead (see above),
+  which was judged sufficient for the MVP.
+
+None of Milestone 16's deviations touch `docs/ARCHITECTURE.md`'s core design;
+`Notification` matches `docs/DATABASE.md` §3.10 in every respect except the two FK
+`onDelete` behaviors now spelled out explicitly (both already the correct, expected
+choice — the same "filling in detail the original section left implicit" pattern
+Milestone 14's `Comment` FKs already established), and the poll-based, no-realtime-
+transport design was never in question — `docs/ARCHITECTURE.md`'s own non-goals
+section already ruled out WebSocket/SSE for this MVP.
+
 ---
 
 ## Bugs Found and Fixed
@@ -3393,6 +3709,41 @@ deploy`. Worth remembering for every future `prisma migrate diff`
     a fix. Nothing in this milestone's own `save-button.spec.tsx`/`saved-posts.spec.tsx`
     was involved in any occurrence.
 
+### Milestone 16
+
+50. **Three existing spec files broke the moment the new `notificationsService`
+    constructor dependency landed in `LikesService`/`CommentsService`/
+    `FollowsService`, the same recurring class of break Milestones 11–15 each hit at
+    least once when a shared dependency grows a new constructor argument.**
+    `likes.service.spec.ts` and `comments.service.spec.ts` both crashed outright with
+    `TypeError: Cannot read properties of undefined (reading 'enqueueNotification')`
+    — straightforward, loud, and immediately diagnosable. `follows.service.spec.ts`
+    was the more interesting case: it didn't crash at all, but for the wrong reason —
+    its `prisma.follow.findUnique` mock had no default return value, so `await
+undefined` resolved to `undefined`, and `isFollowing`'s `return edge !== null`
+    evaluated to `true` by default, silently routing the "upserts the edge, idempotent
+    by construction" test around the new notification code path entirely rather than
+    actually exercising it. This is the same general lesson bug #44 (Milestone 14)
+    already drew in a different shape: a test can keep passing for a reason that has
+    nothing to do with what it claims to verify, and a default mock's accidental
+    behavior is just as capable of masking that as a missing-role-name query is.
+    Fixed by adding a `notificationsService` mock (a plain `jest.fn()`-backed object)
+    to all three `createDeps()` helpers, giving `follows.service.spec.ts`'s existing
+    tests an explicit `prisma.follow.findUnique.mockResolvedValue(null)` instead of
+    relying on the mock's undefined default, and adding new tests that directly assert
+    `enqueueNotification`'s call arguments on a genuine new like/follow/comment and its
+    absence on a repeat like/follow.
+51. **`notification-badge.tsx`'s first draft used an empty `.catch(() => {})` to
+    silently swallow a failed poll, which ESLint's `no-empty-function` rule flagged as
+    an error, not a warning.** A reasonable rule in general (an empty function is
+    almost always a mistake or a placeholder someone forgot to fill in) that happened
+    to collide with a genuinely-intentional "ignore this failure" case. Fixed by
+    switching to an explicit `try`/`catch` block with a one-line comment explaining
+    why the catch body is intentionally empty, the same shape this codebase already
+    uses wherever a fire-and-forget call's failure is meant to be silently ignored —
+    not a rule exception, just a different, equally-valid way to express the same
+    intent that this particular lint rule doesn't flag.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -3713,7 +4064,16 @@ doing its own post-existence check rather than depending on another domain modul
 removing `toPostResponse`'s now-unused `isViewerAuthenticated` parameter rather than
 leaving it in place, and mobile's `profile/saved.tsx` wiring up real delete support
 instead of a no-op) are equally each decided and recorded above with rationale, not
-left open. Everything else recorded in
+left open. Milestone 16's seven deviations (a dedicated `notifications` BullMQ queue
+rather than literally reusing `media`'s, centralizing the self-notification guard
+inside `NotificationsService` rather than in each producer, `like`/`follow` skipping
+the notification on an idempotent repeat call while `createComment` never needs to,
+`NotificationsProcessor` deliberately doing no existence check unlike every other
+domain service's `findActivePost` precedent, reusing `postAuthorSchema`/
+`postSummarySchema` for `actor`/`post` rather than new types, the unread badge living
+only on each platform's main landing screen rather than a shared layout, and mobile's
+new tab having no `tabBarBadge` count) are equally each decided and recorded above
+with rationale, not left open. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -3724,58 +4084,56 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 16 — Notifications**: per `docs/IMPLEMENTATION_PLAN.md`, `apps/api`'s
-ninth domain module, and the first milestone to actually build the `Notification`
-pipeline that Milestones 13/14 both explicitly deferred rather than implementing as a
-side effect of a narrower-scoped feature. This is the biggest milestone since
-Milestone 9's media pipeline: a new table, a BullMQ producer/consumer pair, and real
-list/unread-count/mark-read UI on both platforms.
+**Milestone 17 — User Search**: per `docs/IMPLEMENTATION_PLAN.md`, a comparatively
+small milestone after Milestone 16's size — one new read endpoint, one Postgres
+extension, and a debounced search UI on both platforms. The first milestone to enable
+`pg_trgm` (`docs/DATABASE.md` §5 — deliberately deferred until now rather than
+enabled speculatively back in Milestone 2, per that section's own deviation note).
 
-1. Schema: `Notification` (`docs/DATABASE.md` §3.10 — `recipientId`/`actorId`
-   (nullable, for future system notifications) FKs, `type` enum
-   (`FOLLOW`/`LIKE`/`COMMENT`), nullable `postId`/`commentId` FKs both
-   `onDelete: Cascade`, `isRead`, `createdAt`; index on
-   `(recipientId, isRead, createdAt DESC)` for the list/badge query) — a new
-   migration. Check whether this table was already created as part of Milestone 13's
-   deferral note before assuming it doesn't exist yet.
-2. Wire producers: liking a post, commenting on a post, and following a user each
-   enqueue a notification-creation job (BullMQ, the same queue infrastructure
-   Milestone 9's media pipeline already established) — **except self-actions** (liking/
-   commenting on your own post) must not notify yourself, the same "who I follow and
-   myself are disjoint by construction" discipline `GET /feed` already applies, just
-   enforced explicitly here since nothing else makes it automatic for notifications.
-   A consumer turns each job into a real `Notification` row.
-3. API (`docs/API.md` §12): list (paginated, newest-first — the standard convention
-   every other list but comments uses), unread count, mark-read.
-4. Web + mobile: a notifications UI with a polling interval for the unread badge count
-   (no WebSocket/SSE infrastructure exists in this codebase yet, and
-   `docs/ARCHITECTURE.md` doesn't call for adding one here — polling is explicitly
-   the documented approach).
-5. **Tests**: an integration test that liking/commenting/following another user
-   produces the expected notification row (via the job queue, awaited in test mode —
-   check how Milestone 9's media-processing tests awaited BullMQ jobs and reuse that
-   pattern rather than inventing a new one), and that self-actions produce none;
-   Playwright covers seeing a notification after another test user's action
-   (API-seeded setup, not two real concurrent browser sessions, per
-   `docs/IMPLEMENTATION_PLAN.md`'s own note).
+1. Enable the `pg_trgm` extension and add a GIN trigram index on `User.username` and
+   `User.fullName` (`CREATE INDEX ... USING gin (username gin_trgm_ops)`,
+   `docs/DATABASE.md` §5/§6) — in the same migration that first needs it, not a
+   separate one.
+2. API (`docs/API.md` §11): `GET /search/users?q=` — optional auth, paginated,
+   minimum 2 characters, ranked by `pg_trgm`'s `similarity()` against both columns
+   (`docs/DATABASE.md` §6's exact query pattern: `WHERE username % :query OR
+full_name % :query ORDER BY similarity(username, :query) DESC`). Decide the
+   response shape before assuming one — likely the same minimal list-item shape
+   `FollowListItem` already is (`{ id, username, fullName, avatarUrl,
+isFollowedByMe }`), reused verbatim rather than a new type, continuing this
+   codebase's established "reuse when the shape is genuinely identical" threshold
+   (Milestone 13's likers-list decision, reaffirmed differently in Milestone 15 for
+   `SavedPostsResponse` — read both rationales before deciding which applies here).
+3. Web + mobile: a search UI with debounced input (the first debounced input in this
+   codebase — no existing pattern to copy from; pick a reasonable debounce interval,
+   e.g. 300ms, and document the choice) showing ranked results as the user types,
+   linking each result to that user's profile.
+4. **Tests**: integration tests for ranking/matching behavior on seeded usernames
+   (exact match ranks above a partial/fuzzy match, below the 2-character minimum
+   returns a validation error, no results for a query matching nothing) — against the
+   real Dockerized Postgres, matching every milestone's testing discipline; decide
+   whether a web-e2e/mobile test is warranted for this one (`docs/IMPLEMENTATION_PLAN.md`
+   doesn't explicitly call for a Playwright test the way Milestones 13/14/15/16 each
+   did, only "integration tests for ranking/matching behavior" — confirm this reading
+   before skipping UI-level coverage entirely).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 16 section in
-full, `docs/DATABASE.md` §3.10 (`Notification`), and `docs/API.md` §12. Decide early
-whether `NotificationsModule` needs its own post/comment/user-existence checks or can
-reuse the producer side's already-validated IDs (the job is only ever enqueued after
-`LikesService`/`CommentsService`/`FollowsService` have already confirmed the target
-exists, so a second existence check inside the consumer may be genuinely redundant
-here, unlike every prior milestone's `findActivePost` duplication — worth deciding
-deliberately rather than copying the pattern reflexively). The `/auth/register`
-throttle has comfortable headroom (roughly 29/40 used — 26 before Milestone 15, 3 more
-registered by `saved-posts.spec.ts`); keep applying the standing share-via-`beforeAll`
-discipline regardless. For any single-file `apps/web-e2e` Playwright run, use
-`--grep "<name>"` placed **after** the trailing `--` together with `--project=chromium`
-(e.g. `nx run web-e2e:e2e -- --grep "name" --project=chromium`), **never**
-`--testPathPatterns` and **never** `--grep=X` before a separate trailing `--` block —
-both of those silently either run the whole suite or drop the filter, confirmed twice
-now (Milestones 14 and 15); the `-- --grep ... --project=...` combined form is the
-only one confirmed reliable. If running the full `apps/web-e2e` suite twice in a row
-against the same long-lived `api:serve` process, expect the workspace-wide 100
-req/min/IP throttle to trip on the second run — restart `api:serve` between full-suite
-re-runs to reset its in-memory counter, the same standing Milestone 13 workaround.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 17 section,
+`docs/DATABASE.md` §5 (`pg_trgm`) and §6's "User search" row, and `docs/API.md` §11.
+The `/auth/register` throttle has comfortable headroom (roughly 31/40 used — 29
+before Milestone 16, 2 more registered by `notifications.spec.ts`); keep applying the
+standing share-via-`beforeAll` discipline regardless. For any single-file
+`apps/web-e2e` Playwright run, use `--grep "<name>"` placed **after** the trailing
+`--` together with `--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name"
+--project=chromium`), **never** `--testPathPatterns` and **never** `--grep=X` before
+a separate trailing `--` block — both of those silently either run the whole suite or
+drop the filter, confirmed three times now (Milestones 14, 15, and 16); the `--
+--grep ... --project=...` combined form is the only one confirmed reliable. If
+running the full `apps/web-e2e` suite twice in a row against the same long-lived
+`api:serve` process, expect the workspace-wide 100 req/min/IP throttle to trip on the
+second run — restart `api:serve` between full-suite re-runs to reset its in-memory
+counter, the same standing Milestone 13 workaround. If `apps/api-e2e` needs to run
+while port 3000 is occupied by something unrelated to this repo, both
+`global-setup.ts` and `test-setup.ts` already read `PORT`/`HOST` from the
+environment — prefix the command with `PORT=3100` (or any free port) rather than
+touching whatever else is bound to 3000, the workaround this milestone's own
+validation used.

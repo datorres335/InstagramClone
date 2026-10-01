@@ -42,6 +42,9 @@ type _DeleteCommentRoute =
 type _SaveRoute = paths['/api/v1/posts/{postId}/save']['put'];
 type _UnsaveRoute = paths['/api/v1/posts/{postId}/save']['delete'];
 type _MeSavedRoute = paths['/api/v1/me/saved']['get'];
+type _NotificationsRoute = paths['/api/v1/notifications']['get'];
+type _UnreadCountRoute = paths['/api/v1/notifications/unread-count']['get'];
+type _MarkReadRoute = paths['/api/v1/notifications/mark-read']['post'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

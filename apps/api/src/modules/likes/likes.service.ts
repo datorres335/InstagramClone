@@ -13,6 +13,7 @@ import type {
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MediaService } from '../media/media.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface LikeState {
   likesCount: number;
@@ -24,16 +25,37 @@ export class LikesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  /** `PUT /posts/:postId/like` (docs/API.md §8) — idempotent, mirrors `Follow`'s upsert convention exactly. */
+  /**
+   * `PUT /posts/:postId/like` (docs/API.md §8) — idempotent, mirrors
+   * `Follow`'s upsert convention exactly. The notification is only enqueued
+   * on a genuine new like (checked before the upsert), not on every repeat
+   * idempotent call — otherwise re-liking a post you already liked would
+   * spam the post's author with duplicate notifications.
+   */
   async like(userId: string, postId: string): Promise<void> {
-    await this.findActivePost(postId);
+    const post = await this.findActivePost(postId);
+    const alreadyLiked = await this.prisma.like.findUnique({
+      where: { userId_postId: { userId, postId } },
+      select: { userId: true },
+    });
+
     await this.prisma.like.upsert({
       where: { userId_postId: { userId, postId } },
       create: { userId, postId },
       update: {},
     });
+
+    if (!alreadyLiked) {
+      await this.notificationsService.enqueueNotification({
+        recipientId: post.authorId,
+        actorId: userId,
+        type: 'LIKE',
+        postId,
+      });
+    }
   }
 
   /** `DELETE /posts/:postId/like` (docs/API.md §8) — idempotent either way. */
@@ -151,20 +173,24 @@ export class LikesService {
     return { data, meta: { nextCursor } };
   }
 
-  private async findActivePost(postId: string): Promise<void> {
+  private async findActivePost(
+    postId: string,
+  ): Promise<{ id: string; authorId: string }> {
     // Small, self-contained existence check rather than a `PostsModule`
     // dependency — the same "duplicate a tiny lookup over growing the
     // dependency graph" trade-off `FollowsService`/`UsersService` already
     // make for their own `findActiveUserByUsername` copies. `PostsModule`
     // depends on `LikesModule` (for `likesCount`/`isLikedByMe`), so the
-    // reverse dependency would be circular anyway.
+    // reverse dependency would be circular anyway. Now also returns
+    // `authorId` (Milestone 16) — the like notification's recipient.
     const post = await this.prisma.post.findFirst({
       where: { id: postId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, authorId: true },
     });
     if (!post) {
       throw new NotFoundException('Post not found.');
     }
+    return post;
   }
 
   private decodeCursorOrThrow(cursor: string | undefined) {

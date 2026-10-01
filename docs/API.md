@@ -320,16 +320,39 @@ deferral; `docs/FEATURES.md` #13 never describes one.
 | `GET /search/users?q=` | optional | `pg_trgm`-backed similarity search on username/fullName, paginated, min 2 chars                                |
 | `GET /explore`         | required | Paginated posts from non-followed accounts, ranked by a simple recency+engagement heuristic (`DATABASE.md` §6) |
 
-## 12. Notifications
+## 12. Notifications (implemented Milestone 16)
 
 | Method & path                     | Auth     | Notes                                                                                                 |
 | --------------------------------- | -------- | ----------------------------------------------------------------------------------------------------- |
 | `GET /notifications`              | required | Paginated, newest first; each item includes `type`, `actor`, and the related `post`/`comment` summary |
 | `GET /notifications/unread-count` | required | Cheap badge-count endpoint                                                                            |
-| `POST /notifications/mark-read`   | required | Body `{ notificationIds?: string[] }` — omit to mark all as read                                      |
+| `POST /notifications/mark-read`   | required | Body `{ notificationIds?: string[] }` — omit to mark all as read; `204`                               |
 
-MVP is poll-based (clients refetch `/notifications/unread-count` periodically); no
-WebSocket/SSE transport (`ARCHITECTURE.md` non-goals).
+MVP is poll-based (clients refetch `/notifications/unread-count` every 30s); no
+WebSocket/SSE transport (`ARCHITECTURE.md` non-goals). Every route is required-auth
+only — the same "no anonymous or other-viewer case exists" reasoning `GET /me/saved`
+already established (§10): a notification list only ever means "my own," so there's no
+optional-auth variant to support. `NotificationResponse` is `{ id, type, actor, post,
+comment, isRead, createdAt }` — `actor` reuses `postAuthorSchema`
+(`packages/validation/src/lib/post.ts`, its third real consumer after
+`PostResponse.author`/`CommentResponse.author`), `post` reuses `postSummarySchema`
+verbatim (the same minimal grid-tile shape, enough to link to and preview the related
+post), and `comment` is a minimal `{ id, body }` object. Both `post` and `comment` are
+nullable: a `FOLLOW` notification has neither, a `LIKE` has only `post`, a `COMMENT`
+has both. Notifications are generated asynchronously via BullMQ (a dedicated
+`notifications` queue, the same in-process-worker pattern `MediaProcessor` established
+in Milestone 9) enqueued by `LikesService.like`/`CommentsService.createComment`/
+`FollowsService.follow` after their own action succeeds — never written synchronously
+in the request path (`ARCHITECTURE.md` risk #10). `NotificationsService
+.enqueueNotification` centrally guards against self-notification (liking/commenting on
+your own post never notifies anyone), and `like`/`follow` additionally skip enqueuing
+entirely on an idempotent repeat call (checked via an existence query before their
+`upsert`) so re-liking/re-following something you already liked/followed doesn't spam
+duplicate notifications; `createComment` always enqueues, since every comment is a
+genuinely new row. Opening the web/mobile notifications screen marks every
+notification as read as a side effect (`docs/FEATURES.md` #16) — there is no separate
+per-notification "mark read" UI control in the MVP, only the bulk
+`POST /notifications/mark-read` call the screen makes on load.
 
 ## 13. Account Settings
 

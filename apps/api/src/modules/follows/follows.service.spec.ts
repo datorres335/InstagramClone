@@ -29,8 +29,15 @@ function createDeps() {
   const mediaService = {
     resolveAvatarUrl: jest.fn().mockReturnValue(null),
   };
-  const service = new FollowsService(prisma as never, mediaService as never);
-  return { service, prisma, mediaService };
+  const notificationsService = {
+    enqueueNotification: jest.fn(),
+  };
+  const service = new FollowsService(
+    prisma as never,
+    mediaService as never,
+    notificationsService as never,
+  );
+  return { service, prisma, mediaService, notificationsService };
 }
 
 describe('FollowsService', () => {
@@ -38,6 +45,7 @@ describe('FollowsService', () => {
     it('upserts the edge, idempotent by construction', async () => {
       const { service, prisma } = createDeps();
       prisma.user.findFirst.mockResolvedValue(fakeTarget);
+      prisma.follow.findUnique.mockResolvedValue(null);
 
       await service.follow('user-1', 'bob');
 
@@ -70,6 +78,30 @@ describe('FollowsService', () => {
       await expect(service.follow('user-1', 'nobody')).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+
+    it('enqueues a FOLLOW notification to the target on a genuine new follow', async () => {
+      const { service, prisma, notificationsService } = createDeps();
+      prisma.user.findFirst.mockResolvedValue(fakeTarget);
+      prisma.follow.findUnique.mockResolvedValue(null);
+
+      await service.follow('user-1', 'bob');
+
+      expect(notificationsService.enqueueNotification).toHaveBeenCalledWith({
+        recipientId: 'user-2',
+        actorId: 'user-1',
+        type: 'FOLLOW',
+      });
+    });
+
+    it('does not enqueue a notification on a repeat follow', async () => {
+      const { service, prisma, notificationsService } = createDeps();
+      prisma.user.findFirst.mockResolvedValue(fakeTarget);
+      prisma.follow.findUnique.mockResolvedValue({ followerId: 'user-1' });
+
+      await service.follow('user-1', 'bob');
+
+      expect(notificationsService.enqueueNotification).not.toHaveBeenCalled();
     });
   });
 

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
+import { NotificationBadge } from '../notification-badge';
 import { logoutAction } from './actions';
 import { FeedList } from './feed-list';
 
@@ -20,13 +21,17 @@ export default async function HomePage() {
   const user = await apiClient.auth.session();
   if (!user) redirect('/login');
 
-  const feed = await apiClient.posts.getFeed();
+  const [feed, unreadCount] = await Promise.all([
+    apiClient.posts.getFeed(),
+    apiClient.notifications.getUnreadCount(),
+  ]);
 
   return (
     <main>
       <h1>Welcome, {user.username}</h1>
       <Link href={`/${user.username}`}>View profile</Link>
       <Link href="/posts/new">New post</Link>
+      <NotificationBadge initialCount={unreadCount.count} />
       <form action={logoutAction}>
         <button type="submit">Log out</button>
       </form>

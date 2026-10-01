@@ -14,6 +14,7 @@ jest.mock('../lib/api-client', () => ({
   apiClient: {
     posts: { getFeed: jest.fn(), remove: jest.fn() },
     likes: { like: jest.fn(), unlike: jest.fn() },
+    notifications: { getUnreadCount: jest.fn() },
   },
 }));
 jest.mock('../lib/auth-context', () => ({
@@ -66,6 +67,9 @@ describe('HomeScreen', () => {
       setUser: jest.fn(),
       logout: jest.fn(),
     });
+    jest
+      .mocked(apiClient.notifications.getUnreadCount)
+      .mockResolvedValue({ count: 0 });
   });
 
   it('greets the logged-in user by username', async () => {

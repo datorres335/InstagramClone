@@ -4,6 +4,10 @@ import { createFollowsClient, type FollowsClient } from './follows-client';
 import { HttpClient, type HttpClientConfig } from './http-client';
 import { createLikesClient, type LikesClient } from './likes-client';
 import { createMediaClient, type MediaClient } from './media-client';
+import {
+  createNotificationsClient,
+  type NotificationsClient,
+} from './notifications-client';
 import { createPostsClient, type PostsClient } from './posts-client';
 import {
   createSavedPostsClient,
@@ -20,6 +24,7 @@ export interface ApiClient {
   likes: LikesClient;
   comments: CommentsClient;
   savedPosts: SavedPostsClient;
+  notifications: NotificationsClient;
 }
 
 /**
@@ -43,5 +48,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
     likes: createLikesClient(http),
     comments: createCommentsClient(http),
     savedPosts: createSavedPostsClient(http),
+    notifications: createNotificationsClient(http),
   };
 }

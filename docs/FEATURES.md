@@ -211,7 +211,7 @@ referenced to `DATABASE.md` / `API.md`).
   browsing, video content.
 - Entities/endpoints: `GET /explore` (`API.md` §11).
 
-### 16. Notifications
+### 16. Notifications (implemented Milestone 16)
 
 - In-app notification list for follows, likes, and comments received, with an unread
   badge count.

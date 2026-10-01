@@ -11,6 +11,7 @@ import {
 
 import type { PostResponse } from '@instagram-clone/validation';
 
+import { NotificationBadge } from '../../components/notification-badge';
 import { PostCard } from '../../components/post-card';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
@@ -41,14 +42,19 @@ export default function HomeScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const loadFirstPage = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const feed = await apiClient.posts.getFeed();
+      const [feed, unread] = await Promise.all([
+        apiClient.posts.getFeed(),
+        apiClient.notifications.getUnreadCount(),
+      ]);
       setPosts(feed.data);
       setNextCursor(feed.meta.nextCursor);
+      setUnreadCount(unread.count);
     } catch (caught) {
       setError(authErrorMessage(caught));
     } finally {
@@ -113,6 +119,7 @@ export default function HomeScreen() {
             Welcome, {user?.username}
           </Text>
           <Link href="/post/new">New post</Link>
+          <NotificationBadge initialCount={unreadCount} />
           <Pressable
             style={styles.button}
             onPress={handleLogout}

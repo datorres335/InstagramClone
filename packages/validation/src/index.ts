@@ -7,3 +7,4 @@ export * from './lib/media';
 export * from './lib/follow';
 export * from './lib/comment';
 export * from './lib/saved-post';
+export * from './lib/notification';

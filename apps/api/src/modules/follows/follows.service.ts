@@ -15,6 +15,7 @@ import type {
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MediaService } from '../media/media.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type UserWithAvatar = User & { avatarMedia: Media | null };
 
@@ -23,14 +24,23 @@ export class FollowsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  /** `PUT /users/:username/follow` (docs/API.md §5) — idempotent, `409` on self-follow. */
+  /**
+   * `PUT /users/:username/follow` (docs/API.md §5) — idempotent, `409` on
+   * self-follow (so there's no self-notification risk to separately guard
+   * against here). The notification is only enqueued on a genuine new
+   * follow (checked before the upsert via `isFollowing`), not on every
+   * repeat idempotent call — the same "no spam on repeat" discipline
+   * `LikesService.like` applies.
+   */
   async follow(followerId: string, username: string): Promise<void> {
     const target = await this.findActiveUserByUsername(username);
     if (target.id === followerId) {
       throw new ConflictException('You cannot follow yourself.');
     }
+    const alreadyFollowing = await this.isFollowing(followerId, target.id);
 
     await this.prisma.follow.upsert({
       where: {
@@ -39,6 +49,14 @@ export class FollowsService {
       create: { followerId, followingId: target.id },
       update: {},
     });
+
+    if (!alreadyFollowing) {
+      await this.notificationsService.enqueueNotification({
+        recipientId: target.id,
+        actorId: followerId,
+        type: 'FOLLOW',
+      });
+    }
   }
 
   /** `DELETE /users/:username/follow` (docs/API.md §5) — idempotent either way. */

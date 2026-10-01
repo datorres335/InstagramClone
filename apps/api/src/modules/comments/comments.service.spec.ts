@@ -43,15 +43,25 @@ function createDeps() {
   const storage = {
     getPublicUrl: jest.fn((key: string) => `http://minio.test/${key}`),
   };
-  const service = new CommentsService(prisma as never, storage as never);
-  return { service, prisma, storage };
+  const notificationsService = {
+    enqueueNotification: jest.fn(),
+  };
+  const service = new CommentsService(
+    prisma as never,
+    storage as never,
+    notificationsService as never,
+  );
+  return { service, prisma, storage, notificationsService };
 }
 
 describe('CommentsService', () => {
   describe('createComment', () => {
     it('creates a comment on an existing post', async () => {
       const { service, prisma } = createDeps();
-      prisma.post.findFirst.mockResolvedValue({ id: 'post-1' });
+      prisma.post.findFirst.mockResolvedValue({
+        id: 'post-1',
+        authorId: 'user-1',
+      });
       prisma.comment.create.mockResolvedValue(fakeCommentRow());
 
       const result = await service.createComment('user-2', 'post-1', {
@@ -74,6 +84,25 @@ describe('CommentsService', () => {
         service.createComment('user-2', 'missing', { body: 'Nice!' }),
       ).rejects.toBeInstanceOf(NotFoundException);
       expect(prisma.comment.create).not.toHaveBeenCalled();
+    });
+
+    it('enqueues a COMMENT notification to the post author unconditionally (every comment is genuinely new)', async () => {
+      const { service, prisma, notificationsService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue({
+        id: 'post-1',
+        authorId: 'user-1',
+      });
+      prisma.comment.create.mockResolvedValue(fakeCommentRow());
+
+      await service.createComment('user-2', 'post-1', { body: 'Nice!' });
+
+      expect(notificationsService.enqueueNotification).toHaveBeenCalledWith({
+        recipientId: 'user-1',
+        actorId: 'user-2',
+        type: 'COMMENT',
+        postId: 'post-1',
+        commentId: 'comment-1',
+      });
     });
   });
 

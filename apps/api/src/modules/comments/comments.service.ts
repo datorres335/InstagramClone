@@ -15,6 +15,7 @@ import type {
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../../storage/storage.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { toCommentResponse } from './comment-response.mapper';
 
 @Injectable()
@@ -22,19 +23,36 @@ export class CommentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
-  /** `POST /posts/:postId/comments` (docs/API.md §9) — flat only; the body never accepts a `parentCommentId`. */
+  /**
+   * `POST /posts/:postId/comments` (docs/API.md §9) — flat only; the body
+   * never accepts a `parentCommentId`. Every call creates a genuinely new
+   * row (unlike `like`/`follow`, there's no idempotent-repeat case to guard
+   * against), so the notification is enqueued unconditionally —
+   * `NotificationsService.enqueueNotification` itself still skips it if the
+   * commenter is the post's own author.
+   */
   async createComment(
     authorId: string,
     postId: string,
     input: CreateCommentInput,
   ): Promise<CommentResponse> {
-    await this.findActivePost(postId);
+    const post = await this.findActivePost(postId);
     const comment = await this.prisma.comment.create({
       data: { postId, authorId, body: input.body },
       include: { author: { include: { avatarMedia: true } } },
     });
+
+    await this.notificationsService.enqueueNotification({
+      recipientId: post.authorId,
+      actorId: authorId,
+      type: 'COMMENT',
+      postId,
+      commentId: comment.id,
+    });
+
     return toCommentResponse(comment, this.storage);
   }
 
@@ -121,19 +139,23 @@ export class CommentsService {
     );
   }
 
-  private async findActivePost(postId: string): Promise<void> {
+  private async findActivePost(
+    postId: string,
+  ): Promise<{ id: string; authorId: string }> {
     // Small, self-contained existence check rather than a `PostsModule`
     // dependency — the same trade-off `LikesService` already makes
     // (Milestone 13) for the identical reason: `PostsModule` depends on
     // `CommentsModule` for `commentsCount`, so the reverse dependency would
-    // be circular regardless.
+    // be circular regardless. Now also returns `authorId` (Milestone 16) —
+    // the comment notification's recipient.
     const post = await this.prisma.post.findFirst({
       where: { id: postId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, authorId: true },
     });
     if (!post) {
       throw new NotFoundException('Post not found.');
     }
+    return post;
   }
 
   private decodeCursorOrThrow(cursor: string | undefined) {

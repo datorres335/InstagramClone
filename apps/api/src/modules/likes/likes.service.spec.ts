@@ -18,21 +18,33 @@ function createDeps() {
       deleteMany: jest.fn(),
       groupBy: jest.fn(),
       findMany: jest.fn(),
+      findUnique: jest.fn(),
     },
     follow: { findMany: jest.fn() },
   };
   const mediaService = {
     resolveAvatarUrl: jest.fn().mockReturnValue(null),
   };
-  const service = new LikesService(prisma as never, mediaService as never);
-  return { service, prisma, mediaService };
+  const notificationsService = {
+    enqueueNotification: jest.fn(),
+  };
+  const service = new LikesService(
+    prisma as never,
+    mediaService as never,
+    notificationsService as never,
+  );
+  return { service, prisma, mediaService, notificationsService };
 }
 
 describe('LikesService', () => {
   describe('like', () => {
     it('upserts the like, idempotent by construction', async () => {
       const { service, prisma } = createDeps();
-      prisma.post.findFirst.mockResolvedValue({ id: 'post-1' });
+      prisma.post.findFirst.mockResolvedValue({
+        id: 'post-1',
+        authorId: 'author-1',
+      });
+      prisma.like.findUnique.mockResolvedValue(null);
 
       await service.like('user-1', 'post-1');
 
@@ -51,6 +63,37 @@ describe('LikesService', () => {
         NotFoundException,
       );
       expect(prisma.like.upsert).not.toHaveBeenCalled();
+    });
+
+    it('enqueues a LIKE notification to the post author on a genuine new like', async () => {
+      const { service, prisma, notificationsService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue({
+        id: 'post-1',
+        authorId: 'author-1',
+      });
+      prisma.like.findUnique.mockResolvedValue(null);
+
+      await service.like('user-1', 'post-1');
+
+      expect(notificationsService.enqueueNotification).toHaveBeenCalledWith({
+        recipientId: 'author-1',
+        actorId: 'user-1',
+        type: 'LIKE',
+        postId: 'post-1',
+      });
+    });
+
+    it('does not enqueue a notification on a repeat like', async () => {
+      const { service, prisma, notificationsService } = createDeps();
+      prisma.post.findFirst.mockResolvedValue({
+        id: 'post-1',
+        authorId: 'author-1',
+      });
+      prisma.like.findUnique.mockResolvedValue({ userId: 'user-1' });
+
+      await service.like('user-1', 'post-1');
+
+      expect(notificationsService.enqueueNotification).not.toHaveBeenCalled();
     });
   });
 

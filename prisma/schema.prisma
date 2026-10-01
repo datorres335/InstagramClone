@@ -68,6 +68,14 @@ model User {
   comments   Comment[]
   savedPosts SavedPost[]
 
+  // `notificationsReceived`: rows where this user is notified (e.g. "bob
+  // liked your post"). `notificationsSent`: rows where this user is the
+  // actor who triggered someone else's notification — not surfaced by any
+  // endpoint today, but the reverse side of `Notification.actorId` still
+  // needs a named relation on both ends.
+  notificationsReceived Notification[] @relation("NotificationRecipient")
+  notificationsSent     Notification[] @relation("NotificationActor")
+
   @@index([deletedAt])
   @@map("users")
 }
@@ -197,10 +205,11 @@ model Post {
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
 
-  media      PostMedia[]
-  likes      Like[]
-  comments   Comment[]
-  savedBy    SavedPost[]
+  media         PostMedia[]
+  likes         Like[]
+  comments      Comment[]
+  savedBy       SavedPost[]
+  notifications Notification[]
 
   // Serves "posts by this user, newest first" (profile grid, docs/DATABASE.md
   // §3.4) — a plain B-tree, not the partial `WHERE deletedAt IS NULL` index
@@ -281,6 +290,8 @@ model Comment {
   parentComment   Comment?  @relation("CommentReplies", fields: [parentCommentId], references: [id])
   replies         Comment[] @relation("CommentReplies")
 
+  notifications Notification[]
+
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz
@@ -316,4 +327,53 @@ model SavedPost {
   @@id([userId, postId])
   @@index([userId, createdAt(sort: Desc)])
   @@map("saved_posts")
+}
+
+enum NotificationType {
+  FOLLOW
+  LIKE
+  COMMENT
+}
+
+/// A single in-app notification (docs/DATABASE.md §3.10, docs/FEATURES.md
+/// #16) — generated asynchronously via a BullMQ job enqueued by the
+/// triggering action (follow/like/comment), never written synchronously in
+/// the request path (docs/ARCHITECTURE.md risk #10). Nullable `postId`/
+/// `commentId` FKs rather than a polymorphic (entityType, entityId) pair:
+/// with only three notification types in the MVP, explicit nullable FKs
+/// keep referential integrity enforced by Postgres itself — a dangling
+/// notification is structurally impossible. `recipientId`/`actorId` both FK
+/// `User`, requiring named relations on both ends since a notification
+/// references `User` twice. `actorId` is nullable (reserved for a future
+/// system notification with no actor — every type implemented in the MVP
+/// always has one) with `onDelete: SetNull`, the same "optional FK, keep
+/// the row if the referenced optional side disappears" reasoning
+/// `User.avatarMediaId` already established — unlike `recipientId`, which
+/// `onDelete: Cascade`s since a notification with no recipient is
+/// meaningless.
+model Notification {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  recipientId String @map("recipient_id") @db.Uuid
+  recipient   User   @relation("NotificationRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  actorId String? @map("actor_id") @db.Uuid
+  actor   User?   @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  type NotificationType
+
+  postId String? @map("post_id") @db.Uuid
+  post   Post?   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  commentId String?  @map("comment_id") @db.Uuid
+  comment   Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  isRead Boolean @default(false) @map("is_read")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Serves the list/badge query: "this recipient's unread (or all)
+  // notifications, newest first" (docs/DATABASE.md §3.10).
+  @@index([recipientId, isRead, createdAt(sort: Desc)])
+  @@map("notifications")
 }

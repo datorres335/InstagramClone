@@ -2,13 +2,16 @@ import { Module } from '@nestjs/common';
 
 import { AuthModule } from '../auth/auth.module';
 import { MediaModule } from '../media/media.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { FollowsController } from './follows.controller';
 import { FollowsService } from './follows.service';
 
 @Module({
   // MediaModule exports MediaService, used to resolve each list item's
-  // avatarUrl (same dependency shape as UsersModule).
-  imports: [AuthModule, MediaModule],
+  // avatarUrl (same dependency shape as UsersModule). NotificationsModule
+  // exports NotificationsService, used to enqueue the "someone followed
+  // you" notification (Milestone 16) — one-way, not circular.
+  imports: [AuthModule, MediaModule, NotificationsModule],
   controllers: [FollowsController],
   providers: [FollowsService],
   // UsersModule needs getFollowCounts/isFollowing for

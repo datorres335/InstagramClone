@@ -259,21 +259,28 @@ Unlike `Like`, the _other_ real query here is "this user's saved posts, newest f
 (ordered by `userId`, `postId`) can't serve — so an explicit secondary index on
 (`userId`, `createdAt DESC`) is needed too, index(`userId`, `createdAt DESC`).
 
-### 3.10 `Notification`
+### 3.10 `Notification` (implemented Milestone 16)
 
-| Column      | Type                              | Constraints                                                   |
-| ----------- | --------------------------------- | ------------------------------------------------------------- |
-| id          | uuid                              | PK                                                            |
-| recipientId | uuid                              | FK → `User.id`, not null                                      |
-| actorId     | uuid                              | FK → `User.id`, nullable (system notifications have no actor) |
-| type        | enum(`FOLLOW`, `LIKE`, `COMMENT`) | not null                                                      |
-| postId      | uuid                              | FK → `Post.id`, nullable, `onDelete: Cascade`                 |
-| commentId   | uuid                              | FK → `Comment.id`, nullable, `onDelete: Cascade`              |
-| isRead      | boolean                           | not null, default `false`                                     |
-| createdAt   | timestamptz                       | default `now()`                                               |
+| Column      | Type                              | Constraints                                                                        |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------- |
+| id          | uuid                              | PK                                                                                 |
+| recipientId | uuid                              | FK → `User.id`, not null, `onDelete: Cascade`                                      |
+| actorId     | uuid                              | FK → `User.id`, nullable (system notifications have no actor), `onDelete: SetNull` |
+| type        | enum(`FOLLOW`, `LIKE`, `COMMENT`) | not null                                                                           |
+| postId      | uuid                              | FK → `Post.id`, nullable, `onDelete: Cascade`                                      |
+| commentId   | uuid                              | FK → `Comment.id`, nullable, `onDelete: Cascade`                                   |
+| isRead      | boolean                           | not null, default `false`                                                          |
+| createdAt   | timestamptz                       | default `now()`                                                                    |
 
 Indexes: index(`recipientId`, `isRead`, `createdAt DESC`) — the notification list/badge
-query.
+query. `recipientId`/`actorId` both FK `User`, requiring named Prisma relations on
+both ends (`NotificationRecipient`/`NotificationActor`) since the model references
+`User` twice. `recipientId` is `onDelete: Cascade` (a notification with no recipient
+is meaningless) while `actorId` is `onDelete: SetNull` — the same "optional FK, keep
+the row if the referenced optional side disappears" reasoning `User.avatarMediaId`
+already established (Milestone 9); every notification type implemented in the MVP
+always has a real actor, so this only matters for a hard-deleted `User` row, which
+this codebase's soft-delete-only `User` model never actually produces today.
 
 Nullable `postId`/`commentId` foreign keys are used instead of a polymorphic
 `(entityType, entityId)` pair: with only three notification types in the MVP, explicit
