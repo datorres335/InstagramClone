@@ -313,12 +313,27 @@ already depends on `SavedPostsModule` one-way (for `isSavedByMe`), so hosting it
 notified about in the first place (unlike likes/comments), so this isn't even a
 deferral; `docs/FEATURES.md` #13 never describes one.
 
-## 11. Search & Explore
+## 11. Search & Explore (`GET /search/users` implemented Milestone 17)
 
 | Method & path          | Auth     | Notes                                                                                                          |
 | ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `GET /search/users?q=` | optional | `pg_trgm`-backed similarity search on username/fullName, paginated, min 2 chars                                |
+| `GET /search/users?q=` | optional | `pg_trgm`-backed similarity search on username/fullName, min 2 chars, no pagination (see below)                |
 | `GET /explore`         | required | Paginated posts from non-followed accounts, ranked by a simple recency+engagement heuristic (`DATABASE.md` §6) |
+
+`GET /search/users` reuses `FollowListResponse`/`FollowListItem` verbatim — a search
+result row is the identical "avatar/username/full name + follow affordance" shape a
+followers/following/likers list row already is, the same precedent Milestone 13
+established for the likers list. **Deliberately no `cursor` pagination** — trigram
+`similarity()` ranking has no stable, monotonic sort key to build a keyset cursor from
+the way `createdAt` serves every other list endpoint, and a capped top-`limit`
+"best matches" page is what a real username-search UI actually needs; `meta.nextCursor`
+is always `null`. The query is the exact pattern `docs/DATABASE.md` §6 specifies:
+`WHERE username % :q OR full_name % :q ORDER BY similarity(username, :q) DESC LIMIT
+:limit`, executed via raw SQL (`$queryRaw`) since `%`/`similarity()` aren't
+expressible through Prisma's query builder. `pg_trgm`'s default similarity threshold
+(0.3) is lowered to 0.1 at the database level (`docs/DATABASE.md` §5) — too strict a
+default for the documented 2-character minimum, which can fall just under 0.3 for a
+real match (e.g. `similarity('alice', 'al') = 0.2857`).
 
 ## 12. Notifications (implemented Milestone 16)
 

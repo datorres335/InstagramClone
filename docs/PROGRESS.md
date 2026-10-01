@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 16 — Notifications
+**Current Milestone:** Milestone 17 — User Search
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -139,7 +139,20 @@ additionally skip enqueuing on an idempotent repeat call so re-liking/re-followi
 doesn't spam duplicates (`createComment` always enqueues, since every comment is
 genuinely new). Both `web` and `mobile` gained a poll-based unread badge on their main
 authenticated screen and a dedicated notifications list where opening the screen
-itself marks everything read, per `docs/FEATURES.md` #16's explicit UX.
+itself marks everything read, per `docs/FEATURES.md` #16's explicit UX. Milestone 17
+adds `apps/api`'s tenth domain module, `SearchModule` — a comparatively small
+milestone after Milestone 16's size, and the first to enable `pg_trgm` (deliberately
+deferred since Milestone 2's own deviation note). A GIN trigram index on
+`User.username`/`User.fullName`, `pg_trgm.similarity_threshold` lowered from its
+default `0.3` to `0.1` at the database level (the default is too strict for the
+documented 2-character minimum — a real short-prefix match can fall just under `0.3`),
+and `GET /search/users?q=` — optional auth, ranked by `similarity()` via raw SQL
+(`$queryRaw`, the first raw query in this codebase beyond the health check), reusing
+`FollowListResponse`/`FollowListItem` verbatim rather than a new type. Deliberately no
+keyset pagination at all (`meta.nextCursor` always `null`) — trigram ranking has no
+stable sort key to build a cursor from, and a capped top-`limit` page is what a real
+username search needs. Both `web` and `mobile` gained a debounced search input
+(300ms, the first debounced input in this codebase) showing live-ranked results.
 
 ---
 
@@ -1091,6 +1104,80 @@ userId`)
 - [x] Full validation passing: `nx run-many -t lint test build` (11
       projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
       `api-e2e:e2e` (15/15 suites, 101/101 tests) + `web-e2e:e2e` (20/20,
+      Chromium, confirmed stable across two consecutive clean runs)
+
+### Milestone 17 — User Search
+
+- [x] `prisma/schema.prisma` — GIN trigram indexes on `User.username` and
+      `User.fullName` (`@@index([username(ops: raw("gin_trgm_ops"))], type:
+    Gin)`, confirming Prisma 7 supports the operator-class/index-type
+      syntax natively, no preview feature needed) — a new migration,
+      hand-placed via the same `prisma migrate diff` + `migrate deploy`
+      workaround every prior migration has used. Two statements had no
+      schema-DSL representation at all and were hand-added to the generated
+      SQL, the same way `citext` was in migration 0001: `CREATE EXTENSION
+    IF NOT EXISTS pg_trgm` and (new this milestone) a dynamic `DO $$ ...
+    ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
+      block, lowering the default `0.3` threshold so the documented
+      2-character query minimum actually returns real short-prefix matches
+      (discovered empirically: `similarity('alice', 'al') = 0.2857`, under
+      the default cutoff — see Bugs Found below)
+- [x] `apps/api/src/modules/search/` — `SearchModule`/`SearchController`/
+      `SearchService`, `apps/api`'s tenth domain module. The trigram-ranked
+      id lookup is the first raw SQL query in this codebase beyond the
+      health check (`$queryRaw`, parameterized via the tagged-template
+      form) — scoped to just that one ranked-id lookup, not the whole row,
+      so avatar/isFollowedByMe resolution stays on the ordinary Prisma
+      query builder (the same two-step "raw query for the one thing that
+      needs it, Prisma for the rest" split this service introduces as a
+      new pattern)
+- [x] One endpoint wired: `GET /search/users?q=` (optional auth, min 2
+      characters, reuses `FollowListResponse`/`FollowListItem` verbatim —
+      the Milestone 13 likers-list precedent, not Milestone 15's
+      distinct-naming one; `meta.nextCursor` always `null`, deliberately no
+      keyset pagination at all)
+- [x] `packages/validation`'s new `search.ts` (`searchUsersQuerySchema`/
+      `SearchUsersQuery`) — its own schema, not a reuse of
+      `paginationQuerySchema`, since there's no `cursor` field here at all
+- [x] `packages/api-client`'s new `search` namespace (`searchUsers`) — its
+      own `SearchUsersParams` input type, not a reuse of
+      `SearchUsersQuery` verbatim, since the client-side `limit` needs to
+      stay optional (letting the server's default apply) the way
+      `Partial<PaginationQuery>` already does for every other list method,
+      unlike `SearchUsersQuery`'s post-Zod-parse shape where `.default(20)`
+      makes it always-present
+- [x] `apps/web`: a `SearchBox` client component (the first debounced input
+      in this codebase, 300ms) on a new `/search` page, linked from
+      `/home`'s header; a `searchUsersAction` Server Action short-circuits
+      below the 2-character minimum itself rather than letting a mid-
+      keystroke validation error surface to the user
+- [x] `apps/mobile`: a new auto-registered `(tabs)/search.tsx` tab (direct
+      `apiClient` calls, the same debounce logic as web) reusing the
+      existing `FollowListItem` component for each result row
+- [x] 5 new `search.service.spec.ts` unit tests, 5 new
+      `search-client.spec.ts` cases, 5 new `search.spec.ts` validation-
+      schema tests, 1 new `openapi-contract.spec.ts` type reference
+- [x] 4 new mobile unit tests (`search-screen.spec.tsx`: below-minimum
+      no-op, debounced search firing once for the final value, empty
+      state, result rendering)
+- [x] 8 new `apps/api-e2e` integration tests (`search/search.spec.ts`) —
+      real accounts, not mocked, usernames built around a fresh random
+      token per test (not `randomRegisterInput()`'s own random usernames —
+      precise control over username content is the point): an exact match
+      ranks above a one-character-off fuzzy match, a genuine typo query
+      (not a substring of the target) still matches via trigram similarity,
+      no results for a nonsense query, `400` below the 2-character minimum
+      and for a missing query, anonymous `isFollowedByMe: null`, real
+      `isFollowedByMe` for an authenticated viewer, and a `fullName` match
+- [x] 2 new `apps/web-e2e` Playwright tests (`search.spec.ts`, Chromium) —
+      two real browser sessions (unlike `notifications.spec.ts`'s
+      API-seeded approach — search has no "another user's action triggers
+      something for me" shape to seed via a direct API call): finding and
+      navigating to a user via search, and the no-results empty state, per
+      `docs/IMPLEMENTATION_PLAN.md` M17's explicit Playwright requirement
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
+      `api-e2e:e2e` (16/16 suites, 109/109 tests) + `web-e2e:e2e` (22/22,
       Chromium, confirmed stable across two consecutive clean runs)
 
 ---
@@ -2223,6 +2310,137 @@ tutorial and the json-server tutorial, each on this same machine, each confirmed
 they are the person's own separate projects to restart whenever they next need them,
 not this repo's concern.
 
+### Milestone 17
+
+```bash
+pnpm exec prisma validate --config prisma.config.ts
+# ^ confirmed Prisma 7 accepts @@index([username(ops: raw("gin_trgm_ops"))],
+#   type: Gin) with no preview feature — validated clean on the first try.
+pnpm exec prisma migrate diff --from-config-datasource \
+  --to-schema=prisma/schema.prisma --script --config prisma.config.ts \
+  2>/dev/null > prisma/migrations/20261001220100_0009_user_search_trgm/migration.sql
+# ^ Prisma correctly generated both CREATE INDEX ... USING GIN statements
+#   on its own; only the CREATE EXTENSION line needed hand-adding (same as
+#   citext in migration 0001).
+pnpm exec prisma migrate deploy --config prisma.config.ts   # applied cleanly
+# Verified against the live schema: psql \d users — both GIN indexes with
+# gin_trgm_ops matched schema.prisma exactly.
+
+curl "http://localhost:3000/api/v1/search/users?q=al"   # against the live
+# dev server, seeded `alice` account — first attempt returned {"data":[],...},
+# not alice. Diagnosed via psql: similarity('alice', 'al') = 0.2857, under
+# pg_trgm's default 0.3 similarity_threshold, so the `%` operator's match
+# check failed even though alice is clearly the intended match for a
+# 2-character query. Confirmed the fix empirically: SET
+# pg_trgm.similarity_threshold = 0.1 in a psql session made the same query
+# return alice correctly, and a nonsense query ('zzqx') still correctly
+# matched nothing at that lower threshold — no false positives introduced.
+# Added a dynamic `ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1`
+# statement (via current_database(), not a literal name, for portability
+# across environments) to the migration file — after it had already been
+# applied once via migrate deploy, so its recorded checksum in
+# _prisma_migrations no longer matched the edited file. Since this
+# migration was authored and applied entirely within this same session
+# (never committed, never shared — not the "already applied" migration
+# CLAUDE.md's hand-editing rule is about), corrected the checksum directly
+# via UPDATE rather than treating it as a shipped-migration edit; confirmed
+# clean with `prisma migrate status` afterward. Re-tested the live
+# endpoint: alice now returns correctly, 'a' (1 char) still 400s, and a
+# true nonsense query still returns empty.
+
+pnpm exec nx run api:test --testPathPatterns=search --skip-nx-cache   # 5/5,
+# first run — every SearchService test passed immediately.
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed SearchModule/SearchController registered correctly in the
+#   real Nest boot log: GET /search/users.
+pnpm exec nx run api:test --skip-nx-cache   # 193/193, whole project
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/search/users appeared in the generated
+#   openapi.json/types on the first run.
+pnpm exec nx run api-client:test --skip-nx-cache   # 70/70 (4 new search-client.spec.ts cases)
+pnpm exec nx run api-client:build --skip-nx-cache   # clean
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache
+# ^ compiled + typechecked cleanly; new /search route appeared (static,
+#   since the page itself does no server-side data fetching — SearchBox
+#   does everything client-side).
+pnpm exec nx run web:lint --skip-nx-cache
+# ^ first run: clean except the same pre-existing, unrelated
+#   avatar-uploader.tsx warning noted since Milestone 9. (No new findings
+#   this time, unlike Milestone 16's empty-catch-function error.)
+pnpm exec nx run web:test --skip-nx-cache    # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --skip-nx-cache   # 93/93, whole project, first run
+# ^ no existing spec files needed a mock update this time — (tabs)/search.tsx
+#   is a genuinely new screen that doesn't touch any shared component
+#   another test file already mocks, unlike Milestone 16's home.spec.tsx
+#   update (new apiClient.notifications dependency added to an existing
+#   screen) or Milestone 14's post-detail.spec.tsx update.
+pnpm exec nx run mobile:lint --skip-nx-cache    # clean
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ bug #49's intermittent mobile:test-inside-run-many flake (comment-
+#   section.spec.tsx) recurred three more times in a row this milestone —
+#   the most persistent run yet, worth noting even though the diagnosis is
+#   unchanged. Ran mobile:test standalone three times immediately after:
+#   93/93 clean every time, confirming it's still exclusively a run-many-
+#   contention characteristic, never a standalone regression. A fourth
+#   run-many attempt passed cleanly (28/28) — see Bugs Found below for the
+#   updated frequency note.
+
+PORT=3100 pnpm exec nx run api-e2e:e2e --testPathPatterns=search --skip-nx-cache
+# ^ 8/8, first real run — including the fuzzy-typo-matching test, the
+#   hardest of the eight to get right empirically, passed on the first try.
+#   Used PORT=3100 (both global-setup.ts and test-setup.ts already read
+#   PORT/HOST from the environment) rather than touching port 3000, still
+#   occupied by the two other-project dev servers from Milestone 16's own
+#   validation.
+PORT=3100 pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 16/16 suites, 109/109 tests
+
+# web-e2e genuinely needs port 3000 itself (NEXT_PUBLIC_API_URL is read at
+# server-module-load time from apps/web's own env, not overridable
+# per-run) — port 3000 was already free this time (the two other-project
+# dev servers Milestone 16 stopped were never restarted in between), so no
+# new stop decision was needed here.
+nx run api:serve   # started manually on :3000
+pnpm exec nx run web-e2e:e2e -- --grep "search:" --project=chromium   # 2/2, first run
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # 22/22, clean
+# ^ restarted api:serve (fresh PID, confirmed via Get-CimInstance before
+#   killing the old one) and ran again to double-check stability:
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 16 failed this time — every failure a "toBeVisible failed" on an
+#   unrelated, pre-existing test (auth-flow/profile/follows/etc.), the same
+#   shape the Milestone 16 global-throttle-collision bug already
+#   documented, but this was the FIRST run against this particular fresh
+#   server process, not a second back-to-back run — doesn't fit that
+#   diagnosis cleanly. Re-ran immediately with no other changes: 22/22
+#   clean. Treated as a one-off transient hiccup (possibly a port-rebind/
+#   connection-pool timing issue right after restart) rather than a new
+#   bug, consistent with how this codebase has handled single, non-
+#   reproducible dev-server-adjacent flakes before (e.g. bug #46) — see
+#   Known Issues below for the honest "not fully explained" note. Restarted
+#   once more and confirmed clean a second time: 22/22.
+
+pnpm exec prettier --write apps/api-e2e/src/search/search.spec.ts
+pnpm exec prettier --write apps/web-e2e/src/search.spec.ts
+pnpm exec nx run-many -t lint test build --skip-nx-cache   # clean (after the
+# bug #49 recurrence noted above resolved on retry, same as always)
+pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}" "prisma/**/*.ts"
+# ^ only flagged apps/web/next-env.d.ts again, same pre-existing Next-
+#   generated file, unrelated.
+```
+
+Port 3000 remained free throughout this milestone's `api:serve` work (the two
+other-project dev servers Milestone 16 stopped were never restarted in between) and
+was left free afterward too.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -3052,6 +3270,80 @@ Milestone 14's `Comment` FKs already established), and the poll-based, no-realti
 transport design was never in question — `docs/ARCHITECTURE.md`'s own non-goals
 section already ruled out WebSocket/SSE for this MVP.
 
+### Milestone 17
+
+- **No keyset pagination on `GET /search/users` at all — `meta.nextCursor` is always
+  `null`** — the one real design decision this milestone needed, since
+  `docs/DATABASE.md` §6 only specified the ranking query, not how (or whether) to
+  paginate it. Trigram `similarity()` ranking has no stable, monotonic sort key the
+  way `createdAt` serves every other list endpoint; building a real keyset cursor
+  from `(similarityScore, id)` would mean hand-rolling the WHERE clause inside the
+  same raw SQL query (floating-point tie-breaking, re-computing `similarity()` in
+  both SELECT and WHERE) for a feature no real username-search UI actually needs —
+  Instagram's own included. A capped top-`limit` "best matches" page, still wrapped
+  in the standard `{ data, meta: { nextCursor } }` envelope for contract consistency
+  with every other list endpoint, was judged the right scope.
+- **`pg_trgm.similarity_threshold` lowered from its default `0.3` to `0.1` at the
+  database level** — discovered, not anticipated: the documented 2-character query
+  minimum silently returned zero results for a real match
+  (`similarity('alice', 'al') = 0.2857`, just under the default cutoff) the first
+  time the live endpoint was smoke-tested. Fixed at the database level (a dynamic
+  `ALTER DATABASE ... SET pg_trgm.similarity_threshold = 0.1` via
+  `current_database()`, not a literal name, so the statement is portable across
+  environments) rather than per-query, so `search.service.ts`'s query stays the
+  exact literal pattern `docs/DATABASE.md` §6 specifies with no threshold-tuning
+  logic mixed into application code. `0.1` was chosen empirically — low enough to
+  surface the 2-character case, confirmed (against seeded data) not to introduce
+  false positives for genuinely unrelated queries.
+- **A hand-edited migration's checksum corrected directly via `UPDATE
+_prisma_migrations`, not through `prisma migrate resolve`** — happened because the
+  threshold fix above was added to the migration file _after_ it had already been
+  applied once (discovered via the smoke test, mid-session). Since the migration was
+  authored, applied, and corrected entirely within this same session (never
+  committed, never shared with any other environment or developer), this isn't the
+  "already applied" migration `CLAUDE.md`'s hand-editing rule protects — that rule is
+  about not rewriting shipped history, not about iterating on a migration you're
+  still actively authoring before it's ever left your own worktree. `prisma migrate
+resolve` was considered and rejected: it's designed for marking a failed/pending
+  migration applied or rolled back, not for recomputing a checksum for a migration
+  that already succeeded and whose live effect already matches the edited file.
+- **`SearchService`'s trigram-ranked id lookup uses raw SQL (`$queryRaw`), rehydrated
+  via the ordinary Prisma query builder for everything else** — `%`/`similarity()`
+  have no Prisma query-builder representation at all (confirmed by `docs/DATABASE.md`
+  §6 itself specifying the query as raw SQL), so this is the first genuine use of
+  `$queryRaw` in this codebase beyond `HealthService`'s trivial `SELECT 1`. Scoped to
+  just the ranked id list, not the whole row with avatar/follow data, so the
+  avatar-resolution and `isFollowedByMe`-batching code stays identical in shape to
+  `FollowsService`/`LikesService.getLikers`'s existing Prisma-query-builder pattern —
+  the same "re-sort after an `id: { in }` fetch" trick `SavedPostsService.getSavedPosts`
+  already established for a different reason (there, preserving insertion order;
+  here, preserving rank order).
+- **`GET /search/users` reuses `FollowListResponse`/`FollowListItem` verbatim,
+  revisiting the Milestone 13 precedent rather than Milestone 15's** — two prior
+  milestones made this exact call differently for structurally-identical-but-
+  conceptually-different shapes (Milestone 13 reused `FollowListResponse` for the
+  likers list; Milestone 15 named `SavedPostsResponse` distinctly for the saved-posts
+  list, judging a feed and a saved list to be different _kinds_ of list despite
+  sharing a shape). This milestone's judgment: a search result row genuinely _is_
+  the same kind of thing a followers/following/likers row already is — "a minimal
+  user-with-follow-affordance row" — not a different concept wearing the same shape,
+  so verbatim reuse was the right call here, not a reflexive copy of whichever
+  precedent came first.
+- **`packages/api-client`'s `SearchUsersParams` is its own type, not
+  `SearchUsersQuery` reused directly** — `SearchUsersQuery` (from
+  `packages/validation`) is the _post-Zod-parse_ shape, where `.default(20)` makes
+  `limit` always present; every other list client method accepts
+  `Partial<PaginationQuery>` specifically so callers can omit `limit` and let the
+  server's own default apply. `SearchUsersParams` (`{ q: string; limit?: number }`)
+  preserves that same convention for `q`'s sibling field without force-fitting a
+  type that was never meant to represent pre-send client input in the first place.
+
+None of Milestone 17's deviations touch `docs/ARCHITECTURE.md`'s core design, and the
+schema itself matches `docs/DATABASE.md` §5/§6 in every respect except the threshold
+tuning above (an operational detail, not a design-level change) — `GET /search/users`
+works exactly the way both documents already specified, just with one empirically-
+discovered correction to make the documented 2-character minimum actually functional.
+
 ---
 
 ## Bugs Found and Fixed
@@ -3744,6 +4036,47 @@ undefined` resolved to `undefined`, and `isFollowing`'s `return edge !== null`
     not a rule exception, just a different, equally-valid way to express the same
     intent that this particular lint rule doesn't flag.
 
+### Milestone 17
+
+52. **`GET /search/users?q=al` returned zero results for the seeded `alice` account,
+    despite `al` being exactly the documented 2-character minimum and an obvious
+    intended match.** Root cause (confirmed via direct `psql`):
+    `similarity('alice', 'al') = 0.2857`, just under `pg_trgm`'s default
+    `similarity_threshold` of `0.3`, so the `%` operator's match/no-match decision in
+    `search.service.ts`'s query evaluated to false even though the ranking function
+    itself clearly considered them related. Not a bug in the query pattern
+    `docs/DATABASE.md` §6 specifies — the query is correct; the _default tuning_ of
+    the operator it depends on doesn't fit this feature's own documented minimum
+    query length. Fixed by lowering `pg_trgm.similarity_threshold` to `0.1` at the
+    database level (see Deviations above for the full reasoning and the portability
+    note on `current_database()`). Caught by manually smoke-testing the live endpoint
+    against real seeded data before writing any automated test — a good reminder that
+    "the query pattern is documented" and "the query actually returns what the
+    documentation implies it should, with this database's default configuration" are
+    two different claims, and only testing against real data catches the gap between
+    them.
+53. **Editing an already-applied migration file left `_prisma_migrations`'
+    recorded checksum stale, though `prisma migrate status`/`migrate deploy` never
+    surfaced this as an error in either direction.** Discovered by manually computing
+    the file's sha256 and comparing it to the stored value after adding the
+    threshold-fix statement (bug #52) to a migration that had already been deployed
+    earlier in the same session. Prisma's own CLI gave no warning either before or
+    after the direct `UPDATE _prisma_migrations SET checksum = ...` fix — worth
+    knowing that this specific failure mode (editing a migration file post-apply) is
+    silent in this Prisma version/config rather than loudly rejected, so it's easy to
+    miss without deliberately checking, the way this session did.
+54. **Bug #49's intermittent `mobile:test`-inside-`run-many` flake recurred three
+    more times in a row this milestone**, the most persistent run of it so far
+    (previously 2 occurrences in Milestone 14, 3 more spread across Milestone 15).
+    Standalone `mobile:test` reruns stayed clean at 93/93 across three consecutive
+    attempts immediately after, and a fourth `run-many` attempt passed cleanly —
+    consistent with the existing "`run-many`-only, never standalone" diagnosis, just
+    a higher-frequency occurrence this time with no new information about root
+    cause. Nothing in this milestone's own `search-screen.spec.tsx` was involved in
+    any occurrence (still exclusively `comment-section.spec.tsx`'s "deletes a comment
+    and removes it from the list" assertion, the same specific test every prior
+    occurrence has pointed to).
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -3966,21 +4299,37 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   correctly isolate one test, including combined with a trailing
   `-- --project=chromium`.
 - **An intermittent, unresolved `mobile:test` flake inside `nx run-many`
-  batches** (bug #47) — reproducible twice in Milestone 14, then three more
-  times in a row in Milestone 15 (still only inside `run-many` batches, still
-  never reproducible when `mobile:test` was immediately re-run standalone
-  afterward — confirmed clean at 80/80 both times it was retried standalone
-  this milestone). Every occurrence so far has been the same specific test,
+  batches** (bug #47) — reproducible twice in Milestone 14, three more times in
+  Milestone 15, and three more in a row in Milestone 17 (its most frequent
+  showing yet), still only inside `run-many` batches, still never reproducible
+  when `mobile:test` was immediately re-run standalone afterward (confirmed
+  clean across three consecutive standalone runs in Milestone 17, as in every
+  prior milestone). Every occurrence so far has been the same specific test,
   `comment-section.spec.tsx`'s "deletes a comment and removes it from the
   list" (an `expect(...).toBeNull()` assertion receiving a stale React Fiber
   node instead), which narrows the hypothesis from "any timing-sensitive
   test" to specifically a React Testing Library `queryByText`/cleanup timing
   issue under `run-many`'s parallel CPU contention — still not root-caused or
   fixed, since reproducing it in isolation (needed to actually debug it)
-  continues to fail. Treat a `mobile:test` failure inside a `run-many` batch
-  as worth an immediate standalone re-run before assuming a real regression;
-  if it starts failing standalone too, or failing on a different test, that
-  would be the signal this is no longer just `run-many` contention.
+  continues to fail, and the increased frequency in Milestone 17 didn't come
+  with any new diagnostic information. Treat a `mobile:test` failure inside a
+  `run-many` batch as worth an immediate standalone re-run before assuming a
+  real regression; if it starts failing standalone too, or failing on a
+  different test, that would be the signal this is no longer just `run-many`
+  contention.
+- **A single, non-reproducible mass `web-e2e` failure immediately after an
+  `api:serve` restart, not matching the known global-throttle-collision
+  pattern (Milestone 17)** — 16 of 22 tests failed on the very first run
+  against a freshly-restarted server process (not a second back-to-back run,
+  which is what the throttle-collision diagnosis requires), every failure a
+  generic `toBeVisible` timeout on an unrelated pre-existing test. An
+  immediate identical re-run passed 22/22 clean, and a second restart +
+  re-run was also clean. Plausibly a port-rebind or connection-pool warm-up
+  timing issue right after a fresh `api:serve` start, but this is a guess,
+  not a confirmed diagnosis — recorded honestly as unexplained rather than
+  attributed to a cause that wasn't actually verified. Only occurred once; if
+  it recurs with enough frequency to actually investigate mid-failure (rather
+  than just retrying past it), that's the next concrete step.
 - **A single, low-frequency `web-e2e` flake tied to Next dev-server
   first-compile latency** (bug #46) — `comment-post.spec.ts`'s reload-based
   persistence check timed out once, confirmed via direct database/API
@@ -4073,7 +4422,15 @@ domain service's `findActivePost` precedent, reusing `postAuthorSchema`/
 `postSummarySchema` for `actor`/`post` rather than new types, the unread badge living
 only on each platform's main landing screen rather than a shared layout, and mobile's
 new tab having no `tabBarBadge` count) are equally each decided and recorded above
-with rationale, not left open. Everything else recorded in
+with rationale, not left open. Milestone 17's six deviations (no keyset pagination on
+`GET /search/users` at all, lowering `pg_trgm.similarity_threshold` to `0.1` at the
+database level, directly correcting a hand-edited migration's checksum rather than
+using `prisma migrate resolve`, `SearchService`'s raw-SQL-for-ranking-only /
+Prisma-for-the-rest split, reusing `FollowListResponse` verbatim — revisiting
+Milestone 13's precedent rather than Milestone 15's, and `SearchUsersParams` as its
+own client-side type rather than reusing `SearchUsersQuery` directly) are equally
+each decided and recorded above with rationale, not left open. Everything else
+recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -4084,56 +4441,70 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 17 — User Search**: per `docs/IMPLEMENTATION_PLAN.md`, a comparatively
-small milestone after Milestone 16's size — one new read endpoint, one Postgres
-extension, and a debounced search UI on both platforms. The first milestone to enable
-`pg_trgm` (`docs/DATABASE.md` §5 — deliberately deferred until now rather than
-enabled speculatively back in Milestone 2, per that section's own deviation note).
+**Milestone 18 — Explore Page**: per `docs/IMPLEMENTATION_PLAN.md`, a similarly small
+milestone to Milestone 17 — one new read endpoint and an explore grid UI on both
+platforms, no new schema, no new Postgres extension. `docs/DATABASE.md` §6 already
+specifies the ranking approach ("a simple recency+engagement heuristic... computed
+with an aggregate query, not a precomputed ranking table") and flags it as a scaling
+risk, worth re-reading in full before implementing.
 
-1. Enable the `pg_trgm` extension and add a GIN trigram index on `User.username` and
-   `User.fullName` (`CREATE INDEX ... USING gin (username gin_trgm_ops)`,
-   `docs/DATABASE.md` §5/§6) — in the same migration that first needs it, not a
-   separate one.
-2. API (`docs/API.md` §11): `GET /search/users?q=` — optional auth, paginated,
-   minimum 2 characters, ranked by `pg_trgm`'s `similarity()` against both columns
-   (`docs/DATABASE.md` §6's exact query pattern: `WHERE username % :query OR
-full_name % :query ORDER BY similarity(username, :query) DESC`). Decide the
-   response shape before assuming one — likely the same minimal list-item shape
-   `FollowListItem` already is (`{ id, username, fullName, avatarUrl,
-isFollowedByMe }`), reused verbatim rather than a new type, continuing this
-   codebase's established "reuse when the shape is genuinely identical" threshold
-   (Milestone 13's likers-list decision, reaffirmed differently in Milestone 15 for
-   `SavedPostsResponse` — read both rationales before deciding which applies here).
-3. Web + mobile: a search UI with debounced input (the first debounced input in this
-   codebase — no existing pattern to copy from; pick a reasonable debounce interval,
-   e.g. 300ms, and document the choice) showing ranked results as the user types,
-   linking each result to that user's profile.
-4. **Tests**: integration tests for ranking/matching behavior on seeded usernames
-   (exact match ranks above a partial/fuzzy match, below the 2-character minimum
-   returns a validation error, no results for a query matching nothing) — against the
-   real Dockerized Postgres, matching every milestone's testing discipline; decide
-   whether a web-e2e/mobile test is warranted for this one (`docs/IMPLEMENTATION_PLAN.md`
-   doesn't explicitly call for a Playwright test the way Milestones 13/14/15/16 each
-   did, only "integration tests for ranking/matching behavior" — confirm this reading
-   before skipping UI-level coverage entirely).
+1. API (`docs/API.md` §11): `GET /explore` — required auth (unlike `GET /search/users`,
+   which is optional; `docs/API.md` §11's table already states this), paginated,
+   posts from accounts the caller does _not_ follow, ranked by recency + engagement
+   (e.g. like-count within a recent time window — `docs/FEATURES.md` #15 gives this
+   exact example). Decide the concrete heuristic formula and time window before
+   assuming one; `docs/DATABASE.md` §6 deliberately leaves this loose ("e.g.") rather
+   than fully specifying it, unlike `GET /search/users`'s exact query pattern.
+2. Decide the response shape: likely full `PostResponse` items, the same choice
+   `GET /feed` (Milestone 12) and `GET /me/saved` (Milestone 15) both made — an
+   explore grid still needs to render real post cards, not just thumbnails, once a
+   post is tapped. Confirm against `docs/FEATURES.md` #15's "grid of posts" wording
+   before assuming a thumbnail-only `PostSummary` shape instead.
+3. Pagination: unlike Milestone 17's `GET /search/users`, a recency+engagement
+   ranking (even a live-computed one) likely _does_ have a usable, if slightly
+   unconventional, keyset — decide whether `(engagementScore, createdAt, id)` or
+   similar can serve a real cursor, or whether this endpoint also ends up
+   `nextCursor`-always-`null` like search did. Don't assume either answer; the two
+   endpoints' ranking functions have different mathematical shapes (a bounded
+   similarity score in `[0,1]` vs. an unbounded, time-decaying engagement count), so
+   Milestone 17's "no stable sort key" conclusion doesn't necessarily transfer here
+   without re-deriving it for this specific heuristic.
+4. Web + mobile: an explore grid UI (`docs/FEATURES.md` #15: "a grid of posts... to
+   aid discovery") — likely similar in shape to the profile grid (`GET
+/users/:username/posts`, Milestone 8/11), reusing that rendering pattern if the
+   response shape ends up compatible, rather than inventing a new grid component
+   from scratch.
+5. **Tests**: an integration test asserting followed-accounts' posts are excluded
+   and ranking is stable/deterministic for a fixed seed (`docs/IMPLEMENTATION_PLAN.md`'s
+   own wording) — against the real Dockerized Postgres, matching every milestone's
+   testing discipline; a Playwright smoke test for the page loading with content
+   (explicitly called for, unlike Milestone 17's search tests which needed the
+   fuller "find and navigate" coverage — Milestone 18's own Playwright bar is lower,
+   per `docs/IMPLEMENTATION_PLAN.md`'s own wording: just confirm the page loads with
+   real content, not a full user-journey test).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 17 section,
-`docs/DATABASE.md` §5 (`pg_trgm`) and §6's "User search" row, and `docs/API.md` §11.
-The `/auth/register` throttle has comfortable headroom (roughly 31/40 used — 29
-before Milestone 16, 2 more registered by `notifications.spec.ts`); keep applying the
-standing share-via-`beforeAll` discipline regardless. For any single-file
-`apps/web-e2e` Playwright run, use `--grep "<name>"` placed **after** the trailing
-`--` together with `--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name"
---project=chromium`), **never** `--testPathPatterns` and **never** `--grep=X` before
-a separate trailing `--` block — both of those silently either run the whole suite or
-drop the filter, confirmed three times now (Milestones 14, 15, and 16); the `--
---grep ... --project=...` combined form is the only one confirmed reliable. If
-running the full `apps/web-e2e` suite twice in a row against the same long-lived
-`api:serve` process, expect the workspace-wide 100 req/min/IP throttle to trip on the
-second run — restart `api:serve` between full-suite re-runs to reset its in-memory
-counter, the same standing Milestone 13 workaround. If `apps/api-e2e` needs to run
-while port 3000 is occupied by something unrelated to this repo, both
-`global-setup.ts` and `test-setup.ts` already read `PORT`/`HOST` from the
-environment — prefix the command with `PORT=3100` (or any free port) rather than
-touching whatever else is bound to 3000, the workaround this milestone's own
-validation used.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 18 section,
+`docs/DATABASE.md` §6's "Explore page" row and whatever scaling-risk entry it
+cross-references, and `docs/API.md` §11. The `/auth/register` throttle has
+comfortable headroom (roughly 33/40 used — 31 before Milestone 17, 2 more registered
+by `search.spec.ts`); keep applying the standing share-via-`beforeAll` discipline
+regardless. For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"`
+placed **after** the trailing `--` together with `--project=chromium` (e.g.
+`nx run web-e2e:e2e -- --grep "name" --project=chromium`), **never**
+`--testPathPatterns` and **never** `--grep=X` before a separate trailing `--` block —
+both of those silently either run the whole suite or drop the filter, confirmed four
+times now (Milestones 14, 15, 16, and 17); the `-- --grep ... --project=...` combined
+form is the only one confirmed reliable. If running the full `apps/web-e2e` suite
+twice in a row against the same long-lived `api:serve` process, expect the
+workspace-wide 100 req/min/IP throttle to trip on the second run — restart
+`api:serve` between full-suite re-runs to reset its in-memory counter, the same
+standing Milestone 13 workaround (and don't assume a mass failure immediately after a
+_fresh_ restart is the same thing — Milestone 17 hit one that wasn't, see Known
+Issues). If `apps/api-e2e` needs to run while port 3000 is occupied by something
+unrelated to this repo, both `global-setup.ts` and `test-setup.ts` already read
+`PORT`/`HOST` from the environment — prefix the command with `PORT=3100` (or any free
+port) rather than touching whatever else is bound to 3000. Port 3000 itself was left
+free at the end of Milestone 17 (the two other-project dev servers Milestone 16
+stopped were never restarted) — check its current state fresh rather than assuming
+either way, since that's this machine's own local state, not something this repo
+controls.

@@ -193,11 +193,15 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `SavedPost` (`DATABASE.md` §3.9), `PUT`/`DELETE
 /posts/:postId/save`, `GET /me/saved` (`API.md` §10).
 
-### 14. User Search
+### 14. User Search (implemented Milestone 17)
 
-- Search by username/full name, returns a ranked, paginated list of matching users.
+- Search by username/full name, returns a ranked top-`limit` list of matching users —
+  not paginated (no "page 2" of search results in the MVP; see `API.md` §11 for why
+  trigram similarity ranking doesn't fit this codebase's keyset-cursor convention).
 - Backed by Postgres `pg_trgm` similarity search (`DATABASE.md` §5, §6) — good enough
   for MVP scale, not a general-purpose search engine (see `ARCHITECTURE.md` risk #7).
+- Debounced search input on both web and mobile (300ms) — the first debounced input
+  in this codebase.
 - **Out of scope**: searching posts by caption text, hashtag search, search history/
   suggestions.
 - Entities/endpoints: `GET /search/users?q=` (`API.md` §11).

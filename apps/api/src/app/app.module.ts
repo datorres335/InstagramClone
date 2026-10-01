@@ -18,6 +18,7 @@ import { MediaModule } from '../modules/media/media.module';
 import { NotificationsModule } from '../modules/notifications/notifications.module';
 import { PostsModule } from '../modules/posts/posts.module';
 import { SavedPostsModule } from '../modules/saved-posts/saved-posts.module';
+import { SearchModule } from '../modules/search/search.module';
 import { UsersModule } from '../modules/users/users.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StorageModule } from '../storage/storage.module';
@@ -37,6 +38,7 @@ import { StorageModule } from '../storage/storage.module';
     CommentsModule,
     SavedPostsModule,
     NotificationsModule,
+    SearchModule,
     // A modest workspace-wide default (docs/API.md §1); AuthController
     // overrides this with stricter per-route limits via @Throttle().
     // In-memory storage (the default) — not the Redis-backed storage

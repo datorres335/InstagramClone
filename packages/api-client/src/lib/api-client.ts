@@ -13,6 +13,7 @@ import {
   createSavedPostsClient,
   type SavedPostsClient,
 } from './saved-posts-client';
+import { createSearchClient, type SearchClient } from './search-client';
 import { createUsersClient, type UsersClient } from './users-client';
 
 export interface ApiClient {
@@ -25,6 +26,7 @@ export interface ApiClient {
   comments: CommentsClient;
   savedPosts: SavedPostsClient;
   notifications: NotificationsClient;
+  search: SearchClient;
 }
 
 /**
@@ -49,5 +51,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
     comments: createCommentsClient(http),
     savedPosts: createSavedPostsClient(http),
     notifications: createNotificationsClient(http),
+    search: createSearchClient(http),
   };
 }

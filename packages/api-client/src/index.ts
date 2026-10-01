@@ -9,5 +9,6 @@ export * from './lib/media-client';
 export * from './lib/notifications-client';
 export * from './lib/posts-client';
 export * from './lib/saved-posts-client';
+export * from './lib/search-client';
 export * from './lib/token-storage';
 export * from './lib/users-client';
