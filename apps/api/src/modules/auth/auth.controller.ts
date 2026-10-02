@@ -54,17 +54,18 @@ export class AuthController {
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   // Still meaningfully stricter than the workspace default (100/60s) —
-  // raised from 10 to 20 in Milestone 9, then to 40 in Milestone 12, both
-  // times because `apps/api-e2e`'s register calls are a shared budget across
-  // every spec file in one run against one long-lived server process
-  // (docs/API.md §1). 20 ran out exactly at capacity (a real 429 on a full
-  // suite run, not a projection) once Milestone 12's feed.spec.ts added its
-  // 2 registrations on top of an already-exhausted budget — 40 is deliberately
-  // generous (2x current usage) rather than the bare minimum, since re-tuning
-  // this every single milestone that adds a multi-account test is its own
-  // cost; Likes/Comments/SavedPost (Milestones 13–15) will all need fresh
-  // accounts too.
-  @Throttle({ default: { limit: 40, ttl: 60_000 } })
+  // raised from 10 to 20 in Milestone 9, then to 40 in Milestone 12, then to
+  // 60 in Milestone 18, each time because `apps/api-e2e`'s register calls
+  // are a shared budget across every spec file in one run against one
+  // long-lived server process (docs/API.md §1). 40 ran out exactly at
+  // capacity (a real 429 on a full suite run, not a projection) once
+  // Milestone 18's `explore.spec.ts` (6 registrations) pushed real total
+  // usage to ~38 — close enough that `search.spec.ts`/`posts.spec.ts`'s own
+  // registrations later in the same run tipped it over. 60 is deliberately
+  // generous relative to the ~38 measured at the time, the same "re-tuning
+  // every milestone is its own cost" reasoning the 20→40 increase already
+  // recorded, not the bare minimum to clear this one failure.
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({ summary: 'Create an account and start a session.' })
   async register(
     @Body() dto: RegisterDto,

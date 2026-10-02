@@ -113,6 +113,9 @@ function createDeps() {
     ),
     getSavedPostIdsForViewer: jest.fn(),
   };
+  const exploreService = {
+    getRankedPostIds: jest.fn(),
+  };
   const service = new PostsService(
     prisma as never,
     mediaService as never,
@@ -120,6 +123,7 @@ function createDeps() {
     likesService as never,
     commentsService as never,
     savedPostsService as never,
+    exploreService as never,
   );
   return {
     service,
@@ -129,6 +133,7 @@ function createDeps() {
     likesService,
     commentsService,
     savedPostsService,
+    exploreService,
   };
 }
 
@@ -730,6 +735,120 @@ describe('PostsService', () => {
       const result = await service.getSavedPosts('viewer-1', { limit: 1 });
 
       expect(result.meta.nextCursor).toBe('opaque-cursor');
+    });
+  });
+
+  describe('getExplore', () => {
+    it('returns an empty page without querying posts when nothing ranks', async () => {
+      const { service, prisma, exploreService } = createDeps();
+      exploreService.getRankedPostIds.mockResolvedValue({
+        postIds: [],
+        nextCursor: null,
+      });
+
+      const result = await service.getExplore('viewer-1', { limit: 20 });
+
+      expect(result).toEqual({ data: [], meta: { nextCursor: null } });
+      expect(prisma.post.findMany).not.toHaveBeenCalled();
+    });
+
+    it('re-sorts posts to match the ranked id order', async () => {
+      const { service, prisma, exploreService } = createDeps();
+      exploreService.getRankedPostIds.mockResolvedValue({
+        postIds: ['post-2', 'post-1'],
+        nextCursor: null,
+      });
+      // findMany({ where: { id: { in } } }) doesn't guarantee input order —
+      // return them in the "wrong" order to prove the service re-sorts.
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+
+      const result = await service.getExplore('viewer-1', { limit: 20 });
+
+      expect(result.data.map((post) => post.id)).toEqual(['post-2', 'post-1']);
+    });
+
+    it('fetches like/comment/saved state for the page in one batched call each (unlike getSavedPosts, isSavedByMe is a real batched lookup, not hardcoded)', async () => {
+      const {
+        service,
+        prisma,
+        exploreService,
+        likesService,
+        commentsService,
+        savedPostsService,
+      } = createDeps();
+      exploreService.getRankedPostIds.mockResolvedValue({
+        postIds: ['post-1', 'post-2'],
+        nextCursor: null,
+      });
+      prisma.post.findMany.mockResolvedValue([
+        fakePostRow({ id: 'post-1' }),
+        fakePostRow({ id: 'post-2' }),
+      ]);
+      likesService.getLikeStateForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', { likesCount: 9, isLikedByMe: true }],
+          ['post-2', { likesCount: 3, isLikedByMe: false }],
+        ]),
+      );
+      commentsService.getCommentCountForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', 2],
+          ['post-2', 0],
+        ]),
+      );
+      savedPostsService.getSavedStateForPosts.mockResolvedValue(
+        new Map([
+          ['post-1', true],
+          ['post-2', false],
+        ]),
+      );
+
+      const result = await service.getExplore('viewer-1', { limit: 20 });
+
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledTimes(1);
+      expect(likesService.getLikeStateForPosts).toHaveBeenCalledWith(
+        ['post-1', 'post-2'],
+        'viewer-1',
+      );
+      expect(commentsService.getCommentCountForPosts).toHaveBeenCalledTimes(1);
+      expect(savedPostsService.getSavedStateForPosts).toHaveBeenCalledTimes(1);
+      expect(savedPostsService.getSavedStateForPosts).toHaveBeenCalledWith(
+        ['post-1', 'post-2'],
+        'viewer-1',
+      );
+      expect(result.data[0].likesCount).toBe(9);
+      expect(result.data[0].isSavedByMe).toBe(true);
+      expect(result.data[1].isSavedByMe).toBe(false);
+    });
+
+    it('filters out any ids that no longer resolve to an active post', async () => {
+      const { service, prisma, exploreService } = createDeps();
+      exploreService.getRankedPostIds.mockResolvedValue({
+        postIds: ['post-1', 'post-deleted'],
+        nextCursor: null,
+      });
+      prisma.post.findMany.mockResolvedValue([fakePostRow({ id: 'post-1' })]);
+
+      const result = await service.getExplore('viewer-1', { limit: 20 });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].id).toBe('post-1');
+    });
+
+    it('propagates the nextCursor from ExploreService', async () => {
+      const { service, prisma, exploreService } = createDeps();
+      exploreService.getRankedPostIds.mockResolvedValue({
+        postIds: ['post-1'],
+        nextCursor: 'opaque-explore-cursor',
+      });
+      prisma.post.findMany.mockResolvedValue([fakePostRow({ id: 'post-1' })]);
+
+      const result = await service.getExplore('viewer-1', { limit: 1 });
+
+      expect(result.meta.nextCursor).toBe('opaque-explore-cursor');
     });
   });
 });

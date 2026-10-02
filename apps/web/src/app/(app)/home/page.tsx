@@ -32,6 +32,7 @@ export default async function HomePage() {
       <Link href={`/${user.username}`}>View profile</Link>
       <Link href="/posts/new">New post</Link>
       <Link href="/search">Search</Link>
+      <Link href="/explore">Explore</Link>
       <NotificationBadge initialCount={unreadCount.count} />
       <form action={logoutAction}>
         <button type="submit">Log out</button>

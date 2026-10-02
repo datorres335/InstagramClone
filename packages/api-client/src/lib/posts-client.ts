@@ -1,5 +1,6 @@
 import type {
   CreatePostInput,
+  ExploreResponse,
   FeedResponse,
   PaginationQuery,
   PostResponse,
@@ -22,6 +23,13 @@ export interface PostsClient {
    * rather than needing to know/repeat it.
    */
   getFeed(query?: Partial<PaginationQuery>): Promise<FeedResponse>;
+  /**
+   * `GET /explore` (docs/API.md §11, Milestone 18) — posts from accounts
+   * you don't follow, ranked by recent engagement. Grouped under `posts`
+   * rather than a separate client namespace, the same precedent `getFeed`
+   * already set for a top-level-URL-but-post-shaped read.
+   */
+  getExplore(query?: Partial<PaginationQuery>): Promise<ExploreResponse>;
 }
 
 export function createPostsClient(http: HttpClient): PostsClient {
@@ -52,6 +60,13 @@ export function createPostsClient(http: HttpClient): PostsClient {
       return http.authorizedRequest<FeedResponse>(
         'GET',
         `/feed${buildQueryString(query)}`,
+      );
+    },
+
+    getExplore(query) {
+      return http.authorizedRequest<ExploreResponse>(
+        'GET',
+        `/explore${buildQueryString(query)}`,
       );
     },
   };

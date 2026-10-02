@@ -206,11 +206,13 @@ referenced to `DATABASE.md` / `API.md`).
   suggestions.
 - Entities/endpoints: `GET /search/users?q=` (`API.md` §11).
 
-### 15. Explore Page
+### 15. Explore Page (implemented Milestone 18)
 
-- A grid of posts from accounts the current user does not follow, to aid discovery.
-- MVP ranking: recency + engagement heuristic (e.g. like count within a recent time
-  window), computed live — not a personalized ML feed.
+- A grid of posts from accounts the current user does not follow (and never the
+  viewer's own posts), to aid discovery.
+- MVP ranking: like count (descending) within a 7-day recency window, `createdAt`/`id`
+  tiebreak, computed live — not a personalized ML feed. Paginated with a real,
+  stable keyset cursor.
 - **Out of scope**: personalization beyond the simple heuristic, topic/category
   browsing, video content.
 - Entities/endpoints: `GET /explore` (`API.md` §11).

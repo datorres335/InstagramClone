@@ -8,6 +8,7 @@ import {
 
 import type {
   CreatePostInput,
+  ExploreResponse,
   FeedResponse,
   PaginationQuery,
   PostResponse,
@@ -19,6 +20,7 @@ import type {
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CommentsService } from '../comments/comments.service';
+import { ExploreService } from '../explore/explore.service';
 import { LikesService } from '../likes/likes.service';
 import { MediaService } from '../media/media.service';
 import { resolveVariantUrls } from '../media/media-response.mapper';
@@ -36,6 +38,7 @@ export class PostsService {
     private readonly likesService: LikesService,
     private readonly commentsService: CommentsService,
     private readonly savedPostsService: SavedPostsService,
+    private readonly exploreService: ExploreService,
   ) {}
 
   /** `POST /posts` (docs/API.md §7) — 1–10 images, all the caller's own `READY` `POST_IMAGE` media, none already attached elsewhere. */
@@ -311,6 +314,73 @@ export class PostsService {
         // Every item in this list is, by definition, saved by the viewer —
         // no need to query SavedPostsService.getSavedStateForPosts again.
         true,
+      ),
+    );
+
+    return { data, meta: { nextCursor } };
+  }
+
+  /**
+   * `GET /explore` (docs/API.md §11, docs/DATABASE.md §6) — posts from
+   * accounts the viewer doesn't follow, ranked by recent engagement.
+   * `ExploreService` only knows the ranked `postId` list (and the raw SQL
+   * needed to rank them — not expressible through the ordinary Prisma
+   * query builder); this method does the actual Post lookup +
+   * `LikesService`/`CommentsService`/`SavedPostsService` batching +
+   * `toPostResponse` mapping, the same pipeline `getSavedPosts`/`getFeed`
+   * use — living here rather than in `ExploreService` avoids a circular
+   * `PostsModule` dependency, the identical reasoning `getSavedPosts`
+   * already established.
+   */
+  async getExplore(
+    viewerId: string,
+    query: PaginationQuery,
+  ): Promise<ExploreResponse> {
+    const { postIds, nextCursor } = await this.exploreService.getRankedPostIds(
+      viewerId,
+      query,
+    );
+    if (postIds.length === 0) {
+      return { data: [], meta: { nextCursor } };
+    }
+
+    const rows = await this.prisma.post.findMany({
+      where: { id: { in: postIds }, deletedAt: null },
+      include: {
+        author: { include: { avatarMedia: true } },
+        media: { include: { media: true }, orderBy: { position: 'asc' } },
+      },
+    });
+
+    // `findMany({ where: { id: { in } } })` doesn't preserve input order —
+    // re-sort to match the ranked order the id list was already computed
+    // in, the same pattern `getSavedPosts` established.
+    const postById = new Map(rows.map((row) => [row.id, row]));
+    const orderedPosts = postIds
+      .map((id) => postById.get(id))
+      .filter((row): row is PostWithRelations => row !== undefined);
+
+    const [likeStates, commentCounts, savedStates] = await Promise.all([
+      this.likesService.getLikeStateForPosts(
+        orderedPosts.map((post) => post.id),
+        viewerId,
+      ),
+      this.commentsService.getCommentCountForPosts(
+        orderedPosts.map((post) => post.id),
+      ),
+      this.savedPostsService.getSavedStateForPosts(
+        orderedPosts.map((post) => post.id),
+        viewerId,
+      ),
+    ]);
+
+    const data: PostResponse[] = orderedPosts.map((post) =>
+      toPostResponse(
+        post,
+        this.storage,
+        likeStates.get(post.id) ?? { likesCount: 0, isLikedByMe: false },
+        commentCounts.get(post.id) ?? 0,
+        savedStates.get(post.id) ?? false,
       ),
     );
 

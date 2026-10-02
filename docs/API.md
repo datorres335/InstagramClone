@@ -313,7 +313,7 @@ already depends on `SavedPostsModule` one-way (for `isSavedByMe`), so hosting it
 notified about in the first place (unlike likes/comments), so this isn't even a
 deferral; `docs/FEATURES.md` #13 never describes one.
 
-## 11. Search & Explore (`GET /search/users` implemented Milestone 17)
+## 11. Search & Explore (`GET /search/users` implemented Milestone 17, `GET /explore` implemented Milestone 18)
 
 | Method & path          | Auth     | Notes                                                                                                          |
 | ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
@@ -334,6 +334,19 @@ expressible through Prisma's query builder. `pg_trgm`'s default similarity thres
 (0.3) is lowered to 0.1 at the database level (`docs/DATABASE.md` §5) — too strict a
 default for the documented 2-character minimum, which can fall just under 0.3 for a
 real match (e.g. `similarity('alice', 'al') = 0.2857`).
+
+`GET /explore` returns posts from accounts the viewer does not follow, excluding the
+viewer's own posts, ranked by like count (descending) within a 7-day recency window
+(`EXPLORE_WINDOW_DAYS`), with `createdAt DESC` then `id DESC` as deterministic
+tiebreakers — computed live via a raw-SQL aggregate query (`docs/DATABASE.md` §6/§10
+explicitly sanction this at MVP scale rather than a precomputed ranking table).
+`ExploreResponse` is a distinct type from `FeedResponse` despite an identical
+`{ data: PostResponse[], meta: { nextCursor } }` wrapper shape — Explore and Feed are
+different populations with different ranking, the same "different kind of list, name
+it separately" call Milestone 15 made for `SavedPostsResponse`. Unlike
+`GET /search/users` above, Explore has a real, stable keyset cursor
+(`likesCount, createdAt, id` — all monotonic), encoded/decoded by a second cursor
+utility (`explore-cursor.ts`) alongside the existing `cursor.ts`.
 
 ## 12. Notifications (implemented Milestone 16)
 

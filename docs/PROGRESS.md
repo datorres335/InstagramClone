@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 17 — User Search
+**Current Milestone:** Milestone 18 — Explore Page
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -153,6 +153,26 @@ keyset pagination at all (`meta.nextCursor` always `null`) — trigram ranking h
 stable sort key to build a cursor from, and a capped top-`limit` page is what a real
 username search needs. Both `web` and `mobile` gained a debounced search input
 (300ms, the first debounced input in this codebase) showing live-ranked results.
+Milestone 18 adds `apps/api`'s eleventh domain-adjacent module, `ExploreModule` — a
+service-only module (no controller, exported and imported by `PostsModule`, the same
+circular-dependency-avoidance shape `SavedPostsModule`/`MeSavedController` established
+in Milestone 15) computing `GET /explore`'s ranking: posts from accounts the viewer
+does not follow, excluding the viewer's own posts, ranked by like count (descending)
+within a 7-day window, `createdAt`/`id` tiebreak — a `WITH candidates AS (...)` CTE
+with a correlated scalar subquery for the live like count, via raw SQL (`$queryRaw`,
+this codebase's third raw query after Milestone 17's trigram search and the trivial
+health check), since a live-aggregate `ORDER BY` has no Prisma query-builder
+representation. Unlike Milestone 17's `GET /search/users`, Explore has a real, stable
+keyset cursor (`likesCount, createdAt, id`, all monotonic) — a second, genuinely
+different cursor shape alongside the existing `cursor.ts`'s `{createdAt, id}`, encoded
+by a new `explore-cursor.ts`. `ExploreResponse` is a distinctly-named type, not a reuse
+of `FeedResponse`, despite an identical wrapper shape — revisiting Milestone 15's
+distinct-naming call rather than Milestone 17's verbatim-reuse one, since Explore and
+Feed are different populations with different ranking. `PostsService.getExplore`
+mirrors `getSavedPosts`'s exact fetch→re-sort→batch-likes/comments/saved-state→map
+pipeline. Both `web` and `mobile` gained an explore grid screen (mobile's via real
+`onEndReached` infinite scroll, matching Explore's real cursor — unlike search's
+debounce-only UI), reusing the profile grid's tile sizing constants on mobile.
 
 ---
 
@@ -1179,6 +1199,73 @@ userId`)
       projects) + standalone `tsc --noEmit` for `api`/`web`/`mobile` +
       `api-e2e:e2e` (16/16 suites, 109/109 tests) + `web-e2e:e2e` (22/22,
       Chromium, confirmed stable across two consecutive clean runs)
+
+### Milestone 18 — Explore Page
+
+- [x] `apps/api/src/common/pagination/explore-cursor.ts` — a second,
+      genuinely different keyset-cursor shape (`{likesCount, createdAt, id}`)
+      alongside the existing `cursor.ts`'s `{createdAt, id}`, encode/decode
+      pair mirroring that file's own convention
+- [x] `apps/api/src/modules/explore/` — `ExploreModule`/`ExploreService`,
+      service-only (no controller, exported for `PostsModule` to import) —
+      the live-ranking query: a `WITH candidates AS (...)` CTE with a
+      correlated scalar subquery for each candidate's like count, excluding
+      the viewer's own posts and every account they follow, ranked by
+      `likesCount DESC, createdAt DESC, id DESC` within a 7-day window
+      (`EXPLORE_WINDOW_DAYS`), via raw SQL (`$queryRaw` — a live-aggregate
+      `ORDER BY` has no Prisma query-builder form)
+- [x] `apps/api/src/modules/posts/explore.controller.ts` — one endpoint,
+      `GET /explore` (required auth), living inside `PostsModule` (mirroring
+      `FeedController`/`MeSavedController`'s "host where the data pipeline
+      already lives" precedent, avoiding a circular `PostsModule`↔
+      `ExploreModule` dependency) — `PostsService.getExplore` does the real
+      fetch→re-sort→batch-likes/comments/saved-state→map pipeline, the exact
+      shape `getSavedPosts` already established
+- [x] `packages/validation`'s new `explore.ts` (`exploreResponseSchema`/
+      `ExploreResponse`) — a distinctly-named type despite an identical
+      `{ data, meta: { nextCursor } }` wrapper shape to `FeedResponse`,
+      revisiting Milestone 15's distinct-naming call rather than Milestone
+      17's verbatim-reuse one (Explore and Feed are different populations
+      with different ranking, not the same kind of list)
+- [x] `packages/api-client`'s `posts` namespace gains `getExplore` (grouped
+      under the existing `posts` client namespace, the same precedent
+      `getFeed` already set for a top-level, non-`/posts`-nested URL)
+- [x] `apps/web`: a new `/explore` page (required-auth redirect) +
+      `ExploreGrid` client component with "Load more" button pagination
+      (mirroring `FeedList`/`SavedPostsList`/`NotificationsList`), linked
+      from `/home`'s header
+- [x] `apps/mobile`: a new auto-registered `(tabs)/explore.tsx` tab reusing
+      the profile grid's `GRID_COLUMNS`/`GRID_TILE_SIZE` constants, with real
+      `onEndReached` infinite scroll (unlike search's debounce-only UI,
+      since Explore has a real cursor to page through)
+- [x] 8 new `explore-cursor.spec.ts` tests, 5 new `explore.service.spec.ts`
+      tests, 2 new `explore.spec.ts` (validation) tests, 5 new
+      `posts.service.spec.ts` tests for `getExplore`, 2 new
+      `posts-client.spec.ts` tests, 1 new `openapi-contract.spec.ts` type
+      reference, 4 new mobile `explore-screen.spec.tsx` tests
+- [x] 7 new `apps/api-e2e` integration tests (`explore/explore.spec.ts`) —
+      real accounts/posts/likes, not mocked: follow exclusion, self
+      exclusion, higher-engagement-ranks-above-lower-engagement (via a
+      `findInExplore` pagination-walking helper — see Deviations below),
+      real `likesCount`/`isLikedByMe` on an item, deterministic no-gap/
+      no-duplicate pagination, `401` unauthenticated, `400` malformed cursor
+- [x] 1 new `apps/web-e2e` Playwright smoke test (`explore.spec.ts`,
+      Chromium) — a stranger creates a post, a fresh viewer visits
+      `/explore` and sees real grid content load, per
+      `docs/IMPLEMENTATION_PLAN.md` M18's explicit, deliberately lower-bar
+      ("page loads with content," not a full ranking journey) Playwright
+      requirement
+- [x] Register throttle raised 40 → 60/min/IP (`AuthController.register`) —
+      a full-suite run genuinely exhausted the 40 budget for the first time
+      (not the known double-run collision pattern) once this milestone's
+      own registrations pushed real usage to ~38; see Bugs Found below
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects, mobile's known `run-many`-only flake confirmed clean on
+      standalone re-run) + standalone `tsc --noEmit` for `api`/`web`/
+      `mobile` + `api-e2e:e2e` (17/17 suites, 116/116 tests, stable across
+      two consecutive runs) + `web-e2e:e2e` (23/23, Chromium, stable across
+      two consecutive runs — see Known Issues for why Firefox/WebKit, newly
+      installed this milestone, were not used for the real validation pass)
 
 ---
 
@@ -2441,6 +2528,126 @@ Port 3000 remained free throughout this milestone's `api:serve` work (the two
 other-project dev servers Milestone 16 stopped were never restarted in between) and
 was left free afterward too.
 
+### Milestone 18
+
+```bash
+pnpm exec nx run api:test --testPathPatterns=explore --skip-nx-cache
+# ^ explore-cursor.spec.ts + explore.service.spec.ts, first run, all passing.
+
+pnpm exec nx run api:test --skip-nx-cache   # whole project, including the
+# new posts.service.spec.ts getExplore tests (createDeps() needed a manual
+# exploreService mock added — see Bugs Found: this isn't caught by tsc or
+# ts-jest on its own).
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:build --skip-nx-cache
+# ^ confirmed ExploreModule/ExploreController registered in the real Nest
+#   boot log: GET /explore mapped correctly.
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+
+pnpm exec nx run api-client:generate-types
+# ^ confirmed /api/v1/explore appeared in the generated openapi.json/types.
+pnpm exec nx run api-client:test --skip-nx-cache   # clean, 2 new getExplore cases
+pnpm exec nx run api-client:build --skip-nx-cache   # clean
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache   # new /explore route appeared
+pnpm exec nx run web:lint --skip-nx-cache   # clean
+pnpm exec nx run web:test --skip-nx-cache   # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --skip-nx-cache   # clean, 4 new explore-screen.spec.tsx cases
+# ^ first draft left an unused `Link` import (never used once router.push
+#   replaced it) — self-caught and removed before this run, not flagged by
+#   lint findings here.
+pnpm exec nx run mobile:lint --skip-nx-cache   # clean
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+# Live smoke test against the real dev server + seeded data (logged in as
+# alice): confirmed correct like-count-tier ranking, correct recency
+# tiebreak within a tier, and correct, non-overlapping cursor continuation
+# across two real page fetches — before writing any api-e2e test, the same
+# "verify against real data first" discipline Milestone 17's bug #52 came
+# from skipping.
+
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ first full-suite run: 6 failures, all AxiosError 429 on /auth/register —
+# a genuinely new capacity problem, not the known double-run-collision
+# pattern (this was the suite's FIRST run against this server process).
+# Counted real registration call sites across the whole suite (grep -rno
+# "registerUser()\|registerWithUsername(" | wc -l, minus function-definition
+# lines): ~38, dangerously close to the existing limit: 40. Raised to 60
+# (auth.controller.ts) — see Bugs Found below.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ 115/116 — throttle fixed; one remaining genuine failure in explore.spec.ts's
+# ranking-order test. Diagnosed via direct psql queries, not guessed: 521
+# posts exist within Explore's 7-day window in this dev database (leftover
+# from every prior milestone's own e2e runs), with enough 1-3-like posts to
+# push the test's own low-engagement target post beyond the default
+# limit=20 page the test was checking — not a ranking-logic bug (the SQL
+# itself was independently re-verified correct via psql and the live smoke
+# test above). Fixed by adding a findInExplore pagination-walking helper
+# (walks the real keyset cursor chain, limit=50/page, bounded maxPages) to
+# explore.spec.ts rather than a fragile one-off limit bump — see Deviations
+# below for the full reasoning.
+pnpm exec nx run api-e2e:e2e --testPathPatterns=explore --skip-nx-cache   # 7/7
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 116/116
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 116/116 again — stable across
+# two consecutive full-suite runs.
+
+pnpm exec nx run api-e2e:lint --skip-nx-cache
+# ^ 7 pre-existing-style `no-non-null-assertion` warnings on the new
+#   findInExplore-based assertions (0 errors) — the same warning style
+#   already accepted in media-pipeline.spec.ts, not a new lint posture.
+
+pnpm exec playwright install
+# ^ Firefox 155/WebKit 26.6 downloaded — these browsers had never been
+#   installed in this environment before (every prior milestone's Known
+#   Issues entry says so explicitly). Installing them surfaced a new,
+#   unrelated finding — see below and Known Issues.
+
+nx run api:serve   # started manually on :3000, required separately —
+# Playwright's own webServer config only manages web:dev (apps/web-e2e/
+# playwright.config.mts), the same standing note every prior milestone's
+# Known Issues already carries.
+pnpm exec nx run web-e2e:e2e -- --grep "explore" --project=chromium
+pnpm exec nx run web-e2e:e2e --skip-nx-cache --grep="explore"
+# ^ 3/3 (chromium/firefox/webkit each passed) when run as the only
+#   matching spec — confirms the new test itself is correct.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache
+# ^ full suite, all 3 browsers in parallel (Playwright's default): every
+#   webkit test failed across every spec file, not just explore.spec.ts —
+#   a wholesale, browser-wide failure, not something specific to this
+#   milestone's own test.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --workers=1
+# ^ ruled out parallel-worker contention as the sole cause: serial execution
+#   still produced 11 scattered failures spread unpredictably across
+#   chromium/firefox/webkit and across unrelated pre-existing spec files
+#   (not a consistent "webkit always fails" pattern this time). Firefox/
+#   WebKit are being exercised for the first time ever in this project —
+#   this reads as general cross-browser-environment immaturity in this
+#   setup, not a regression introduced by Milestone 18, and fixing it is
+#   out of this milestone's scope (Explore-page-specific work) — see Known
+#   Issues.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # 23/23, clean
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium   # 23/23 again — stable
+
+pnpm exec prettier --write apps/api-e2e/src/explore/explore.spec.ts \
+  apps/api/src/modules/auth/auth.controller.ts apps/web-e2e/src/explore.spec.ts \
+  # ^ (plus every other new/modified Milestone 18 file) — all already
+  #   Prettier-clean except web-e2e/src/explore.spec.ts's line wrapping.
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ one failure: mobile:test (comment-section.spec.tsx's "deletes a comment"
+#   assertion) — the same already-documented run-many-only flake (bugs
+#   #47/#49/#54). Standalone nx run mobile:test immediately after: clean.
+pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}"
+# ^ only flagged apps/web/next-env.d.ts, the same pre-existing Next-generated
+#   file every prior milestone's check has also (harmlessly) flagged.
+```
+
+The `api:serve` process started for `web-e2e:e2e` was stopped after validation
+completed, returning port 3000 to its prior free state.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -3344,6 +3551,85 @@ tuning above (an operational detail, not a design-level change) — `GET /search
 works exactly the way both documents already specified, just with one empirically-
 discovered correction to make the documented 2-character minimum actually functional.
 
+### Milestone 18
+
+- **`ExploreResponse` is a distinctly-named type, not `FeedResponse` reused
+  verbatim** — revisiting Milestone 15's `SavedPostsResponse` precedent rather than
+  Milestone 17's `FollowListResponse`-reuse one, both of which exist in this codebase
+  for structurally-identical-but-conceptually-different shapes. Judgment call: Explore
+  and Feed are different _kinds_ of list — different population (not-followed vs.
+  followed accounts) and different ranking (live engagement heuristic vs. chronological
+  fan-out) — despite sharing an identical `{ data, meta: { nextCursor } }` wrapper, the
+  same reasoning that drove the Milestone 15 split, not a reflexive copy of whichever
+  precedent came first.
+- **Explore gets a real, stable keyset cursor (`likesCount, createdAt, id`), unlike
+  Milestone 17's `GET /search/users`, which has none at all** — re-derived rather than
+  assumed, per that milestone's own Next-Milestone note flagging this as something to
+  verify, not carry over. Trigram similarity is an unbounded, non-monotonic score with
+  no stable ordering to build a cursor from; Explore's ranking fields (`likesCount`,
+  `createdAt`, `id`) are all monotonic within the query's own `ORDER BY`, so a real
+  keyset cursor is both possible and the correct choice here — a second cursor shape
+  (`explore-cursor.ts`) was added alongside the existing `cursor.ts`, consistent with
+  that file's own doc-comment guidance to add a new shape only once a second,
+  sufficiently different caller needs one.
+- **`ExploreService`'s live-ranking query uses raw SQL (`$queryRaw`), rehydrated via
+  the ordinary Prisma query builder for everything else** — a live-computed aggregate
+  (like count) can't be ordered/filtered on within one query through Prisma's query
+  builder, the same class of limitation Milestone 17's trigram `similarity()` query
+  hit. A `WITH candidates AS (...)` CTE with a correlated scalar subquery for the like
+  count, plus a `Prisma.sql`/`Prisma.empty`-conditional cursor `WHERE` fragment, is
+  scoped to just the ranked id list — `PostsService.getExplore` rehydrates the actual
+  rows via the ordinary `id: { in }` Prisma query, the same "raw SQL for the one thing
+  that needs it, Prisma for the rest" split Milestone 17 established.
+- **`ExploreModule` is service-only (no controller), imported by `PostsModule`, with
+  `ExploreController` living inside `PostsModule` instead** — the exact
+  `SavedPostsModule`/`MeSavedController` shape Milestone 15 established, applied again
+  for the same reason: `ExploreService.getRankedPostIds` needs to be injectable into
+  `PostsService.getExplore` (which also needs `MediaService`/`LikesService`/
+  `CommentsService`/`SavedPostsService` to assemble a full `PostResponse`), and hosting
+  the controller inside `ExploreModule` itself would create a circular
+  `PostsModule`↔`ExploreModule` dependency.
+- **Register throttle raised 40 → 60/min/IP** (`AuthController.register`) — the fourth
+  increase in this codebase's history (10→20 Milestone 9, 20→40 Milestone 12, now
+  40→60), following the same established "raise when the suite outgrows it" pattern.
+  This time the limit was genuinely exhausted on a single full-suite run for the first
+  time (previously, 429s only appeared from running the full suite twice in quick
+  succession against the same server — a different failure mode); real registration
+  call-site count across the whole suite was ~38, close enough that `explore.spec.ts`'s
+  6 registrations tipped a single run over. 60 is deliberately generous relative to the
+  ~38 measured at the time, not the bare minimum to clear this one failure — the same
+  "re-tuning every milestone is its own cost" reasoning the 20→40 increase already
+  recorded.
+- **`apps/api-e2e/src/explore/explore.spec.ts`'s rank/likesCount assertions walk the
+  real keyset cursor chain (`findInExplore`) instead of assuming both target posts land
+  on one default-sized page** — a test-robustness decision made after a genuine test
+  failure (see Bugs Found below) traced to this dev database's accumulated leftover
+  posts (521 within Explore's 7-day window by this point in the session), not a
+  ranking-logic bug. A one-off `limit=50` bump was considered and rejected as a fragile
+  band-aid that would likely break again as future milestones add more leftover test
+  data; a helper that walks real, bounded pages (`limit=50`, `maxPages=20`) to locate a
+  target post and its absolute rank is robust to however much clutter accumulates, and
+  it exercises the exact pagination mechanism the endpoint actually relies on rather
+  than working around it.
+- **`apps/web-e2e`'s real validation pass stayed Chromium-only, matching every prior
+  milestone's established practice, even though Firefox/WebKit were installed this
+  session for the first time** — installing them (`pnpm exec playwright install`)
+  surfaced broad, inconsistent failures across every spec file (not just this
+  milestone's own `explore.spec.ts`) when run across all three browsers, in both
+  parallel and serial (`--workers=1`) modes. This reads as general cross-browser-
+  environment immaturity (these browsers have never been exercised in this project
+  before) rather than anything Milestone 18 introduced, and root-causing a
+  multi-browser Playwright environment issue is out of scope for an Explore-page
+  milestone — see Known Issues below. The actual validation pass used
+  `--project=chromium`, confirmed stable across two consecutive clean runs (23/23).
+
+None of Milestone 18's deviations touch `docs/ARCHITECTURE.md`'s core design. The
+Explore ranking/exclusion/pagination behavior matches `docs/DATABASE.md` §6/§10 and
+`docs/API.md` §11 exactly as both documents already specified — the concrete formula
+(7-day window, like-count descending) and the real-keyset-cursor decision were the two
+open questions Milestone 17's own Next-Milestone note flagged as needing re-derivation,
+and both are recorded above with their reasoning, not left open.
+
 ---
 
 ## Bugs Found and Fixed
@@ -4077,6 +4363,59 @@ undefined` resolved to `undefined`, and `isFollowing`'s `return edge !== null`
     and removes it from the list" assertion, the same specific test every prior
     occurrence has pointed to).
 
+### Milestone 18
+
+55. **Adding `ExploreService` as `PostsService`'s 7th constructor dependency was not
+    caught by typecheck or by the existing, unmodified `posts.service.spec.ts` —
+    all 43 pre-existing tests still passed despite `createDeps()` constructing
+    `PostsService` with only 6 mocked arguments.** Root cause: `apps/api/
+tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
+    ts-jest apparently doesn't type-check constructor-arity mismatches at test-run
+    time either. The same class of silent-masking issue as bug #50 (Milestone 16).
+    Caught manually, not by any automated check, while adding real test coverage for
+    `getExplore()` — fixed by adding the missing `exploreService` mock to
+    `createDeps()` and its 7th constructor argument.
+56. **`GET /auth/register` hit a real `429` on the very first full `apps/api-e2e`
+    suite run after adding `explore.spec.ts`, not from the already-documented
+    double-run-collision pattern (bug #42) — a genuinely new capacity problem.**
+    Root cause: real registration call sites across the whole suite had grown to
+    ~38 (`grep -rno "registerUser()\|registerWithUsername(" ... | wc -l` minus
+    function-definition lines), within one registration of the existing `limit: 40`.
+    Fixed by raising the throttle to 60 (see Deviations above for the full 10→20→40→60
+    history and reasoning). Re-ran the full suite twice after the fix: 116/116 both
+    times.
+57. **`explore.spec.ts`'s `'ranks the higher-engagement post above the lower-
+    engagement one'` test failed deterministically after the throttle fix above,
+    but the underlying ranking logic was correct.** Root cause (confirmed via direct
+    `psql` queries, not guessed): this dev database has accumulated 521 posts within
+    Explore's 7-day window from every prior milestone's own e2e runs across this
+    whole multi-session effort (like-count distribution: 3→5 posts, 2→22 posts,
+    1→12 posts, 0→482 posts), enough clutter that the test's own 1-like target post
+    could land beyond the default `limit=20` page the test was checking — a test-
+    design flaw, not a bug in `ExploreService`'s SQL (independently re-verified
+    correct via `psql` and a live-endpoint smoke test earlier in this milestone,
+    including confirming correct, non-overlapping cursor continuation across real
+    page fetches). Fixed by adding a `findInExplore` pagination-walking helper to the
+    test file (walks the real keyset cursor chain, `limit=50` per page, bounded
+    `maxPages`) instead of a one-off `limit` bump, so the assertion stays correct
+    regardless of how much further this database accumulates across future
+    milestones. See Deviations above for why a bump was rejected.
+58. **Installing Firefox/WebKit (`pnpm exec playwright install`, done for the first
+    time this milestone) surfaced broad, inconsistent `apps/web-e2e` failures across
+    every spec file, not just this milestone's own `explore.spec.ts`, when the full
+    suite ran across all three browsers.** Running `--project=webkit` alone passed
+    cleanly; running all three together (both the default parallel mode and
+    `--workers=1` serial) produced scattered failures spread unpredictably across
+    chromium/firefox/webkit and across unrelated, pre-existing spec files, with no
+    consistent single-browser or single-file pattern across repeated runs. Not
+    root-caused — these browsers have never been exercised in this project before
+    (every prior milestone's Known Issues entry notes they weren't installed), so this
+    reads as a pre-existing cross-browser-environment gap now surfacing for the first
+    time, not a regression Milestone 18 introduced, and it's out of scope for an
+    Explore-page milestone to fix. Worked around by validating against
+    `--project=chromium` only, matching every prior milestone's established practice
+    — 23/23, stable across two consecutive runs. See Known Issues below.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -4088,9 +4427,12 @@ undefined` resolved to `undefined`, and `isFollowing`'s `return edge !== null`
 - `apps/api-e2e`'s generated `jest.config.cts` logs a harmless Node ESM-loader
   warning ("Failed to load the ES module... jest.config.cts") on every run. Cosmetic;
   doesn't affect results.
-- Web E2E was only run against Chromium (`--project=chromium`); Firefox/WebKit
-  browsers were not installed in this environment. Fine for this milestone — install
-  them (`pnpm exec playwright install`) before relying on cross-browser coverage.
+- **RESOLVED/SUPERSEDED (Milestone 18):** Firefox/WebKit browsers are now installed
+  (`pnpm exec playwright install`, run for the first time this milestone) — but see
+  bug #58 and the new entry below: installing them surfaced a real cross-browser
+  flakiness issue, not a clean path to full coverage yet. Every `apps/web-e2e`
+  validation pass in this codebase, including this milestone's, still uses
+  `--project=chromium` only.
 - This machine has a native/other Postgres already listening on 5432 and a stray
   `node_modules`/`package-lock.json` in the user's home directory (outside this
   repo). Neither was touched, but both required the workarounds noted above —
@@ -4337,6 +4679,29 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   server-side), not a real bug. Expect any _new_ route's first Playwright
   exercise in a fresh `next dev` process to occasionally need a retry for
   this reason; not worth padding timeouts preemptively.
+- **Firefox/WebKit, now installed (Milestone 18, bug #58), are not yet a usable
+  `apps/web-e2e` validation target** — running the full suite across all three
+  browsers (parallel or `--workers=1` serial) produces scattered, inconsistent
+  failures across unrelated spec files with no stable single-browser/single-file
+  pattern, unlike webkit-alone or chromium-alone runs, which are both clean. Not
+  root-caused (these browsers have never been exercised in this project before, so
+  there's no established-working baseline to diff against); continue validating with
+  `--project=chromium` only until a future milestone has the scope to investigate.
+  If a future milestone wants real cross-browser coverage (Milestone 20's "Web E2E
+  Coverage + Hardening Pass" is the natural place), start by reproducing a single
+  scattered failure in isolation (e.g. `--project=firefox --grep "<name>"`) rather
+  than assuming the whole-suite symptom generalizes.
+- **This dev database has accumulated 521+ posts within Explore's 7-day ranking
+  window (Milestone 18, bug #57), a byproduct of every prior milestone's own e2e runs
+  across this entire multi-session effort** — not a bug, but worth knowing before
+  writing any future test that assumes a small, fully-known set of posts appears on
+  Explore's first page. `apps/api-e2e/src/explore/explore.spec.ts`'s own tests already
+  account for this (via the `findInExplore` pagination-walking helper); any new test
+  exercising `GET /explore` against this same database should use the same pattern
+  rather than assuming page-1 completeness. This will only grow with future
+  milestones' own e2e runs — a periodic dev-database reset (outside of migrations,
+  which this is not) is the eventual fix if it ever becomes disruptive, not attempted
+  here.
 
 ---
 
@@ -4429,8 +4794,15 @@ using `prisma migrate resolve`, `SearchService`'s raw-SQL-for-ranking-only /
 Prisma-for-the-rest split, reusing `FollowListResponse` verbatim — revisiting
 Milestone 13's precedent rather than Milestone 15's, and `SearchUsersParams` as its
 own client-side type rather than reusing `SearchUsersQuery` directly) are equally
-each decided and recorded above with rationale, not left open. Everything else
-recorded in
+each decided and recorded above with rationale, not left open. Milestone 18's seven
+deviations (naming `ExploreResponse` distinctly — revisiting Milestone 15's precedent
+rather than Milestone 17's, giving Explore a real keyset cursor unlike search's none
+at all, `ExploreService`'s raw-SQL-for-ranking-only / Prisma-for-the-rest split,
+`ExploreModule` being service-only with its controller hosted inside `PostsModule`,
+the third register-throttle increase, the `findInExplore` pagination-walk test-
+robustness decision, and staying Chromium-only for web-e2e despite installing
+Firefox/WebKit) are equally each decided and recorded above with rationale, not left
+open. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -4441,70 +4813,82 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 18 — Explore Page**: per `docs/IMPLEMENTATION_PLAN.md`, a similarly small
-milestone to Milestone 17 — one new read endpoint and an explore grid UI on both
-platforms, no new schema, no new Postgres extension. `docs/DATABASE.md` §6 already
-specifies the ranking approach ("a simple recency+engagement heuristic... computed
-with an aggregate query, not a precomputed ranking table") and flags it as a scaling
-risk, worth re-reading in full before implementing.
+**Milestone 19 — Account Settings**: per `docs/IMPLEMENTATION_PLAN.md`, three new
+`/me` mutations plus settings screens on both platforms — no new tables, but the
+first milestone to touch `User.tokenVersion`/`passwordHash` outside of registration
+itself, and the first to implement a real, testable session-revocation story.
 
-1. API (`docs/API.md` §11): `GET /explore` — required auth (unlike `GET /search/users`,
-   which is optional; `docs/API.md` §11's table already states this), paginated,
-   posts from accounts the caller does _not_ follow, ranked by recency + engagement
-   (e.g. like-count within a recent time window — `docs/FEATURES.md` #15 gives this
-   exact example). Decide the concrete heuristic formula and time window before
-   assuming one; `docs/DATABASE.md` §6 deliberately leaves this loose ("e.g.") rather
-   than fully specifying it, unlike `GET /search/users`'s exact query pattern.
-2. Decide the response shape: likely full `PostResponse` items, the same choice
-   `GET /feed` (Milestone 12) and `GET /me/saved` (Milestone 15) both made — an
-   explore grid still needs to render real post cards, not just thumbnails, once a
-   post is tapped. Confirm against `docs/FEATURES.md` #15's "grid of posts" wording
-   before assuming a thumbnail-only `PostSummary` shape instead.
-3. Pagination: unlike Milestone 17's `GET /search/users`, a recency+engagement
-   ranking (even a live-computed one) likely _does_ have a usable, if slightly
-   unconventional, keyset — decide whether `(engagementScore, createdAt, id)` or
-   similar can serve a real cursor, or whether this endpoint also ends up
-   `nextCursor`-always-`null` like search did. Don't assume either answer; the two
-   endpoints' ranking functions have different mathematical shapes (a bounded
-   similarity score in `[0,1]` vs. an unbounded, time-decaying engagement count), so
-   Milestone 17's "no stable sort key" conclusion doesn't necessarily transfer here
-   without re-deriving it for this specific heuristic.
-4. Web + mobile: an explore grid UI (`docs/FEATURES.md` #15: "a grid of posts... to
-   aid discovery") — likely similar in shape to the profile grid (`GET
-/users/:username/posts`, Milestone 8/11), reusing that rendering pattern if the
-   response shape ends up compatible, rather than inventing a new grid component
-   from scratch.
-5. **Tests**: an integration test asserting followed-accounts' posts are excluded
-   and ranking is stable/deterministic for a fixed seed (`docs/IMPLEMENTATION_PLAN.md`'s
-   own wording) — against the real Dockerized Postgres, matching every milestone's
-   testing discipline; a Playwright smoke test for the page loading with content
-   (explicitly called for, unlike Milestone 17's search tests which needed the
-   fuller "find and navigate" coverage — Milestone 18's own Playwright bar is lower,
-   per `docs/IMPLEMENTATION_PLAN.md`'s own wording: just confirm the page loads with
-   real content, not a full user-journey test).
+1. API (`docs/API.md` §13): `POST /me/change-password` (body
+   `{ currentPassword, newPassword }` — verify `currentPassword` against the stored
+   `argon2id` hash before accepting, then bump `User.tokenVersion` to invalidate every
+   other session's access token, the same `tokenVersion`-claim mechanism
+   `AuthModule` already established in Milestone 5 for logout-all-devices); `POST
+/me/change-email` (body `{ newEmail, currentPassword }` — decide whether this also
+   bumps `tokenVersion` or only requires re-verification, and whether/how it
+   interacts with `emailVerifiedAt`, which exists in the schema but has never been
+   set by anything yet — re-read `docs/DATABASE.md` §5 before assuming); `DELETE /me`
+   (`docs/API.md` §4/§13 — soft-deletes via `deletedAt`, same column every other
+   soft-delete already uses, and revokes all refresh token families, the same
+   `logout({ allDevices: true })` mechanism Milestone 5 built).
+2. Decide how a password/email change interacts with the _current_ session's own
+   access token: `docs/API.md` §13 already specifies bumping `tokenVersion`
+   invalidates "other sessions'" tokens, implying the changing session needs a
+   freshly-issued token in the same response (not logged out by its own change) —
+   confirm this is actually how `AuthService`'s existing `tokenVersion`-check
+   middleware/guard behaves before assuming, and decide what `POST /me/change-
+password`'s response body actually contains (a new access token? nothing, requiring
+   a client-side refresh?).
+3. Decide account-deletion's exact blast radius before implementing `DELETE /me`:
+   `docs/API.md` §13 says "soft delete + full session revocation," but re-derive
+   whether a soft-deleted user's existing posts/comments/likes/follows remain visible
+   to others (likely: profile/search disappear per the test requirement below, but
+   do their *posts* vanish from others' feeds/explore too, or only their profile?) —
+   `docs/DATABASE.md`'s soft-delete section (§7) and every prior milestone's
+   `deletedAt IS NULL` filtering convention is the right starting point, not a new
+   invention.
+4. Web + mobile: settings screens for change-password, change-email, and delete-
+   account (with a real confirmation step — this is the first genuinely destructive,
+   irreversible-from-the-UI action in this codebase). Decide whether delete-account
+   needs a re-authentication step (re-enter password) before executing, the same
+   defense-in-depth pattern `change-password`/`change-email` already require via
+   `currentPassword`.
+5. **Tests**: an integration test confirming a password change invalidates other
+   sessions' access tokens (via `tokenVersion` mismatch) while the *changing*
+   session's own new token still works (`docs/IMPLEMENTATION_PLAN.md`'s own wording
+   — this needs two real logged-in sessions for the same user, a new test shape this
+   codebase hasn't needed before); an account-deletion integration test confirming a
+   soft-deleted user disappears from public reads (profile, search — and decide
+   whether explore/feed too, per point 3 above) but the row remains in the DB.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 18 section,
-`docs/DATABASE.md` §6's "Explore page" row and whatever scaling-risk entry it
-cross-references, and `docs/API.md` §11. The `/auth/register` throttle has
-comfortable headroom (roughly 33/40 used — 31 before Milestone 17, 2 more registered
-by `search.spec.ts`); keep applying the standing share-via-`beforeAll` discipline
-regardless. For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"`
-placed **after** the trailing `--` together with `--project=chromium` (e.g.
-`nx run web-e2e:e2e -- --grep "name" --project=chromium`), **never**
-`--testPathPatterns` and **never** `--grep=X` before a separate trailing `--` block —
-both of those silently either run the whole suite or drop the filter, confirmed four
-times now (Milestones 14, 15, 16, and 17); the `-- --grep ... --project=...` combined
-form is the only one confirmed reliable. If running the full `apps/web-e2e` suite
-twice in a row against the same long-lived `api:serve` process, expect the
-workspace-wide 100 req/min/IP throttle to trip on the second run — restart
-`api:serve` between full-suite re-runs to reset its in-memory counter, the same
-standing Milestone 13 workaround (and don't assume a mass failure immediately after a
-_fresh_ restart is the same thing — Milestone 17 hit one that wasn't, see Known
-Issues). If `apps/api-e2e` needs to run while port 3000 is occupied by something
-unrelated to this repo, both `global-setup.ts` and `test-setup.ts` already read
-`PORT`/`HOST` from the environment — prefix the command with `PORT=3100` (or any free
-port) rather than touching whatever else is bound to 3000. Port 3000 itself was left
-free at the end of Milestone 17 (the two other-project dev servers Milestone 16
-stopped were never restarted) — check its current state fresh rather than assuming
-either way, since that's this machine's own local state, not something this repo
-controls.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 19 section,
+`docs/API.md` §4/§13, and `docs/DATABASE.md` §5 (`User.tokenVersion`/
+`emailVerifiedAt`/`deletedAt`) and §7 (soft delete) in full — this is the first
+milestone since Milestone 5 to touch the token-versioning mechanism, and the first
+ever to touch `User.deletedAt`, so don't assume either behaves exactly like any
+single prior precedent without checking. The `/auth/register` throttle has
+comfortable headroom (roughly 38/60 used after Milestone 18's `explore.spec.ts`);
+keep applying the standing share-via-`beforeAll` discipline regardless — this
+milestone's two-session password-change test in particular should register the
+minimum accounts it actually needs. For any single-file `apps/web-e2e` Playwright
+run, use `--grep "<name>"` placed **after** the trailing `--` together with
+`--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name" --project=chromium`),
+**never** `--testPathPatterns` and **never** `--grep=X` before a separate trailing
+`--` block — both of those silently either run the whole suite or drop the filter,
+confirmed four times now (Milestones 14, 15, 16, and 17); the
+`-- --grep ... --project=...` combined form is the only one confirmed reliable.
+Firefox/WebKit are now installed but not yet a usable validation target (Milestone
+18, bug #58/Known Issues) — keep validating `apps/web-e2e` with `--project=chromium`
+only, don't assume this has been fixed without checking. If running the full
+`apps/web-e2e` suite twice in a row against the same long-lived `api:serve` process,
+expect the workspace-wide 100 req/min/IP throttle to trip on the second run —
+restart `api:serve` between full-suite re-runs to reset its in-memory counter, the
+same standing Milestone 13 workaround (and don't assume a mass failure immediately
+after a _fresh_ restart is the same thing — Milestone 17 hit one that wasn't, see
+Known Issues). If `apps/api-e2e` needs to run while port 3000 is occupied by
+something unrelated to this repo, both `global-setup.ts` and `test-setup.ts` already
+read `PORT`/`HOST` from the environment — prefix the command with `PORT=3100` (or
+any free port) rather than touching whatever else is bound to 3000. Port 3000 itself
+was left free at the end of Milestone 18 (the `api:serve` process started for this
+milestone's own `web-e2e:e2e` validation was stopped afterward) — check its current
+state fresh rather than assuming either way, since that's this machine's own local
+state, not something this repo controls.

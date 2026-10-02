@@ -150,4 +150,36 @@ describe('PostsClient', () => {
       );
     });
   });
+
+  describe('getExplore', () => {
+    it('sends GET /explore with a valid access token', async () => {
+      const explore = { data: [fakePost], meta: { nextCursor: null } };
+      vi.mocked(fetch).mockResolvedValue(fakeResponse(200, explore));
+      const client = clientWithToken();
+
+      const result = await client.getExplore();
+
+      expect(result).toEqual(explore);
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/explore',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer valid-token' },
+        }),
+      );
+    });
+
+    it('serializes cursor/limit into the query string', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        fakeResponse(200, { data: [], meta: { nextCursor: null } }),
+      );
+      const client = clientWithToken();
+
+      await client.getExplore({ cursor: 'abc', limit: 5 });
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/explore?cursor=abc&limit=5',
+        expect.anything(),
+      );
+    });
+  });
 });
