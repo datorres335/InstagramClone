@@ -1,0 +1,173 @@
+name: CI
+
+# Milestone 20 (docs/IMPLEMENTATION_PLAN.md M20, docs/PROGRESS.md) — the
+# first CI config in this repo. `nx affected -t lint test build e2e` on
+# every PR and on push to `main`, exactly as docs/ARCHITECTURE.md §10 always
+# assumed ("CI (not built in this phase, but assumed) would run nx affected
+# -t lint test build e2e on PRs"). `main` gates via branch protection
+# (a one-time GitHub repo setting, outside this file) requiring the `main`
+# job below to pass before merging — this workflow provides the check,
+# branch protection is what makes it actually *gate* anything.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '12.6.0'
+
+jobs:
+  main:
+    name: Lint, test, build, e2e (affected)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history, not a shallow clone — `nx affected` diffs against
+          # a base commit nx-set-shas resolves below, which needs real
+          # history to compare against.
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Derive Nx base/head for affected commands
+        uses: nrwl/nx-set-shas@v4
+
+      # .env.example's own values ("Nothing here is a real secret") — this
+      # is a dev-grade MVP with no production deployment yet
+      # (docs/ARCHITECTURE.md §13), so there are no real secrets to inject
+      # from GitHub Secrets here. Revisit once a real deployment target
+      # exists.
+      - name: Configure environment
+        run: cp .env.example .env
+
+      # Reuses the exact docker-compose.yml every local dev environment
+      # already runs (docs/ARCHITECTURE.md §9) rather than re-declaring
+      # equivalent service containers in this workflow's own YAML —
+      # ubuntu-latest runners ship Docker + Compose v2 preinstalled, and
+      # MinIO's service needs a custom `command`/console-address flag that
+      # GitHub Actions' own `services:` key can't express, so this is the
+      # lower-risk, single-source-of-truth choice, not a shortcut.
+      - name: Start infrastructure (Postgres, Redis, MinIO)
+        run: docker compose up -d --wait
+
+      - name: Apply database migrations
+        run: pnpm exec nx run prisma:migrate-deploy
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      # Chromium only here — the primary, lowest-flake-rate gating browser
+      # (docs/PROGRESS.md Milestone 20 Known Issues: Firefox/WebKit have a
+      # real, measured higher flake rate in this environment). Real
+      # cross-browser coverage runs as its own non-blocking job below.
+      - name: Install Playwright (Chromium)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Lint affected
+        run: pnpm exec nx affected -t lint
+
+      - name: Test affected
+        run: pnpm exec nx affected -t test
+
+      - name: Build affected
+        run: pnpm exec nx affected -t build
+
+      # Split into two steps, not one `nx affected -t e2e`, because
+      # `api-e2e`'s Jest-based runner and `web-e2e`'s Playwright-based one
+      # take different CLI flags — a shared `-t e2e` invocation can't safely
+      # forward `--project=chromium` to both without one of them choking on
+      # a flag it doesn't understand.
+      - name: API E2E (affected)
+        run: pnpm exec nx affected -t e2e -p api-e2e
+
+      - name: Web E2E — Chromium (affected)
+        run: pnpm exec nx affected -t e2e -p web-e2e -- --project=chromium
+
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose down -v
+
+  cross-browser-e2e:
+    name: Web E2E — ${{ matrix.project }} (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [firefox, webkit]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure environment
+        run: cp .env.example .env
+
+      - name: Start infrastructure (Postgres, Redis, MinIO)
+        run: docker compose up -d --wait
+
+      - name: Apply database migrations
+        run: pnpm exec nx run prisma:migrate-deploy
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ matrix.project }}-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright (${{ matrix.project }})
+        run: pnpm exec playwright install --with-deps ${{ matrix.project }}
+
+      # The *full* suite, not `nx affected` — each matrix entry is its own
+      # fully isolated runner (its own fresh Postgres, its own in-memory
+      # throttle counters), which is exactly what resolves the register/
+      # login-throttle collision Milestone 20 found when all three browsers
+      # shared one long-lived local server (docs/PROGRESS.md's own Known
+      # Issues entry) — no `--workers` tuning or sequencing trick needed.
+      - name: Web E2E — ${{ matrix.project }}
+        run: pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=${{ matrix.project }}
+
+      - name: Stop infrastructure
+        if: always()
+        run: docker compose down -v

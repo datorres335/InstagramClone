@@ -335,28 +335,77 @@ M8/M9 below for the precise split.
   and to decide which future feature (Stories, Reels, DMs, push, realtime) is tackled
   next.
 
+**Decision (made in Milestone 20 itself, per this section's own instruction): Direct
+Messages next, M21.** Of the four candidates, DMs is the only one that's core,
+expected social-app functionality rather than a specialized content format (Stories/
+Reels) or a cross-cutting infra upgrade with no feature of its own (push/realtime) —
+and realtime transport is better justified as the infrastructure _that DMs needs_
+(see M22 below) than as a standalone milestone with nothing concrete driving it yet.
+See `docs/PROGRESS.md`'s Milestone 20 Architectural Decisions entry for the full
+reasoning.
+
+### M21 — Direct Messages (Foundation)
+
+- Schema: decide 1:1-only vs. group-capable up front (`DATABASE.md`'s own "decide the
+  real schema before implementing" discipline) — a `Conversation` +
+  `ConversationParticipant` join table supports both without a later migration;
+  a bare `Message(senderId, recipientId)` pair only supports 1:1 and would need a
+  breaking schema change to ever add group chat. Recommend the join-table shape even
+  for a 1:1-only MVP, given how cheap that optionality is to keep open now.
+  `Message(conversationId, senderId, body, readAt, createdAt)`.
+- API: `POST /conversations` (idempotent for the same pair of participants, mirroring
+  `Follow`'s self-referential dedup precedent — starting a conversation with someone
+  you already have one with returns the existing one, not a duplicate), `GET
+/conversations` (inbox list, newest-activity-first), `GET /conversations/:id/messages`
+  (cursor-paginated), `POST /conversations/:id/messages`. Authorization: a participant
+  can only read/post to conversations they're actually in — the first endpoint in this
+  codebase needing a "many-to-many membership" check rather than single-owner
+  (`author.id === viewer.id`) or follow-based authorization.
+- Web + mobile: an inbox list screen + a conversation thread view. Still poll-based for
+  new-message detection (matching `Notification`'s own MVP choice, `ARCHITECTURE.md`
+  §10) — explicitly **not** bundling realtime transport into this same milestone; see
+  M22.
+- **Tests**: conversation-creation idempotency for the same participant pair; message
+  pagination; a non-participant rejected from reading/posting to a conversation they're
+  not in (`403`, the first test of this specific authorization shape).
+
+### M22 — Realtime Transport (WebSocket/SSE)
+
+- Retrofits `Notification`'s poll-based unread count (Milestone 16) and M21's
+  poll-based new-message detection with a real push transport — explicitly deferred
+  until there are _two_ real consumers needing it (the same "don't build shared
+  infrastructure for a single, hypothetical consumer" discipline this codebase has
+  followed since Milestone 2's `pg_trgm` deferral), not attempted alongside either
+  feature individually.
+- Decide WebSocket (`@nestjs/websockets`) vs. SSE before implementing — SSE is simpler
+  (plain HTTP, no new protocol) but one-directional (fine for "new message/notification
+  arrived" pushes, not for anything needing the client to send over the same channel);
+  re-derive which this codebase actually needs rather than assuming either.
+
 ## Summary Table
 
-| #   | Milestone                    | New tables             | New packages/apps touched first |
-| --- | ---------------------------- | ---------------------- | ------------------------------- |
-| 0   | Workspace bootstrap          | —                      | `eslint-config`                 |
-| 1   | Docker infra                 | —                      | —                               |
-| 2   | Prisma base                  | `User`, `RefreshToken` | `prisma`                        |
-| 3   | Shared types/validation base | —                      | `types`, `validation`, `config` |
-| 4   | API bootstrap                | —                      | `api`                           |
-| 5   | Auth                         | —                      | —                               |
-| 6   | Web bootstrap + auth UI      | —                      | `web`, `api-client`, `web-e2e`  |
-| 7   | Mobile bootstrap + auth UI   | —                      | `mobile`                        |
-| 8   | Profiles (read/edit)         | —                      | —                               |
-| 9   | Media pipeline               | `Media`                | —                               |
-| 10  | Follow/unfollow              | `Follow`               | —                               |
-| 11  | Posts                        | `Post`, `PostMedia`    | —                               |
-| 12  | Home feed                    | —                      | —                               |
-| 13  | Likes                        | `Like`                 | —                               |
-| 14  | Comments                     | `Comment`              | —                               |
-| 15  | Saved posts                  | `SavedPost`            | —                               |
-| 16  | Notifications                | `Notification`         | —                               |
-| 17  | User search                  | —                      | —                               |
-| 18  | Explore page                 | —                      | —                               |
-| 19  | Account settings             | —                      | —                               |
-| 20  | E2E coverage + hardening     | —                      | —                               |
+| #   | Milestone                    | New tables                                           | New packages/apps touched first |
+| --- | ---------------------------- | ---------------------------------------------------- | ------------------------------- |
+| 0   | Workspace bootstrap          | —                                                    | `eslint-config`                 |
+| 1   | Docker infra                 | —                                                    | —                               |
+| 2   | Prisma base                  | `User`, `RefreshToken`                               | `prisma`                        |
+| 3   | Shared types/validation base | —                                                    | `types`, `validation`, `config` |
+| 4   | API bootstrap                | —                                                    | `api`                           |
+| 5   | Auth                         | —                                                    | —                               |
+| 6   | Web bootstrap + auth UI      | —                                                    | `web`, `api-client`, `web-e2e`  |
+| 7   | Mobile bootstrap + auth UI   | —                                                    | `mobile`                        |
+| 8   | Profiles (read/edit)         | —                                                    | —                               |
+| 9   | Media pipeline               | `Media`                                              | —                               |
+| 10  | Follow/unfollow              | `Follow`                                             | —                               |
+| 11  | Posts                        | `Post`, `PostMedia`                                  | —                               |
+| 12  | Home feed                    | —                                                    | —                               |
+| 13  | Likes                        | `Like`                                               | —                               |
+| 14  | Comments                     | `Comment`                                            | —                               |
+| 15  | Saved posts                  | `SavedPost`                                          | —                               |
+| 16  | Notifications                | `Notification`                                       | —                               |
+| 17  | User search                  | —                                                    | —                               |
+| 18  | Explore page                 | —                                                    | —                               |
+| 19  | Account settings             | —                                                    | —                               |
+| 20  | E2E coverage + hardening     | —                                                    | —                               |
+| 21  | Direct messages (foundation) | `Conversation`, `ConversationParticipant`, `Message` | —                               |
+| 22  | Realtime transport           | —                                                    | —                               |

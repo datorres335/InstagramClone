@@ -45,16 +45,22 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
 - **Idempotent toggles use `PUT`/`DELETE`, not `POST`**, for follow/like/save, so a
   retried request is safe: `PUT` = ensure the relationship exists, `DELETE` = ensure it
   doesn't. Both return `204 No Content` whether or not the call changed state.
-- **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP) with
-  stricter per-route limits on `/auth/login`, `/auth/refresh` (10 req/min/IP) and
-  `/auth/register` (40 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
-  in Milestone 12, both times because `apps/api-e2e`'s register calls are a shared
-  per-run budget across every spec file against one server process, and the suite
-  outgrew each previous limit; see `docs/PROGRESS.md`'s Milestone 12 deviations)
-  to slow credential-stuffing/enumeration — implemented Milestone 5. In-memory
-  storage, not Redis (see the deviation in `docs/PROGRESS.md`): correct for the
-  single-process API this is today, revisit if `apps/api` is ever horizontally
-  scaled.
+- **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP, skipped
+  entirely on `GET /health` — a liveness/readiness endpoint must never be subject to
+  rate limiting, or a load balancer's/orchestrator's own frequent polling would
+  produce false "unhealthy" signals under real traffic; see
+  `docs/PROGRESS.md`'s Milestone 20 deviations) with stricter per-route limits on
+  `/auth/login`, `/auth/refresh` (20 req/min/IP — raised from 10 in Milestone 20) and
+  `/auth/register` (60 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
+  in Milestone 12, then to 60 in Milestone 18) to slow credential-stuffing/
+  enumeration — implemented Milestone 5. Every one of these increases happened for
+  the same reason: `apps/api-e2e`'s calls to these routes are a shared, per-run
+  budget across every spec file against one long-lived server process, and the
+  suite kept outgrowing each previous limit as more milestones' own tests called
+  them — see `docs/PROGRESS.md`'s Milestone 12/18/20 deviations for the specific
+  numbers each time. In-memory storage, not Redis (see the deviation in
+  `docs/PROGRESS.md`): correct for the single-process API this is today, revisit if
+  `apps/api` is ever horizontally scaled.
 - **CORS**: allow-list of known web origins only; credentials (`Access-Control-Allow-
 Credentials: true`) enabled since the refresh cookie requires it.
 - **OpenAPI**: generated at build time from the same Zod schemas (`nestjs-zod`),
@@ -126,7 +132,7 @@ substitutions without meaningfully improving guessability; length is what matter
 | `GET /users/:username/posts` | optional | Paginated post grid for that user — returns real `PostSummary` items, cursor-paginated newest-first (**implemented Milestone 11**, see §7)                                                                                                                                                                                                                   |
 | `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                                                                                                                                                                                                                                                                  |
 | `PATCH /me/avatar`           | required | Body `{ mediaId }` → `200` `MediaResponse` (§6) — must reference the caller's own `READY` `AVATAR`-purpose media (`403` if not the caller's own, `422 media-not-ready` — §14 — if wrong purpose or not `READY`). Returns the media resource, not `UserResponse`, since the latter deliberately never includes `avatarUrl` (§3) — **implemented Milestone 9** |
-| `DELETE /me`                 | required | Body `{ currentPassword }` → `204`. Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **implemented Milestone 19**                                                                                                                                                                                                          |
+| `DELETE /me`                 | required | Body `{ currentPassword }` → `204`. Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **implemented Milestone 19**                                                                                                                                                                                                           |
 
 `GET /users/:username`'s `avatarUrl` resolves to a real URL once the user has a `READY`
 `AVATAR` media set (implemented Milestone 9); `followersCount`/`followingCount` are real
@@ -384,12 +390,12 @@ per-notification "mark read" UI control in the MVP, only the bulk
 
 ## 13. Account Settings (implemented Milestone 19)
 
-| Method & path              | Auth     | Notes                                                                                                                                                                                |
-| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PATCH /me`                | required | See §4 — profile fields                                                                                                                                             |
-| `POST /me/change-password` | required | Body `{ currentPassword, newPassword }` → `200` `RefreshResponse` (§3, reused verbatim) — a fresh token pair for the *calling* session, since `tokenVersion` bumps invalidate every outstanding access token, including this one's |
-| `POST /me/change-email`    | required | Body `{ newEmail, currentPassword }` → `200` `UserResponse` (§3) — no `tokenVersion` bump, no session revocation (only a password change does that)                |
-| `DELETE /me`               | required | See §4                                                                                                                                                               |
+| Method & path              | Auth     | Notes                                                                                                                                                                                                                              |
+| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /me`                | required | See §4 — profile fields                                                                                                                                                                                                            |
+| `POST /me/change-password` | required | Body `{ currentPassword, newPassword }` → `200` `RefreshResponse` (§3, reused verbatim) — a fresh token pair for the _calling_ session, since `tokenVersion` bumps invalidate every outstanding access token, including this one's |
+| `POST /me/change-email`    | required | Body `{ newEmail, currentPassword }` → `200` `UserResponse` (§3) — no `tokenVersion` bump, no session revocation (only a password change does that)                                                                                |
+| `DELETE /me`               | required | See §4                                                                                                                                                                                                                             |
 
 Both `change-password` and `change-email`, and `DELETE /me`, confirm `currentPassword`
 against the stored hash before applying the change — a `401` (`IncorrectPasswordException`,

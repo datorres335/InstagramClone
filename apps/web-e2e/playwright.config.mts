@@ -32,13 +32,31 @@ export default defineConfig({
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',
   },
-  /* Run your local dev server before starting the tests */
-  webServer: {
-    command: 'pnpm exec nx run web:dev',
-    url: 'http://localhost:4200',
-    reuseExistingServer: true,
-    cwd: workspaceRoot,
-  },
+  /* Run the local dev servers before starting the tests — an array, not a
+   * single entry (Milestone 20): `apps/api` doesn't start itself the way
+   * `web:dev` does, which meant every prior milestone's web-e2e run needed
+   * `nx run api:serve` started manually first (docs/PROGRESS.md's
+   * long-standing Known Issue) or every test would fail against a
+   * connection-refused API. Playwright's `webServer` option accepts a list
+   * precisely for this "more than one process to bring up" case — both
+   * entries are started/health-checked/torn down the same way `web:dev`
+   * already was, so this needs Postgres/Redis/MinIO already running
+   * (`docker compose up -d`) but nothing else manual. */
+  webServer: [
+    {
+      command: 'pnpm exec nx run api:serve',
+      url: 'http://localhost:3000/api/v1/health',
+      reuseExistingServer: true,
+      cwd: workspaceRoot,
+      timeout: 60_000,
+    },
+    {
+      command: 'pnpm exec nx run web:dev',
+      url: 'http://localhost:4200',
+      reuseExistingServer: true,
+      cwd: workspaceRoot,
+    },
+  ],
   projects: [
     {
       name: 'chromium',

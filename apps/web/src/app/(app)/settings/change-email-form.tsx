@@ -24,9 +24,9 @@ export function ChangeEmailForm({ currentEmail }: ChangeEmailFormProps) {
         <input id="newEmail" name="newEmail" type="email" required />
       </div>
       <div>
-        <label htmlFor="currentPassword">Current password</label>
+        <label htmlFor="emailCurrentPassword">Current password</label>
         <input
-          id="currentPassword"
+          id="emailCurrentPassword"
           name="currentPassword"
           type="password"
           autoComplete="current-password"

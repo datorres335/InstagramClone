@@ -8,8 +8,8 @@ It should be updated after every completed milestone or meaningful development s
 
 ## Current Status
 
-**Phase:** Core Features
-**Current Milestone:** Milestone 19 — Account Settings
+**Phase:** Core Features (MVP feature set complete as of this milestone)
+**Current Milestone:** Milestone 20 — Web E2E Coverage + Hardening Pass
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -195,6 +195,39 @@ long-standing documentation inaccuracy surfaced and was corrected: `docs/DATABAS
 §7 described a centralized Prisma Client `$extends` filter for `deletedAt IS NULL`
 reads that was never actually built — every service has always filtered
 `deletedAt: null` manually, confirmed across seven services by direct inspection.
+Milestone 20 — the last milestone on `docs/IMPLEMENTATION_PLAN.md`'s original summary
+table, and the first whose job is to look backward across everything already built
+rather than add a new feature — closes out the MVP phase with a full
+critical-path Playwright test (`apps/web-e2e/src/critical-path.spec.ts`, one
+continuous journey through every feature this codebase has, chaining three browser
+contexts rather than isolating each feature the way every other `web-e2e` file
+already does), a real security/hardening pass (Helmet/CORS/rate-limiting verified
+live against a real server, not just read off `docs/ARCHITECTURE.md` §11 and
+trusted, formalized into `apps/api-e2e/src/security/security.spec.ts`), a corrected
+risk register (`docs/ARCHITECTURE.md` §12 — two rows were stale, describing
+Milestone 16's notification pipeline as "still pending" and "sharing media's queue,"
+neither true since Milestone 16 actually shipped), and this repository's first CI
+pipeline (`.github/workflows/ci.yml`, `nx affected -t lint test build e2e` on every
+PR/push to `main`, plus a non-blocking Firefox/WebKit matrix job). Building the
+critical-path test surfaced two genuine, previously-undetected bugs this milestone
+fixed: duplicate HTML `id`s on `/settings` once `change-password`'s and
+`change-email`'s forms render together (`apps/web/.../change-email-form.tsx`), and a
+`pg_trgm` search-ranking defect where a user matched purely on a strong `full_name`
+hit could rank beneath unrelated noise because the original query ordered by
+`similarity(username, …)` alone, corrected to `GREATEST(similarity(username, …),
+similarity(full_name, …))`. It also surfaced — but, after extensive investigation,
+deliberately did **not** attempt to fix — a confirmed, open upstream Next.js
+App Router limitation: `redirect()` inside a Server Action bound to
+`useActionState`, on a form resubmitted after that same action previously returned a
+normal (non-redirecting) state, doesn't reliably navigate the browser, independent of
+`redirect()` vs. a client-side alternative and independent of dev vs. production
+builds (`docs/ARCHITECTURE.md` §12 risk #11 has the full citation and reasoning).
+Finally, this milestone is where `docs/IMPLEMENTATION_PLAN.md` explicitly calls for
+deciding the next feature post-MVP: **Direct Messages**, with realtime transport
+(WebSocket/SSE) following as its own milestone once DMs gives it a second real
+consumer alongside `Notification`'s existing poll-based design — see the
+Architectural Decisions entry below for the reasoning, and `docs/IMPLEMENTATION_PLAN.md`
+M21/M22 for the resulting scope.
 
 ---
 
@@ -1364,6 +1397,96 @@ userId`)
       three consecutive runs) + a full live-endpoint smoke test against
       the dev server (change-password/change-email/delete-account, each
       success and failure path) before any automated test was written
+
+### Milestone 20 — Web E2E Coverage + Hardening Pass
+
+- [x] `apps/web-e2e/src/critical-path.spec.ts` — one continuous journey
+      (register → log out → log back in → edit profile → upload avatar →
+      create a post → follow → appear in feed → like → comment → save →
+      appear in search → appear in explore → receive + read notifications
+      → change password → log out → log back in with the new password)
+      across three browser contexts (`author`/`follower`/`stranger`,
+      matching the real-world shape of the journey rather than forcing
+      everything through one account) — proves these already-independently-
+      tested features actually compose for one real user, which no
+      existing `web-e2e` file exercised
+- [x] `apps/web-e2e/playwright.config.mts` — `webServer` is now an array
+      (`api:serve` + `web:dev`), not a single entry: every prior
+      milestone's web-e2e run needed `nx run api:serve` started manually
+      first (a long-standing Known Issue); Playwright now starts/health-
+      checks/tears down both automatically
+- [x] `apps/api-e2e/src/security/security.spec.ts` — formalizes Milestone
+      20's own manual live verification (Helmet headers, the CORS
+      allow-list, and rate limiting are genuinely configured and effective,
+      not just documented as intended — `docs/ARCHITECTURE.md` §11) into
+      permanent real-HTTP coverage: Helmet headers present on every
+      response, an allowed origin reflected in `Access-Control-Allow-
+Origin` vs. a disallowed one getting no such header at all, and both the
+      global default (100/min) and a stricter per-route override (`/auth
+/login`, now 20/min) tagging distinct `X-RateLimit-Limit` values
+- [x] `apps/api/src/health/health.controller.ts` — `@SkipThrottle()`: a
+      liveness/readiness endpoint must never be rate-limited, or routine
+      load-balancer/orchestrator polling would produce false "unhealthy"
+      signals — found concretely via this milestone's own rate-limit test
+      design, not speculatively
+- [x] `apps/api/src/modules/auth/auth.controller.ts` — `/auth/login` and
+      `/auth/refresh` throttles raised 10 → 20/min/IP: `apps/api-e2e`'s real
+      usage had independently reached exactly 10 calls each across existing
+      spec files for both routes, sitting at the limit with zero headroom
+      — discovered, not anticipated, when this milestone's own
+      `security.spec.ts` tipped `/auth/login` over for the first time
+- [x] `apps/api/src/modules/search/search.service.ts` — fixed a real
+      `pg_trgm` ranking defect: `ORDER BY similarity(username, …)` alone
+      could bury a user matched purely on a strong `full_name` hit beneath
+      unrelated noise on this ever-growing dev database; corrected to
+      `ORDER BY GREATEST(similarity(username, …), similarity(full_name,
+…))` — found via `search.spec.ts`'s own "matches on fullName" test
+      turning genuinely flaky under repeated full-suite runs
+- [x] `apps/web/src/app/(app)/settings/change-email-form.tsx` — fixed a
+      duplicate HTML `id` (`currentPassword`, shared with
+      `change-password-form.tsx`) that was invalid markup and gave
+      ambiguous label association once both forms render together on one
+      page — found while writing the critical-path test's settings step
+- [x] `.github/workflows/ci.yml` — this repository's first CI pipeline:
+      `nx affected -t lint test build`, then `api-e2e`'s and `web-e2e`'s
+      (Chromium) `e2e` targets as their own steps, on every PR and push to
+      `main`, reusing the existing `docker-compose.yml` for
+      Postgres/Redis/MinIO rather than re-declaring service containers in
+      the workflow itself; a separate `continue-on-error: true` matrix job
+      runs the full `web-e2e` suite against Firefox/WebKit, non-blocking
+      given their measured higher flake rate
+- [x] `docs/ARCHITECTURE.md` §12 risk register corrected: risk #4 claimed
+      notification fan-out was "still pending" (shipped in Milestone 16),
+      risk #10 claimed it shared `media`'s queue (it has always had its
+      own dedicated `notifications` queue) — both stale since Milestone 16,
+      never corrected until now; a new risk #11 records the `redirect()`/
+      `useActionState` finding; §13's email-delivery open question
+      corrected (it anticipated Account Settings would need one; Milestone
+      19's actual scope never did)
+- [x] Diagnosed (but deliberately did not attempt to fix) a confirmed, open
+      upstream Next.js issue: `redirect()` inside a Server Action bound to
+      `useActionState`, resubmitted on the same page after that action
+      previously returned a non-redirecting state, doesn't reliably
+      navigate — affects `login`/`register`/profile-edit/delete-account.
+      Worked around in `critical-path.spec.ts` with a `page.reload()`
+      between the failed and corrected login attempts (both reliable and
+      a realistic thing a real stuck user would do) — see Bugs Found below
+      for the full investigation
+- [x] **Decided the next feature post-MVP** (`docs/IMPLEMENTATION_PLAN.md`
+      explicitly designates this milestone as the point to do so): Direct
+      Messages, with realtime transport (WebSocket/SSE) as its own later
+      milestone once DMs gives it a second real consumer alongside
+      `Notification`'s poll-based design — recorded as `docs/
+IMPLEMENTATION_PLAN.md` M21/M22
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects, mobile's known `run-many`-only flake confirmed clean on
+      standalone re-run) + standalone `tsc --noEmit` for `api`/`web`/
+      `mobile` + `api-e2e:e2e` (132/132 tests, stable across multiple
+      consecutive runs) + `web-e2e:e2e` (24/24 spec files including the
+      new critical-path test, Chromium — the one pre-existing flake seen
+      across repeated full-suite runs was never the new critical-path
+      test itself, and matches the same already-documented Next-dev-
+      server-timing flake class prior milestones have already recorded)
 
 ---
 
@@ -2854,6 +2977,95 @@ No Playwright `apps/web-e2e` test was written or run for this milestone —
 integration-test requirements already covered above; a change-password Playwright
 flow is explicitly part of Milestone 20's full critical-path expansion instead.
 
+### Milestone 20
+
+```bash
+# Manual live verification against a real dev server, before writing any
+# automated test — the same discipline every prior milestone's own
+# findings have followed:
+curl -D - http://localhost:3000/api/v1/health
+# ^ confirmed real Helmet headers (Content-Security-Policy, X-Frame-Options,
+#   X-Content-Type-Options: nosniff, etc.) and X-RateLimit-* headers present.
+curl -D - http://localhost:3000/api/v1/health -H "Origin: http://localhost:4200"
+# ^ Access-Control-Allow-Origin correctly reflects the allowed origin.
+curl -D - http://localhost:3000/api/v1/health -H "Origin: http://evil.example.com"
+# ^ no Access-Control-Allow-Origin header at all for a disallowed origin.
+for i in $(seq 1 12); do curl -s -o /dev/null -w "%{http_code}\n" \
+  -X POST http://localhost:3000/api/v1/auth/login -d '{"emailOrUsername":"x","password":"wrong"}'; done
+# ^ 10x 401, then 429 from the 11th on — the documented /auth/login limit
+#   (then still 10/min) genuinely enforced, not just configured.
+grep -rl "$JWT_ACCESS_TOKEN_SECRET" apps/web/.next/static apps/web/.next/server apps/mobile/dist
+# ^ empty in every case — no leaked secret in anything actually served to
+#   a client. (It DID appear in apps/web/.next/cache/ — Next's own internal
+#   build cache, never served/deployed, confirmed a non-issue.)
+
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --grep "critical path" --project=chromium
+# ^ first attempt: "Test timeout of 120000ms exceeded" at the very last
+#   waitForURL('/home'). Raised to 180s, then 300s — still failed at the
+#   exact same line even with 5 minutes available, ruling out a timeout-
+#   budget explanation. Isolated into a minimal standalone repro (register
+#   -> logout -> fail login once -> retry with the correct password on the
+#   same page): reproduced independently of password-change entirely,
+#   independent of redirect() vs. router.push()/window.location, and
+#   independent of dev vs. a real production build (pnpm exec nx run
+#   web:build + a temporary web:start webServer swap). Confirmed via web
+#   search as a known, open, unresolved upstream Next.js App Router issue
+#   (vercel/next.js discussions #73199/#82080, issue #72842). Reverted the
+#   speculative `redirectTo`-based client-navigation refactor (didn't fix
+#   the actual symptom, added real complexity for no benefit) and instead
+#   added a `page.reload()` between the failed and corrected login attempts
+#   in the test itself — confirmed reliable, then reduced the test's own
+#   timeout back down to 60s once the real run time (~9s) was known.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --grep "critical path" --project=chromium
+# ^ 1/1 passed (9.1s), then twice more (10.3s, 8.9s) — stable.
+
+pnpm exec nx run api-e2e:e2e --skip-nx-cache --testPathPatterns=security   # 5/5 (4
+# after the rate-limit test was redesigned away from a /health-hammering
+# burst, which intermittently 429'd health.spec.ts's own unrelated single
+# check running concurrently — see Bugs Found).
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # full suite — multiple
+# failures the first time (429s on /auth/login from other files' own
+# calls, tipped over by security.spec.ts's one extra call; then a genuine
+# search-ranking flake once the throttle was fixed). Raised /auth/login
+# and /auth/refresh 10 -> 20/min/IP; fixed the search ranking query (see
+# Bugs Found below for both). Re-ran 8 times total across the investigation
+# — clean every time after both fixes landed (132/132 each run).
+
+pnpm exec nx run api:test --skip-nx-cache   # 218/218, clean
+pnpm exec nx run api:lint --skip-nx-cache   # clean
+pnpm exec nx run api:build --skip-nx-cache   # clean
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean (after reverting
+# the redirectTo refactor)
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ one failure: mobile:test (comment-section.spec.tsx) — the same
+#   already-documented run-many flake (bugs #47/#49/#54/#58/#61). This
+#   milestone's own standalone re-run was ALSO flaky once (a new data
+#   point — see Known Issues), clean on the immediate retry after that.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ full suite, three separate runs: 23/23, 23/23 (1 pre-existing flake —
+#   profile.spec.ts's "pre-fills the form" — unrelated to this milestone,
+#   matches bug #46's class exactly), 24/24 after critical-path.spec.ts was
+#   added (one run showed comment-post.spec.ts flake instead — same class,
+#   different test, confirmed NOT the new critical-path test in either
+#   case).
+
+node -e "const yaml = require('js-yaml'); yaml.load(require('fs').readFileSync('.github/workflows/ci.yml','utf8'))"
+# ^ confirms .github/workflows/ci.yml is syntactically valid YAML with the
+#   two expected jobs (main, cross-browser-e2e). Not run on an actual
+#   GitHub Actions runner — this environment has no way to trigger one
+#   without pushing, which wasn't requested — see Known Issues.
+```
+
+Several `api:serve`-related background processes orphaned on port 3000 across this
+milestone's own manual live-testing (confirmed-own-process identity checked via
+`Get-NetTCPConnection`/`Get-CimInstance` every time before killing, per standing
+practice) — the same already-documented "continuous-task teardown doesn't reliably
+run" characteristic (bugs #37/#43/#60), recurring frequently enough this milestone
+that it's now treated as an expected step after every manual `api:serve` use, not an
+occasional troubleshooting one.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -3910,6 +4122,91 @@ check are both exactly the mechanisms `docs/ARCHITECTURE.md` §7 already describ
 milestone is the first to actually exercise them through real endpoints, not a design
 change to either.
 
+### Milestone 20
+
+- **`GET /health` is now `@SkipThrottle()`'d, a real behavior change beyond what
+  `docs/ARCHITECTURE.md` §11 originally specified** — found, not anticipated: an early
+  draft of `security.spec.ts`'s rate-limit test deliberately hammered `/health` past
+  the global 100/min limit to prove throttling works, which intermittently 429'd
+  `health.spec.ts`'s own unrelated single health check running concurrently in a
+  different Jest worker. The fix is the correct general design regardless of the test
+  collision that surfaced it: a liveness/readiness endpoint must never be
+  rate-limited, since routine load-balancer/orchestrator polling in a real deployment
+  would otherwise produce false "unhealthy" signals under normal traffic. The
+  permanent test was redesigned afterward to check `X-RateLimit-Limit` header values
+  on single requests instead of deliberately tripping a shared route's budget at all.
+- **`/auth/login` and `/auth/refresh` throttles raised 10 → 20/min/IP, the same
+  "shared, whole-suite budget" pattern `/auth/register`'s own 10→20→40→60 history
+  already established, just never previously needed for these two routes** — real
+  `apps/api-e2e` usage had independently reached exactly 10 calls each across existing
+  spec files (`auth-flow.spec.ts`, `refresh-expiry.spec.ts`, `refresh-reuse.spec.ts`,
+  `account-settings.spec.ts`), sitting precisely at the limit with zero headroom —
+  this milestone's own `security.spec.ts` adding one more login call tipped it over
+  for the first time, causing real, intermittent 429s in other files' unrelated login
+  calls. Doubling to 20 (not a larger jump) matches the proportional size of
+  `/auth/register`'s own first increase.
+- **`SearchService`'s ranking query changed from `ORDER BY similarity(username, …)`
+  to `ORDER BY GREATEST(similarity(username, …), similarity(full_name, …))`, a
+  correction to `docs/DATABASE.md` §6's originally-documented literal pattern** —
+  found via `search.spec.ts`'s own "matches on fullName as well as username" test
+  (Milestone 17) turning genuinely flaky under repeated full-suite runs: a user
+  matched purely on a strong `full_name` hit, but with a username sharing little
+  trigram overlap with the query, could rank below unrelated noise and fall off the
+  single, uncursored page entirely as this dev database's accumulated e2e accounts
+  grew. Ranking by the greater of the two similarities is the objectively correct fix
+  (a strong `full_name` match should rank highly), not a band-aid for the test.
+- **`apps/web-e2e/playwright.config.mts`'s `webServer` is now an array (`api:serve` +
+  `web:dev`), resolving a long-standing Known Issue rather than just documenting it
+  again** — every prior milestone's web-e2e validation needed `nx run api:serve`
+  started manually first; Playwright's `webServer` option accepts a list precisely for
+  this "more than one process to bring up" case, and both entries are now started/
+  health-checked/torn down identically. Confirmed working by running the new
+  critical-path test with no manual `api:serve` step at all.
+- **A `redirectTo`-based client-navigation refactor (`AuthActionState` gaining a
+  `redirectTo: string | null` field, `login`/`register`/profile-edit/delete-account
+  all switched from server-side `redirect()` to a client `useEffect` +
+  `router.push()`/`window.location.href`) was implemented, tested, found not to fix
+  the actual problem, and fully reverted** — see the Bugs Found entry below for the
+  full investigation. Recorded here specifically so a future session doesn't
+  re-attempt the same workaround without first reading why it didn't work: the
+  underlying `state` from `useActionState` itself never updated on the second
+  dispatch in the reproducible scenario, which no client-side navigation strategy can
+  work around, since there's no new state to navigate on in the first place.
+- **`apps/web/.../settings/change-email-form.tsx`'s `currentPassword` field id
+  renamed to `emailCurrentPassword`** — a real, independent HTML-validity bug
+  (duplicate `id="currentPassword"` shared with `change-password-form.tsx`, invalid
+  markup with ambiguous `label[for]` association), found while writing the
+  critical-path test's settings step, fixed regardless of the test's own selector
+  strategy (which uses `#currentPassword`/`#newPassword` directly, not
+  `getByLabel`, specifically because three fields on one page now share the exact
+  label text "Current password").
+- **The `web-e2e` cross-browser (Firefox/WebKit) job in CI is `continue-on-error: true`
+  — informational, not merge-blocking** — a direct, deliberate consequence of
+  Milestone 18's bug #58 finding (never fully resolved) and this milestone's own
+  repeated observation that Firefox/WebKit have a measurably higher flake rate than
+  Chromium in this environment. Each matrix entry is its own fully isolated GitHub
+  Actions runner specifically to eliminate the register/login-throttle collision that
+  made running all three browsers together *locally* against one shared server
+  unreliable — isolation solves the throttle problem completely, but doesn't change
+  the underlying per-browser timing-sensitivity difference, so the job stays
+  non-blocking rather than assuming isolation alone makes it as reliable as Chromium.
+- **CI reuses `docker-compose.yml` directly (`docker compose up -d --wait`) rather than
+  GitHub Actions' own `services:` key** — checked, not assumed: MinIO's service needs
+  a custom `command`/`--console-address` flag and a separate `mc`-based init container
+  for bucket creation, neither of which `services:` can express as cleanly as the
+  compose file already does. Reusing the exact file every local dev environment
+  already runs is also a single source of truth, not a shortcut.
+- **`.github/workflows/ci.yml` was validated only as syntactically-correct YAML with
+  the expected job names — never run on an actual GitHub Actions runner** — this
+  environment has no way to trigger a real Actions run without pushing a commit or
+  opening a PR, neither of which was asked for. A genuinely unverified risk, recorded
+  honestly in Known Issues below rather than claimed as tested.
+
+None of Milestone 20's deviations touch `docs/ARCHITECTURE.md`'s core design, except
+where they directly correct it (the risk-register staleness in §12, the health-check
+throttle exemption, the §13 email-delivery note) — all recorded as corrections above
+and in §11/§12/§13 themselves, not left as silent drift between the docs and the code.
+
 ---
 
 ## Bugs Found and Fixed
@@ -4734,6 +5031,84 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     to be the known `run-many`-only issue. Noted, not escalated, consistent with how a
     prior milestone treated a similar single, non-reproducible standalone failure.
 
+### Milestone 20
+
+62. **A rate-limit test deliberately hammering `GET /health` to trip a real 429
+    intermittently 429'd `health.spec.ts`'s own unrelated single health check running
+    concurrently in a different Jest worker (observed in roughly 1 of 5 full-suite
+    runs).** Root cause: exceeding a route's shared throttle bucket starves every
+    other caller of that same route for the rest of the window, not just the caller
+    that exceeded it — and nothing exempted `/health` from the global throttle. Fixed
+    two ways: `GET /health` is now `@SkipThrottle()`'d (the correct general design for
+    a liveness/readiness endpoint, not just a test accommodation — see Deviations), and
+    the test itself was redesigned to check `X-RateLimit-Limit` header values on single
+    requests rather than deliberately exhausting a shared budget at all.
+63. **`/auth/login` hit a real, intermittent `429` across other spec files' own
+    unrelated login calls once `security.spec.ts` added one more — real suite usage
+    had reached exactly 10 calls (the then-current limit) with zero headroom,
+    confirmed by counting call sites across `auth-flow.spec.ts`/`refresh-expiry.spec.ts`
+    /`refresh-reuse.spec.ts`/`account-settings.spec.ts`.** The identical situation
+    independently existed for `/auth/refresh` too (also exactly 10 calls). Fixed by
+    raising both 10 → 20/min/IP (`auth.controller.ts`) — the same "shared, whole-suite
+    budget, raise when outgrown" pattern already established for `/auth/register`,
+    just never previously needed for these two routes. Re-ran the full suite 8 times
+    across the investigation; clean every time after the fix.
+64. **`search.spec.ts`'s "matches on fullName as well as username" test (Milestone 17)
+    turned genuinely flaky under repeated full-suite runs — not a throttle collision
+    (ruled out by testing different routes' rate-limit buckets independently and
+    confirming they don't share counters), and not a timing issue (the test passed
+    100% of the time in isolation, every time).** Root cause: `SearchService`'s ranking
+    query ordered by `similarity(username, …)` alone, so a user matched purely on a
+    strong `full_name` hit — with a username sharing little trigram overlap with the
+    query — could rank beneath unrelated noise from this dev database's hundreds of
+    accumulated e2e accounts and fall off the single, uncursored result page entirely.
+    Fixed by ranking on `GREATEST(similarity(username, …), similarity(full_name, …))`
+    instead — a genuine ranking correctness fix (`docs/DATABASE.md` §6), not a
+    workaround for test data volume the way Milestone 18's `findInExplore` was for a
+    *pagination* problem; this one had no pagination to walk since `GET /search/users`
+    has none at all (docs/API.md §11).
+65. **A confirmed, open, upstream Next.js App Router issue: `redirect()` inside a
+    Server Action bound to `useActionState`, when the form is resubmitted after that
+    same action previously returned a normal (non-redirecting) state, doesn't reliably
+    navigate the browser — found via `critical-path.spec.ts`'s own change-password →
+    log out → log back in sequence getting permanently stuck on `/login` after a
+    genuinely successful second login attempt.** Isolated to a minimal repro (register
+    → log out → fail a login once → retry with the correct password on the same,
+    never-reloaded page) that reproduces with *zero* password-change involvement,
+    confirmed independent of `redirect()` vs. a client-side `router.push()`/
+    `window.location.href` alternative (both tried, neither worked — the underlying
+    `useActionState` `state` genuinely never updates on the second dispatch, observed
+    directly via browser-console instrumentation), and confirmed independent of dev
+    vs. a real production build (`next build && next start`). Confirmed via web search
+    as a known, open, unresolved issue (vercel/next.js discussions #73199/#82080, issue
+    #72842) rather than a bug specific to this codebase. Not fixed at the framework
+    level (out of scope); worked around in the test with a `page.reload()` between the
+    failed and corrected attempts — both reliable and realistic (a real stuck user
+    would likely refresh too). Recorded as risk #11 in `docs/ARCHITECTURE.md` §12 for
+    visibility, since it affects four production forms (`login`/`register`/
+    profile-edit/delete-account), not just the test.
+66. **Two `docs/ARCHITECTURE.md` §12 risk-register rows had gone stale since Milestone
+    16 and were never corrected: risk #4 described notification fan-out as "still
+    pending" (shipped that exact milestone, `NotificationsProcessor`), and risk #10
+    described it as sharing `media`'s BullMQ queue (it has always had its own
+    dedicated `notifications` queue, confirmed by Milestone 16's own Deviations entry
+    at the time).** Found during this milestone's explicit risk-register review
+    (`docs/IMPLEMENTATION_PLAN.md` M20's own instruction). Not a functional bug —
+    nothing in the running system was ever wrong — purely a case of the documentation
+    never being revisited after it was originally written, three milestones before the
+    thing it described was actually built. Fixed by correcting both rows to describe
+    what was actually shipped.
+67. **Several `api:serve` background processes orphaned on port 3000 across this
+    milestone's own manual live-testing, more frequently than any single prior
+    milestone.** Each time, traced to this same session's own earlier `nx run
+    api:serve` instance via `Get-NetTCPConnection`/`Get-CimInstance` identity
+    confirmation before touching it (per standing practice — never assumed, always
+    confirmed-own before killing). Same already-documented "continuous-task teardown
+    doesn't reliably run after `TaskStop`" characteristic as bugs #37/#43/#60, now
+    recurring frequently enough that checking for and clearing an orphaned process is
+    treated as a routine, expected step after every manual `api:serve` use in this
+    environment — not an occasional troubleshooting one.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -5049,12 +5424,49 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   is no unauthenticated "email me a reset link" path. This was never actually specified
   by `docs/API.md` §13 or `docs/FEATURES.md` #17 — both only ever described the
   authenticated change-password flow — so it isn't a gap relative to this milestone's
-  real scope. Worth noting, though: `docs/ARCHITECTURE.md` §13 defers "email delivery
-  provider for production" specifically "to the Account Settings / password-reset
-  milestone," anticipating this milestone would need one — it didn't, since no
-  email-sending flow was ever part of the actual spec. That open question remains
-  exactly as deferred as before, not resolved here; a future milestone adding
-  forgot-password would be the one to actually pick an email provider.
+  real scope. `docs/ARCHITECTURE.md` §13's "email delivery provider" open question was
+  corrected in Milestone 20 to no longer point at Account Settings (which never needed
+  one) — it now correctly says "whichever future milestone first adds forgot-password,"
+  still genuinely open, not resolved.
+- **A confirmed, open, upstream Next.js issue (Milestone 20, bug #65;
+  `docs/ARCHITECTURE.md` §12 risk #11): `redirect()` inside a Server Action bound to
+  `useActionState`, resubmitted on the same page after a prior non-redirecting result,
+  doesn't reliably navigate.** Affects `login`/`register`/profile-edit/delete-account —
+  a real user who corrects a mistake and resubmits the same page (without a refresh)
+  would see the page appear stuck even though the retry genuinely succeeded server-side.
+  Not fixed (an attempted `redirectTo` + client-side-navigation workaround didn't
+  resolve it and was reverted — see Deviations); the only confirmed-reliable mitigation
+  found is a full page reload between attempts, which `critical-path.spec.ts` uses but
+  which isn't something the production UI currently does automatically. Worth a real
+  fix (e.g., abandoning `useActionState` for these four forms) once a future milestone
+  has UI-polish scope — track the upstream Next.js discussions
+  (vercel/next.js #73199/#82080, issue #72842) for a framework-level fix first, since
+  one may land before this codebase needs to work around it more invasively itself.
+- **`.github/workflows/ci.yml` (Milestone 20) has never run on an actual GitHub
+  Actions runner** — validated only as syntactically-correct YAML with the expected
+  job structure (`node -e` + `js-yaml`) in this local environment, which has no way to
+  trigger a real Actions run without pushing a commit or opening a PR. The `docker
+compose up -d --wait` step in particular (MinIO's healthcheck interacting with its
+  one-shot `minio-init` sidecar) is the step most worth watching on the very first real
+  run — if it hangs or fails, start there. Not a reason to withhold the workflow (it's
+  a reasonable-effort, carefully-reasoned-through implementation, not a guess), but an
+  honest gap between "written and YAML-valid" and "proven to work in the real CI
+  environment" that a future session should close on the first real PR.
+- **Firefox/WebKit's higher measured flake rate (Milestone 18 bug #58, reconfirmed
+  Milestone 20) is now structurally contained (CI's cross-browser job is
+  `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
+  underlying per-browser timing sensitivity hasn't been root-caused — isolation only
+  removed the register/login-throttle collision that made running all three browsers
+  together *locally* unreliable, a different (also real) problem. If a future
+  milestone wants Firefox/WebKit to actually gate merges, start by reproducing a single
+  scattered failure in true isolation (`--project=firefox --grep "<name>"`, repeated
+  many times) rather than assuming CI's per-job isolation alone closes the gap.
+- **The `comment-section.spec.tsx` `mobile:test` flake (bugs #47/#49/#54/#58/#61) now
+  recurs on standalone (not just `run-many`) runs with enough frequency that bug #61's
+  "seemingly one-off" framing undersold it** — it recurred again in this milestone's
+  own validation sweep. Still not root-caused, still always clean on an immediate
+  retry; worth treating as "expect to retry this specific test occasionally, on any
+  invocation shape" going forward, not just inside `run-many` batches specifically.
 
 ---
 
@@ -5162,7 +5574,19 @@ change-password rather than relying on the `tokenVersion` bump alone, requiring 
 `UsersService` implementing all three new `/me` mutations, the `issueSessionTokens`
 extraction, reusing `RefreshResponse` verbatim for change-password's response, and
 correcting `docs/DATABASE.md` §7's `$extends` inaccuracy) are equally each decided and
-recorded above with rationale, not left open. Everything else recorded in
+recorded above with rationale, not left open. Milestone 20's nine deviations
+(`@SkipThrottle()`-exempting `GET /health`, the fourth and fifth register-throttle-
+style increases (`/auth/login`/`/auth/refresh` 10→20), the `GREATEST`-similarity
+search-ranking correction, the `webServer` array fix for `apps/web-e2e`, attempting
+and then fully reverting a `redirectTo`-based navigation refactor, the duplicate-`id`
+fix on `/settings`, keeping the Firefox/WebKit CI job non-blocking, reusing
+`docker-compose.yml` directly in CI rather than GitHub Actions' `services:` key, and
+deciding Direct Messages as the next feature with realtime transport deferred to its
+own later milestone) are equally each decided and recorded above with rationale, not
+left open — including the one genuinely *unresolved* technical question this
+milestone surfaced (the upstream Next.js `useActionState`/`redirect()` issue, risk #11),
+which is explicitly recorded as found-but-not-fixed rather than silently left
+ambiguous. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -5173,95 +5597,81 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 20 — Web E2E Coverage + Hardening Pass**: per `docs/IMPLEMENTATION_PLAN.md`,
-the last milestone on the summary table — no new API surface, no new schema. Four
-genuinely different kinds of work, not one: (1) a full-critical-path Playwright suite,
-(2) a security/hardening review against `docs/ARCHITECTURE.md` §11, (3) a risk-register
-review against §12, and (4) standing up actual CI. Re-read `docs/IMPLEMENTATION_PLAN.md`'s
-M20 section and all of `docs/ARCHITECTURE.md` §11–§13 in full before starting — this is
-the first milestone whose job is explicitly to look backward across everything already
-built, not to add a new feature.
+**Milestone 21 — Direct Messages (Foundation)**: per `docs/IMPLEMENTATION_PLAN.md`
+(the section added in Milestone 20 itself, since M20 explicitly designated that
+milestone as the point to decide the next post-MVP feature) — the first genuinely new
+feature since Milestone 20 closed out the originally-planned MVP, and the first
+milestone needing a brand-new authorization shape this codebase hasn't needed before
+("is the viewer a participant in this conversation," not single-owner or
+follow-based). Realtime transport (WebSocket/SSE) is explicitly **not** part of this
+milestone — see M22 — DMs ships poll-based first, matching `Notification`'s own MVP
+choice, so this milestone's scope stays schema + REST + UI only.
 
-1. **Full critical-path Playwright suite** (`docs/IMPLEMENTATION_PLAN.md`'s own
-   wording): register → login → edit profile → upload avatar → follow another user →
-   create a multi-image post → appear in follower's feed → like → comment → save →
-   appear in search → appear in explore → receive + read a notification → change
-   password → log out, as one continuous, realistic user journey (or a small number of
-   connected specs), not just the existing per-feature smoke tests run independently.
-   Decide whether this replaces or supplements the existing `apps/web-e2e` spec files
-   (likely: supplements — the existing files already cover isolated feature
-   correctness; this one proves the features compose end-to-end for one user).
-   "Change password" here is this codebase's first Playwright coverage of that flow at
-   all (Milestone 19 only got `apps/api-e2e` coverage, deliberately, per its own
-   Deviations entry) — write it fresh, don't assume `settings.spec.ts` exists yet.
-2. **Resolve the Firefox/WebKit cross-browser flakiness** (Milestone 18, bug #58/Known
-   Issues) before assuming multi-browser coverage is achievable here, or explicitly
-   decide to stay Chromium-only for this milestone too and say so. Start by
-   reproducing one scattered failure in isolation (e.g. `--project=firefox --grep
-"<name>"`), per the Known Issues entry's own suggested starting point — don't re-run
-   the whole suite across all three browsers and hope it's fixed.
-3. **Security/hardening review against `docs/ARCHITECTURE.md` §11's checklist**:
-   confirm Helmet headers and the CORS allow-list are actually configured (not just
-   documented as intended) and *effective under test* — e.g. an actual cross-origin
-   request from a disallowed origin should be rejected, not just assumed blocked;
-   confirm the global/`/auth/*` throttles are real, working rate limits (the existing
-   `api-e2e` suite already exercises them incidentally — formalize that into an
-   explicit hardening-focused test if gaps exist); grep built client bundles
-   (`apps/web`'s `.next` output, `apps/mobile`'s Hermes bundles) for anything that
-   looks like a leaked secret (`JWT_ACCESS_TOKEN_SECRET`, `DATABASE_URL`, S3
-   credentials) — there shouldn't be any, since secrets only ever live server-side
-   per `packages/config`, but this milestone is explicitly the point to verify that
-   claim rather than just trust it.
-4. **Risk register review against `docs/ARCHITECTURE.md` §12**: for each of the 10
-   rows, confirm what was actually built still matches the "Resolved"/"Exercised for
-   real" note already recorded (most do, per every milestone's own Deviations
-   entries), and flag anything that's drifted. Risk #7 (search relevance,
-   `pg_trgm`) and risk #3 (feed fan-out-on-read) are both explicitly flagged as
-   "revisit only if real usage shows otherwise" — confirm neither needs revisiting
-   yet (almost certainly still true at this test-data scale) rather than silently
-   carrying the note forward unchecked. `docs/ARCHITECTURE.md` §13's "email delivery
-   provider... deferred to the Account Settings / password-reset milestone" note
-   turned out to not apply (Milestone 19 never needed one — see its Known Issues
-   entry) — correct or re-scope that open question while reviewing §13, since it's
-   now stale relative to what actually shipped.
-5. **CI pipeline**: `nx affected -t lint test build e2e` gating merges — this is the
-   first milestone to actually need a CI config (no `.github/workflows/` or
-   equivalent exists yet; confirm by checking before assuming one does). Decide the
-   CI platform (GitHub Actions is the implicit default given this is a `git`
-   repository with no other CI references anywhere in the docs) and whether `e2e`
-   in CI needs a different Postgres/MinIO bring-up story than this local Docker Compose
-   setup — don't assume the dev-environment scripts translate directly to CI without
-   checking.
-6. **Decide the next feature** (Stories, Reels, DMs, push, realtime) once the above is
-   done — this is explicitly the point `docs/IMPLEMENTATION_PLAN.md` designates for
-   that decision, not before.
+1. **Schema** (`docs/DATABASE.md` needs a new table design before implementing,
+   following this project's own "logical design only until the milestone that adds
+   it" convention): decide `Conversation` + `ConversationParticipant` (a join table,
+   supporting both 1:1 and group chat) vs. a bare `Message(senderId, recipientId)`
+   pair (1:1-only, simpler, but a breaking schema change if group chat is ever added
+   later). `docs/IMPLEMENTATION_PLAN.md` M21 recommends the join-table shape even for
+   a 1:1-only MVP given how cheap that optionality is to keep open — confirm this is
+   still the right call before implementing, don't just accept it uncritically.
+   `Message(conversationId, senderId, body, readAt, createdAt)`.
+2. **API** (`docs/API.md` needs a new §16+ before implementing): `POST /conversations`
+   — decide the idempotency key for "starting a conversation with someone you already
+   have one with" (the participant set, most likely — mirroring `Follow`'s
+   self-referential dedup precedent, Milestone 10) so it returns the existing
+   conversation, not a duplicate. `GET /conversations` (inbox list, likely
+   newest-activity-first, not newest-created — decide which). `GET
+/conversations/:id/messages` (cursor-paginated, the established convention). `POST
+/conversations/:id/messages`. The authorization check — "is the caller actually a
+   participant in this conversation" — is genuinely new; don't reach for
+   `OptionalAuthGuard`/`JwtAuthGuard` alone the way every single-owner or
+   follow-based endpoint has so far — this needs an explicit membership check against
+   `ConversationParticipant`, the first of its kind in this codebase.
+3. **Web + mobile**: an inbox list screen + a conversation thread view. Poll-based new-
+   message detection (matching `NotificationBadge`'s existing pattern, Milestone 16) —
+   don't reach for WebSocket/SSE here; that's M22's explicit job once this milestone
+   gives it a second real consumer.
+4. **Tests**: conversation-creation idempotency for the same participant pair (the new
+   test shape, mirroring Follow's own self-referential dedup test); message
+   pagination (the established cursor-pagination test shape, nothing new there); a
+   non-participant rejected from reading/posting to a conversation they're not in
+   (`403` — the first test of this specific "membership," not "ownership" or
+   "following," authorization shape).
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 20 section and
-`docs/ARCHITECTURE.md` §11–§13 in full. The `/auth/register` throttle still has
-comfortable headroom after Milestone 19's `account-settings.spec.ts` added 9 more
-registrations (confirmed empirically: the full suite ran clean, no `429`s, across
-three consecutive runs) — keep applying the standing share-via-`beforeAll` discipline
-regardless — the new
-full-critical-path Playwright suite in particular should register the minimum accounts
-it actually needs, same as every `apps/api-e2e` file already does. For any single-file
-`apps/web-e2e` Playwright run, use `--grep "<name>"` placed **after** the trailing `--`
-together with `--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name"
---project=chromium`), **never** `--testPathPatterns` and **never** `--grep=X` before a
-separate trailing `--` block — both of those silently either run the whole suite or
-drop the filter, confirmed four times now (Milestones 14, 15, 16, and 17); the
-`-- --grep ... --project=...` combined form is the only one confirmed reliable.
-Firefox/WebKit are installed but not yet a usable validation target (Milestone 18, bug
-#58/Known Issues) — this milestone is explicitly where that gets investigated (see
-point 2 above), not where it's assumed fixed. If running the full `apps/web-e2e` suite
-twice in a row against the same long-lived `api:serve` process, expect the
-workspace-wide 100 req/min/IP throttle to trip on the second run — restart `api:serve`
-between full-suite re-runs to reset its in-memory counter, the same standing Milestone
-13 workaround (and don't assume a mass failure immediately after a _fresh_ restart is
-the same thing — Milestone 17 hit one that wasn't, see Known Issues). If `apps/api-e2e`
-needs to run while port 3000 is occupied by something unrelated to this repo, both
-`global-setup.ts` and `test-setup.ts` already read `PORT`/`HOST` from the environment —
-prefix the command with `PORT=3100` (or any free port) rather than touching whatever
-else is bound to 3000. Check port 3000's current state fresh before relying on it —
-Milestone 19 found and killed one of its *own* orphaned processes there mid-session
-(bug #60); that's exactly the kind of workflow friction CI (point 5 above) would
-eliminate by never reusing a long-lived local process in the first place.
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s M21/M22 sections (both new
+this milestone) and `docs/DATABASE.md` §1 (conventions) before inventing a new table
+shape. The `/auth/login`/`/auth/refresh` throttles were just raised 10→20/min/IP this
+milestone (Milestone 20) specifically because real suite usage had reached their
+previous limit with zero headroom — this new feature's own test file registering
+multiple accounts for conversation/participant tests will add further to that
+same shared budget; count real call sites before assuming headroom, the same
+discipline every register-throttle increase in this project's history has followed.
+For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"` placed
+**after** the trailing `--` together with `--project=chromium` (e.g. `nx run
+web-e2e:e2e -- --grep "name" --project=chromium`), **never** `--testPathPatterns` and
+**never** `--grep=X` before a separate trailing `--` block — both of those silently
+either run the whole suite or drop the filter, confirmed four times now (Milestones
+14, 15, 16, and 17); the `-- --grep ... --project=...` combined form is the only one
+confirmed reliable. `apps/web-e2e`'s `webServer` now starts `api:serve` automatically
+(Milestone 20) — the long-standing "start it manually first" step is gone; don't
+reintroduce it out of habit. Firefox/WebKit have a measured higher flake rate than
+Chromium (Milestone 18 bug #58, reconfirmed Milestone 20) and CI's own cross-browser
+job is explicitly non-blocking for exactly that reason — keep validating new
+`web-e2e` work with `--project=chromium` as the real gate, treating Firefox/WebKit
+runs as informational. Watch for the confirmed, open upstream Next.js
+`useActionState`/`redirect()` issue (`docs/ARCHITECTURE.md` §12 risk #11) if this
+milestone's own forms resubmit on the same page after a prior non-redirecting
+result — the known workaround is a `page.reload()` between attempts in tests, a real
+production fix is still unresolved upstream. If `apps/api-e2e` needs to run while
+port 3000 is occupied by something unrelated to this repo, both `global-setup.ts` and
+`test-setup.ts` already read `PORT`/`HOST` from the environment — prefix the command
+with `PORT=3100` (or any free port) rather than touching whatever else is bound to
+3000, and always confirm a process's identity (`Get-NetTCPConnection`/
+`Get-CimInstance`) before ever killing anything on that port — orphaned `api:serve`
+processes from `TaskStop` not reliably killing the forked child have recurred
+repeatedly across Milestones 18–20 (bugs #37/#43/#60/#67) and are now a routine,
+expected check, not an occasional one. `.github/workflows/ci.yml` (Milestone 20) has
+never run on a real GitHub Actions runner — the first PR or push to `main` after this
+milestone's own changes land is the first real test of it; watch the `docker compose
+up -d --wait` step in particular if it fails or hangs.

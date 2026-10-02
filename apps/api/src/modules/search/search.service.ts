@@ -37,10 +37,24 @@ export class SearchService {
     // Scoped to just this one ranked-id lookup, not the whole row, so the
     // rest of the pipeline (avatar resolution, isFollowedByMe) can stay on
     // the ordinary Prisma query builder.
+    //
+    // Ranks by GREATEST(username, fullName) similarity, not username alone
+    // (docs/DATABASE.md §6's originally-documented pattern, corrected in
+    // Milestone 20): ordering by username-similarity only meant a user
+    // matched purely on a strong fullName hit, with a username that happens
+    // to share little trigram overlap with the query, could rank far below
+    // unrelated users whose username has marginally higher noise-level
+    // similarity — on a dev database with hundreds of accumulated e2e
+    // accounts, "far below" meant falling off the single, uncursored page
+    // entirely. Found via `apps/api-e2e/src/search/search.spec.ts`'s
+    // "matches on fullName as well as username" test turning genuinely
+    // flaky (not a throttle or timing issue — confirmed by running it in
+    // isolation, where it always passed) as this session's own earlier
+    // hardening-pass test runs accumulated yet more dev-database noise.
     const ranked = await this.prisma.$queryRaw<{ id: string }[]>`
       SELECT id FROM users
       WHERE deleted_at IS NULL AND (username % ${query.q} OR full_name % ${query.q})
-      ORDER BY similarity(username, ${query.q}) DESC
+      ORDER BY GREATEST(similarity(username, ${query.q}), similarity(full_name, ${query.q})) DESC
       LIMIT ${query.limit}
     `;
     const ids = ranked.map((row) => row.id);

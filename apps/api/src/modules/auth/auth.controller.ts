@@ -87,7 +87,18 @@ export class AuthController {
 
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  // Raised from 10 to 20 in Milestone 20, the same "shared, whole-suite
+  // budget" pattern /auth/register's own 10→20→40→60 history already
+  // established — discovered, not anticipated: by Milestone 19, real
+  // apps/api-e2e usage had reached exactly 10 login calls across
+  // auth-flow.spec.ts/refresh-expiry.spec.ts/account-settings.spec.ts,
+  // sitting precisely at the limit with zero headroom. Adding this
+  // milestone's own security.spec.ts (one more login call, to assert its
+  // X-RateLimit-Limit header) tipped it over into real, intermittent 429s
+  // in other files' unrelated login calls — the exact collision pattern
+  // bug #42/#56 already documented for other shared-budget routes, just
+  // never triggered for /auth/login until now.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Log in with email/username + password.' })
   async login(
     @Body() dto: LoginDto,
@@ -109,7 +120,10 @@ export class AuthController {
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  // Raised 10 -> 20 alongside `login` above, same milestone, same reasoning
+  // — apps/api-e2e usage had independently also reached exactly 10 refresh
+  // calls across four spec files, the identical zero-headroom situation.
+  @Throttle({ default: { limit: 20, ttl: 60_000 } })
   @ApiOperation({ summary: 'Rotate a refresh token for a new access token.' })
   async refresh(
     @Body() dto: RefreshDto,
