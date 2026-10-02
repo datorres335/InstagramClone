@@ -345,12 +345,23 @@ the current milestone."
 ## 7. Soft Delete
 
 `User`, `Post`, and `Comment` carry `deletedAt`. Every read path filters
-`WHERE deletedAt IS NULL` — enforced centrally via a Prisma Client extension
-(`$extends`) that injects the filter on `findMany`/`findFirst`/`findUnique` for these
-three models, so individual services can't forget it. Hard deletes are never issued for
-these models from application code; a scheduled job may hard-delete rows past a
-retention window (e.g. 30 days after `deletedAt`) if/when that policy is needed — not
-built in the MVP.
+`WHERE deletedAt IS NULL`. **Correction (Milestone 19, docs/PROGRESS.md deviations):**
+this was originally documented as enforced centrally via a Prisma Client extension
+(`$extends`) — that was never actually built. In practice, every service that reads
+one of these three models adds `deletedAt: null` to its own `where` clause by hand
+(`auth.service.ts`, `comments.service.ts`, `follows.service.ts`, `likes.service.ts`,
+`posts.service.ts`, `saved-posts.service.ts`, `users.service.ts` all do this
+independently, confirmed by direct inspection), the same pattern `users.service.ts`'s
+own code comment already flagged as the real state (not the originally-planned one) as
+far back as Milestone 8. `DELETE /me` (Milestone 19) is the first time anything actually
+*sets* `User.deletedAt` through a real endpoint — every one of those manual filters
+had existed, unexercised by real data, since Milestone 2. A real `$extends` central
+filter remains a reasonable future refactor once a fourth or fifth consumer makes the
+duplication actually costly; not pursued now since fixing the documentation to match
+reality was the immediate need, not re-architecting a pattern that has worked correctly
+every time it's been manually applied. Hard deletes are never issued for these models
+from application code; a scheduled job may hard-delete rows past a retention window
+(e.g. 30 days after `deletedAt`) if/when that policy is needed — not built in the MVP.
 
 `Follow`, `Like`, `SavedPost` are hard-deleted on unfollow/unlike/unsave, since "the row
 existing" _is_ the entire meaning of these tables — there's no soft-delete concept that

@@ -38,6 +38,10 @@ const JwtModuleConfigured = JwtModule.registerAsync({
   // guard fresh in the *consuming* module's injector context, so JwtService
   // (one of the guard's own constructor params) needs to be resolvable
   // there too — exporting only the guard classes isn't sufficient.
-  exports: [JwtAuthGuard, OptionalAuthGuard, JwtModuleConfigured],
+  // AuthService itself is exported as of Milestone 19: MeController
+  // (UsersModule) needs it directly for change-password/change-email/
+  // delete-account, which all need PasswordService/TokensService —
+  // already composed inside AuthService, not duplicated into UsersService.
+  exports: [AuthService, JwtAuthGuard, OptionalAuthGuard, JwtModuleConfigured],
 })
 export class AuthModule {}

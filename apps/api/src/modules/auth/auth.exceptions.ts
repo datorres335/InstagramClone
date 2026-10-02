@@ -38,3 +38,16 @@ export class InvalidCredentialsException extends UnauthorizedException {
     super('Invalid email/username or password.');
   }
 }
+
+/**
+ * The `currentPassword` confirmation on `change-password`/`change-email`/
+ * `DELETE /me` (docs/API.md §13, docs/PROGRESS.md Milestone 19) didn't match
+ * the stored hash — a distinct message from `InvalidCredentialsException`
+ * since the caller is already authenticated here; this is re-confirming an
+ * identity already established by the bearer token, not logging in.
+ */
+export class IncorrectPasswordException extends UnauthorizedException {
+  constructor() {
+    super('Current password is incorrect.');
+  }
+}

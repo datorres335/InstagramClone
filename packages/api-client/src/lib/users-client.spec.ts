@@ -214,4 +214,135 @@ describe('UsersClient', () => {
       );
     });
   });
+
+  describe('changePassword', () => {
+    it('sends a POST /me/change-password and persists the fresh token pair the response carries', async () => {
+      const futureIso2 = new Date(Date.now() + 120_000).toISOString();
+      vi.mocked(fetch).mockResolvedValue(
+        fakeResponse(200, {
+          accessToken: 'new-access-token',
+          accessTokenExpiresAt: futureIso2,
+          refreshToken: 'new-refresh-token',
+        }),
+      );
+      const storage = createFakeTokenStorage({
+        accessToken: 'old-access-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'old-refresh-token',
+      });
+      const client = createUsersClient(
+        new HttpClient({ baseUrl: 'http://api.test', storage }),
+      );
+
+      await client.changePassword({
+        currentPassword: 'old-password',
+        newPassword: 'new-password',
+      });
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/me/change-password',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: 'Bearer old-access-token',
+          },
+          body: JSON.stringify({
+            currentPassword: 'old-password',
+            newPassword: 'new-password',
+          }),
+        }),
+      );
+      await expect(storage.read()).resolves.toEqual({
+        accessToken: 'new-access-token',
+        accessTokenExpiresAt: futureIso2,
+        refreshToken: 'new-refresh-token',
+      });
+    });
+
+    it('throws rather than silently dropping the session if the API omits a refreshToken', async () => {
+      vi.mocked(fetch).mockResolvedValue(
+        fakeResponse(200, {
+          accessToken: 'new-access-token',
+          accessTokenExpiresAt: futureIso,
+        }),
+      );
+      const storage = createFakeTokenStorage({
+        accessToken: 'old-access-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'old-refresh-token',
+      });
+      const client = createUsersClient(
+        new HttpClient({ baseUrl: 'http://api.test', storage }),
+      );
+
+      await expect(
+        client.changePassword({
+          currentPassword: 'old-password',
+          newPassword: 'new-password',
+        }),
+      ).rejects.toThrow(/did not include a refreshToken/);
+    });
+  });
+
+  describe('changeEmail', () => {
+    it('sends a POST /me/change-email and returns the updated user', async () => {
+      const updatedUser = {
+        id: 'user-1',
+        username: 'alice',
+        email: 'new@example.com',
+      };
+      vi.mocked(fetch).mockResolvedValue(fakeResponse(200, updatedUser));
+      const storage = createFakeTokenStorage({
+        accessToken: 'valid-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'refresh-token',
+      });
+      const client = createUsersClient(
+        new HttpClient({ baseUrl: 'http://api.test', storage }),
+      );
+
+      const result = await client.changeEmail({
+        newEmail: 'new@example.com',
+        currentPassword: 'old-password',
+      });
+
+      expect(result).toEqual(updatedUser);
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/me/change-email',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({
+            newEmail: 'new@example.com',
+            currentPassword: 'old-password',
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('sends a DELETE /me with the confirmation body and clears the stored session', async () => {
+      vi.mocked(fetch).mockResolvedValue(fakeResponse(204, undefined));
+      const storage = createFakeTokenStorage({
+        accessToken: 'valid-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'refresh-token',
+      });
+      const client = createUsersClient(
+        new HttpClient({ baseUrl: 'http://api.test', storage }),
+      );
+
+      await client.deleteAccount({ currentPassword: 'old-password' });
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://api.test/me',
+        expect.objectContaining({
+          method: 'DELETE',
+          body: JSON.stringify({ currentPassword: 'old-password' }),
+        }),
+      );
+      await expect(storage.read()).resolves.toBeNull();
+    });
+  });
 });

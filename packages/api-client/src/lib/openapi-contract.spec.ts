@@ -47,6 +47,9 @@ type _UnreadCountRoute = paths['/api/v1/notifications/unread-count']['get'];
 type _MarkReadRoute = paths['/api/v1/notifications/mark-read']['post'];
 type _SearchUsersRoute = paths['/api/v1/search/users']['get'];
 type _ExploreRoute = paths['/api/v1/explore']['get'];
+type _ChangePasswordRoute = paths['/api/v1/me/change-password']['post'];
+type _ChangeEmailRoute = paths['/api/v1/me/change-email']['post'];
+type _DeleteAccountRoute = paths['/api/v1/me']['delete'];
 
 describe('generated OpenAPI types', () => {
   it('describes every route this client wraps (see the type references above)', () => {

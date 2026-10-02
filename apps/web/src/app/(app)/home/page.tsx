@@ -33,6 +33,7 @@ export default async function HomePage() {
       <Link href="/posts/new">New post</Link>
       <Link href="/search">Search</Link>
       <Link href="/explore">Explore</Link>
+      <Link href="/settings">Settings</Link>
       <NotificationBadge initialCount={unreadCount.count} />
       <form action={logoutAction}>
         <button type="submit">Log out</button>

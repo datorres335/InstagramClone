@@ -233,14 +233,29 @@ referenced to `DATABASE.md` / `API.md`).
 - Entities/endpoints: `Notification` (`DATABASE.md` §3.10), `GET /notifications`,
   `GET /notifications/unread-count`, `POST /notifications/mark-read` (`API.md` §12).
 
-### 17. Account Settings
+### 17. Account Settings (implemented Milestone 19)
 
 - Edit profile fields (name, bio, website, `isPrivate` toggle — the toggle exists and
   is user-facing even though it has no follow-approval effect yet, see Feature 5's
   scope note), change password, change email, delete account (soft delete).
 - Changing password bumps `User.tokenVersion`, invalidating access tokens on all other
   devices/sessions (they'll fail auth and be forced to re-login) — not just the
-  presented refresh token, which only affects future refreshes.
+  presented refresh token, which only affects future refreshes. In practice this means
+  change-password also revokes every other refresh-token family outright (not just the
+  tokenVersion bump): a device that still held a valid refresh token could otherwise
+  silently mint a fresh access token and never actually be forced to re-login. The
+  *calling* session gets a brand-new token pair in the response, so it's the one
+  device that's never interrupted.
+- Changing email and deleting the account both require re-entering the current
+  password first (the same defense-in-depth change-password already needed) — deleting
+  the account is this codebase's first genuinely destructive, irreversible-from-the-UI
+  action, so both web and mobile also require an explicit confirmation checkbox/switch
+  before the delete button is enabled.
+- Deleting an account only soft-deletes the `User` row and revokes every session — it
+  does not cascade to hide that account's existing posts/comments/likes from feed,
+  explore, or other users' profiles (only the account's own profile and search
+  disappear). Not a gap: `docs/IMPLEMENTATION_PLAN.md` M19's own test wording only
+  calls for "soft-deleted users disappear from public reads (profile, search)."
 - **Out of scope**: two-factor authentication, connected-apps/OAuth management, data
   export/download-your-data, blocking/muting other users (a plausible near-future
   addition, but not in the given MVP list, so not designed here to avoid scope creep).

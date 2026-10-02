@@ -3,7 +3,10 @@ import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { Prisma } from '@instagram-clone/prisma-client';
 
 import { AuthService } from './auth.service';
-import { InvalidCredentialsException } from './auth.exceptions';
+import {
+  IncorrectPasswordException,
+  InvalidCredentialsException,
+} from './auth.exceptions';
 
 const fakeUser = {
   id: 'user-1',
@@ -28,6 +31,7 @@ function createDeps() {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      update: jest.fn(),
     },
   };
   const password = { hash: jest.fn(), verify: jest.fn() };
@@ -36,6 +40,7 @@ function createDeps() {
     issueRefreshToken: jest.fn(),
     rotate: jest.fn(),
     logout: jest.fn(),
+    revokeAllForUser: jest.fn(),
   };
 
   const service = new AuthService(
@@ -210,6 +215,152 @@ describe('AuthService', () => {
       await expect(service.getSessionUser('user-1')).rejects.toBeInstanceOf(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('changePassword', () => {
+    it('verifies the current password, bumps tokenVersion, revokes every refresh-token family, and issues a fresh token pair', async () => {
+      const { service, prisma, password, tokens } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(true);
+      password.hash.mockResolvedValue('new-hashed-password');
+      prisma.user.update.mockResolvedValue({
+        ...fakeUser,
+        passwordHash: 'new-hashed-password',
+        tokenVersion: 1,
+      });
+      tokens.issueAccessToken.mockResolvedValue(accessToken);
+      tokens.issueRefreshToken.mockResolvedValue(issuedRefreshToken);
+
+      const result = await service.changePassword(
+        'user-1',
+        { currentPassword: 'old-password', newPassword: 'new-password' },
+        {},
+      );
+
+      expect(password.verify).toHaveBeenCalledWith(
+        fakeUser.passwordHash,
+        'old-password',
+      );
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: {
+          passwordHash: 'new-hashed-password',
+          tokenVersion: { increment: 1 },
+        },
+      });
+      expect(tokens.revokeAllForUser).toHaveBeenCalledWith('user-1');
+      expect(result).toEqual({
+        ...accessToken,
+        refreshToken: 'raw-refresh-token',
+      });
+    });
+
+    it('rejects an incorrect current password without changing anything', async () => {
+      const { service, prisma, password, tokens } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(false);
+
+      await expect(
+        service.changePassword(
+          'user-1',
+          { currentPassword: 'wrong', newPassword: 'new-password' },
+          {},
+        ),
+      ).rejects.toBeInstanceOf(IncorrectPasswordException);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(tokens.revokeAllForUser).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('changeEmail', () => {
+    it('verifies the current password and updates the email', async () => {
+      const { service, prisma, password } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(true);
+      prisma.user.update.mockResolvedValue({
+        ...fakeUser,
+        email: 'new@example.com',
+      });
+
+      const result = await service.changeEmail('user-1', {
+        newEmail: 'new@example.com',
+        currentPassword: 'old-password',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { email: 'new@example.com' },
+      });
+      expect(result.email).toBe('new@example.com');
+    });
+
+    it('rejects an incorrect current password', async () => {
+      const { service, prisma, password } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(false);
+
+      await expect(
+        service.changeEmail('user-1', {
+          newEmail: 'new@example.com',
+          currentPassword: 'wrong',
+        }),
+      ).rejects.toBeInstanceOf(IncorrectPasswordException);
+    });
+
+    it('maps a unique-constraint violation on the new email to ConflictException', async () => {
+      const { service, prisma, password } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(true);
+      prisma.user.update.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: '7.10.0',
+        }),
+      );
+
+      await expect(
+        service.changeEmail('user-1', {
+          newEmail: 'taken@example.com',
+          currentPassword: 'old-password',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('deleteAccount', () => {
+    it('verifies the current password, soft-deletes the user, and revokes every refresh-token family', async () => {
+      const { service, prisma, password, tokens } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(true);
+      prisma.user.update.mockResolvedValue({
+        ...fakeUser,
+        deletedAt: new Date(),
+      });
+
+      await service.deleteAccount('user-1', {
+        currentPassword: 'old-password',
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { deletedAt: expect.any(Date) },
+      });
+      expect(tokens.revokeAllForUser).toHaveBeenCalledWith('user-1');
+    });
+
+    it('rejects an incorrect current password without deleting anything', async () => {
+      const { service, prisma, password, tokens } = createDeps();
+      prisma.user.findUniqueOrThrow.mockResolvedValue(fakeUser);
+      password.verify.mockResolvedValue(false);
+
+      await expect(
+        service.deleteAccount('user-1', { currentPassword: 'wrong' }),
+      ).rejects.toBeInstanceOf(IncorrectPasswordException);
+
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(tokens.revokeAllForUser).not.toHaveBeenCalled();
     });
   });
 });

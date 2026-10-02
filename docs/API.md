@@ -126,7 +126,7 @@ substitutions without meaningfully improving guessability; length is what matter
 | `GET /users/:username/posts` | optional | Paginated post grid for that user — returns real `PostSummary` items, cursor-paginated newest-first (**implemented Milestone 11**, see §7)                                                                                                                                                                                                                   |
 | `PATCH /me`                  | required | Update own profile (`fullName`, `bio`, `websiteUrl`, `isPrivate`) — also see §10 (settings)                                                                                                                                                                                                                                                                  |
 | `PATCH /me/avatar`           | required | Body `{ mediaId }` → `200` `MediaResponse` (§6) — must reference the caller's own `READY` `AVATAR`-purpose media (`403` if not the caller's own, `422 media-not-ready` — §14 — if wrong purpose or not `READY`). Returns the media resource, not `UserResponse`, since the latter deliberately never includes `avatarUrl` (§3) — **implemented Milestone 9** |
-| `DELETE /me`                 | required | Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **Milestone 19**                                                                                                                                                                                                                                                           |
+| `DELETE /me`                 | required | Body `{ currentPassword }` → `204`. Soft-deletes the account (sets `deletedAt`); revokes all refresh token families — **implemented Milestone 19**                                                                                                                                                                                                          |
 
 `GET /users/:username`'s `avatarUrl` resolves to a real URL once the user has a `READY`
 `AVATAR` media set (implemented Milestone 9); `followersCount`/`followingCount` are real
@@ -382,14 +382,29 @@ notification as read as a side effect (`docs/FEATURES.md` #16) — there is no s
 per-notification "mark read" UI control in the MVP, only the bulk
 `POST /notifications/mark-read` call the screen makes on load.
 
-## 13. Account Settings
+## 13. Account Settings (implemented Milestone 19)
 
-| Method & path              | Auth     | Notes                                                                                                          |
-| -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
-| `PATCH /me`                | required | See §4 — profile fields                                                                                        |
-| `POST /me/change-password` | required | Body `{ currentPassword, newPassword }`; bumps `User.tokenVersion` to invalidate other sessions' access tokens |
-| `POST /me/change-email`    | required | Body `{ newEmail, currentPassword }`                                                                           |
-| `DELETE /me`               | required | See §4                                                                                                         |
+| Method & path              | Auth     | Notes                                                                                                                                                                                |
+| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PATCH /me`                | required | See §4 — profile fields                                                                                                                                             |
+| `POST /me/change-password` | required | Body `{ currentPassword, newPassword }` → `200` `RefreshResponse` (§3, reused verbatim) — a fresh token pair for the *calling* session, since `tokenVersion` bumps invalidate every outstanding access token, including this one's |
+| `POST /me/change-email`    | required | Body `{ newEmail, currentPassword }` → `200` `UserResponse` (§3) — no `tokenVersion` bump, no session revocation (only a password change does that)                |
+| `DELETE /me`               | required | See §4                                                                                                                                                               |
+
+Both `change-password` and `change-email`, and `DELETE /me`, confirm `currentPassword`
+against the stored hash before applying the change — a `401` (`IncorrectPasswordException`,
+distinct from `InvalidCredentialsException`'s login-specific message) if it doesn't match.
+`change-password` additionally revokes every existing refresh-token family (not just
+bumping `tokenVersion`): a `tokenVersion` bump alone wouldn't stop another device from
+silently minting a fresh access token via its still-valid refresh token
+(`POST /auth/refresh` doesn't check `tokenVersion`), which would defeat the point of a
+password change forcing a real re-login elsewhere. `DELETE /me` needs no `tokenVersion`
+bump of its own — `deletedAt` being set is already enough to reject every outstanding
+access token on its next check (§7's existing mechanism), so only refresh-token
+revocation is needed there. `AuthService` (not `UsersService`) implements all three —
+it already composes `PasswordService`/`TokensService`, both of which these routes need,
+and is exported from `AuthModule` as of this milestone specifically so `MeController`
+can call it directly rather than duplicating that wiring.
 
 ## 14. Error Catalog (representative, not exhaustive)
 

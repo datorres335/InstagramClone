@@ -11,7 +11,9 @@ import { UsersService } from './users.service';
 @Module({
   // AuthModule exports JwtAuthGuard/OptionalAuthGuard (and the JwtModule
   // they depend on) — imported here rather than each guard being
-  // reconstructed with its own JwtModule copy. MediaModule exports
+  // reconstructed with its own JwtModule copy — and, as of Milestone 19,
+  // AuthService itself, which MeController's change-password/change-email/
+  // delete-account routes call directly. MediaModule exports
   // MediaService, used to resolve `avatarUrl` and to drive `PATCH
   // /me/avatar` (docs/API.md §4). FollowsModule exports FollowsService, used
   // to resolve `followersCount`/`followingCount`/`isFollowedByMe`. PostsModule

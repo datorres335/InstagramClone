@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Core Features
-**Current Milestone:** Milestone 18 — Explore Page
+**Current Milestone:** Milestone 19 — Account Settings
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -173,6 +173,28 @@ mirrors `getSavedPosts`'s exact fetch→re-sort→batch-likes/comments/saved-sta
 pipeline. Both `web` and `mobile` gained an explore grid screen (mobile's via real
 `onEndReached` infinite scroll, matching Explore's real cursor — unlike search's
 debounce-only UI), reusing the profile grid's tile sizing constants on mobile.
+Milestone 19 is the first milestone since Milestone 5 to touch the token-versioning
+mechanism and the first ever to actually *set* `User.deletedAt` through a real
+endpoint: three new `/me` mutations — `POST /me/change-password` (bumps
+`tokenVersion`, which invalidates every outstanding access token system-wide
+including the calling session's own, so it additionally revokes every refresh-token
+family and returns a fresh token pair in the response for that session to keep
+working without a re-login), `POST /me/change-email` (no session impact — only a
+password change does that), and `DELETE /me` (soft-deletes, revokes every
+refresh-token family — no `tokenVersion` bump needed since the existing `deletedAt`
+check in `resolveAuthenticatedUser` already rejects any outstanding access token on
+its next check). All three require re-confirming `currentPassword` first; delete
+additionally requires an explicit UI confirmation checkbox/switch on both platforms,
+the first genuinely destructive, irreversible-from-the-UI action in this codebase.
+`AuthService` (now exported from `AuthModule`) implements all three — it already
+composes `PasswordService`/`TokensService`, both of which these routes need — and
+`MeController` (`UsersModule`) calls it directly rather than duplicating that wiring
+into `UsersService`. Both `web` and `mobile` gained a `/settings`-equivalent screen
+with three independent forms/sections. While implementing `DELETE /me`, a
+long-standing documentation inaccuracy surfaced and was corrected: `docs/DATABASE.md`
+§7 described a centralized Prisma Client `$extends` filter for `deletedAt IS NULL`
+reads that was never actually built — every service has always filtered
+`deletedAt: null` manually, confirmed across seven services by direct inspection.
 
 ---
 
@@ -1266,6 +1288,82 @@ userId`)
       two consecutive runs) + `web-e2e:e2e` (23/23, Chromium, stable across
       two consecutive runs — see Known Issues for why Firefox/WebKit, newly
       installed this milestone, were not used for the real validation pass)
+
+### Milestone 19 — Account Settings
+
+- [x] `apps/api/src/modules/auth/auth.exceptions.ts` — new
+      `IncorrectPasswordException` (401), distinct from
+      `InvalidCredentialsException` (login-specific wording) — used by all
+      three new `currentPassword`-confirmed mutations below
+- [x] `apps/api/src/modules/auth/auth.service.ts` — three new methods
+      (`changePassword`, `changeEmail`, `deleteAccount`), each verifying
+      `currentPassword` first; `changePassword` bumps `tokenVersion`,
+      revokes every refresh-token family via `TokensService
+      .revokeAllForUser`, and issues a fresh token pair for the calling
+      session via a new private `issueSessionTokens` helper (extracted from
+      the existing `issueSession`, now its second real caller);
+      `deleteAccount` sets `deletedAt` and revokes every refresh-token
+      family; `changeEmail` updates the email, mapping a `P2002` conflict
+      to `409` the same way `register` already does
+- [x] `apps/api/src/modules/auth/auth.module.ts` — exports `AuthService`
+      (previously internal-only) so `MeController` (`UsersModule`) can call
+      it directly for the three mutations above
+- [x] `apps/api/src/modules/users/me.controller.ts` — three new routes:
+      `POST /me/change-password` (sets the rotated refresh cookie on
+      success, same as `AuthController`'s own routes), `POST
+      /me/change-email`, `DELETE /me` (clears the refresh cookie on
+      success) — all delegate to the newly-exported `AuthService`, not
+      `UsersService`
+- [x] `packages/validation`'s new `account-settings.ts`
+      (`changePasswordInputSchema`/`changeEmailInputSchema`/
+      `deleteAccountInputSchema`) — `DELETE /me` requiring a
+      `currentPassword` body is a deliberate decision beyond what
+      `docs/API.md` originally specified (no body at all) — see Deviations
+      below
+- [x] `packages/api-client`'s `users` namespace gains `changePassword`
+      (persists the fresh token pair the response carries, mirroring
+      `auth-client.ts`'s `persistSession`), `changeEmail`, and
+      `deleteAccount` (clears the stored session on success, mirroring
+      `AuthClient.logout`'s same guarantee)
+- [x] `apps/web`: a new `/settings` page — three independent forms
+      (`ChangePasswordForm`/`ChangeEmailForm`/`DeleteAccountForm`), a new
+      `SettingsActionState` (distinct from the existing `AuthActionState`:
+      these two forms stay on the page and need a success flag, unlike
+      every other Server Action in this codebase which redirects on
+      success), delete requires a confirmation checkbox; linked from
+      `/home`'s header
+- [x] `apps/mobile`: a new `/profile/settings` screen, same three sections,
+      reusing `useAuth()`'s `setUser` (no new context method needed);
+      linked from the own-profile block in `profile/[username].tsx`
+- [x] 8 new `account-settings.spec.ts` (validation) tests, 7 new
+      `auth.service.spec.ts` tests for the three new methods, 4 new
+      `users-client.spec.ts` tests, 3 new `openapi-contract.spec.ts` type
+      references
+- [x] 7 new mobile `settings-screen.spec.tsx` tests
+- [x] 11 new `apps/api-e2e` integration tests
+      (`account-settings/account-settings.spec.ts`) — real accounts, not
+      mocked: the explicit `docs/IMPLEMENTATION_PLAN.md` M19 requirements
+      (password-change tokenVersion-invalidates-other-sessions-while-the-
+      calling-session's-new-token-works, and delete-account disappears
+      from profile/search while the row remains in the DB) plus incorrect-
+      password/conflict/unauthenticated/validation coverage for all three
+      endpoints
+- [x] Corrected a long-standing `docs/DATABASE.md` §7 inaccuracy (a
+      centralized Prisma Client `$extends` filter that was never actually
+      built — every service filters `deletedAt: null` manually, confirmed
+      across seven services) — discovered while relying on this exact
+      mechanism for `DELETE /me`
+- [x] No Playwright test added — `docs/IMPLEMENTATION_PLAN.md` M19's test
+      scope is explicitly just the two `apps/api-e2e` integration tests
+      above; browser coverage for "change password → log out" is
+      explicitly Milestone 20's scope (the full critical-path list)
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects, mobile's known `run-many`-only flake confirmed clean on
+      standalone re-run) + standalone `tsc --noEmit` for `api`/`web`/
+      `mobile` + `api-e2e:e2e` (18/18 suites, 127/127 tests, stable across
+      three consecutive runs) + a full live-endpoint smoke test against
+      the dev server (change-password/change-email/delete-account, each
+      success and failure path) before any automated test was written
 
 ---
 
@@ -2648,6 +2746,114 @@ pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}"
 The `api:serve` process started for `web-e2e:e2e` was stopped after validation
 completed, returning port 3000 to its prior free state.
 
+### Milestone 19
+
+```bash
+pnpm exec nx run validation:build --skip-nx-cache   # clean
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm exec nx run api:test --testPathPatterns=auth --skip-nx-cache   # 42/42, first run
+pnpm exec nx run api:test --skip-nx-cache   # 218/218, whole project
+pnpm exec nx run api:build --skip-nx-cache   # clean
+
+# Live smoke test against the real dev server (manually started, api:serve)
+# before writing any automated test for the new routes — the same
+# discipline Milestone 17's bug #52 came from skipping, and Milestone 18
+# already repeated successfully:
+#   - change-password: wrong currentPassword -> 401; correct -> 200 with a
+#     fresh token pair; the OLD access token then 401s on /auth/session;
+#     the NEW one works; the OLD refresh token now 401s on /auth/refresh
+#     (detected as reuse, since revokeAllForUser marks it revokedAt); the
+#     NEW refresh token works; login with the old password now fails,
+#     login with the new one succeeds.
+#   - change-email: conflict on an already-taken email -> 409; success ->
+#     200 with the updated email; the SAME (pre-change) access token still
+#     works afterward (no tokenVersion bump, confirmed).
+#   - delete-account (against a disposable throwaway account, not alice):
+#     wrong currentPassword -> 401; correct -> 204; GET
+#     /users/:username -> 404 afterward; the old access token then 401s;
+#     login with the (still-correct) password now fails; GET
+#     /search/users?q=<username> returns no match.
+# All matched the intended design exactly on the first live test — no
+# fixes needed after this pass.
+
+pnpm exec nx run api-client:generate-types   # confirmed the three new
+# /me/change-password, /me/change-email routes (DELETE /me already
+# existed in the generated types from Milestone 2's schema, just newly
+# exercised) appeared in the generated openapi.json/types.
+pnpm exec nx run api-client:test --skip-nx-cache   # 76/76, clean
+pnpm exec nx run api-client:build --skip-nx-cache   # clean
+pnpm exec nx run api-client:lint --skip-nx-cache   # clean
+
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm exec nx run web:build --skip-nx-cache   # new /settings route appeared
+pnpm exec nx run web:lint --skip-nx-cache   # clean (same pre-existing,
+# unrelated avatar-uploader.tsx warning noted since Milestone 9)
+pnpm exec nx run web:test --skip-nx-cache   # 9/9, unchanged
+
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm exec nx run mobile:test --testPathPatterns=settings-screen --skip-nx-cache
+# ^ 7/7, first run.
+pnpm exec nx run mobile:test --skip-nx-cache
+# ^ one standalone (not run-many) run showed "1 failed, 103 passed" with no
+#   change on my end since the prior clean run — the specific failing test
+#   wasn't captured before immediately re-running (twice more, both clean,
+#   104/104). Noted as a one-off fluke, not escalated, consistent with how
+#   a prior milestone treated a single, non-reproducible standalone
+#   mobile:test failure — see Known Issues.
+pnpm exec nx run mobile:lint --skip-nx-cache
+# ^ first pass flagged an unused `logout` destructured from useAuth() in
+#   settings.tsx (dead code left over from an earlier draft that called it
+#   explicitly before realizing deleteAccount's own client method already
+#   clears storage) — removed, re-ran clean.
+pnpm exec nx run mobile:build --skip-nx-cache   # web/iOS/Android Hermes bundles all succeeded
+
+pnpm exec nx run api-e2e:e2e --skip-nx-cache --testPathPatterns=account-settings
+# ^ 11/11, first run.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ first full-suite attempt: EADDRINUSE on ::1:3000 — a leftover node
+#   process (PID confirmed via Get-NetTCPConnection + Get-CimInstance
+#   before touching it) orphaned from this same session's own earlier
+#   manual `api:serve` smoke-testing run, whose TaskStop apparently didn't
+#   kill the forked child — the exact already-documented "continuous-task
+#   teardown doesn't reliably run" characteristic (bug #37/#43), just this
+#   time from a manually-started serve rather than a failed e2e attempt.
+#   Killed the confirmed-own process; re-ran clean.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 18/18 suites, 127/127 tests
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 127/127 again
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 127/127 a third time — stable
+
+pnpm exec nx run api-e2e:lint --skip-nx-cache
+# ^ clean except the same pre-existing non-null-assertion warnings already
+#   accepted for explore.spec.ts/media-pipeline.spec.ts — no new findings.
+
+pnpm exec prettier --write <every new/modified Milestone 19 file>
+# ^ reformatted 10 files (whitespace/line-wrapping only — auth.service.spec.ts,
+#   me.controller.ts, users.dto.ts, the new account-settings.spec.ts e2e
+#   file, openapi-contract.spec.ts, index.ts, home/page.tsx, settings.tsx,
+#   [username].tsx, settings-screen.spec.tsx). Re-ran api/api-client/mobile
+#   unit tests immediately after to confirm the reformatting changed
+#   nothing functionally: all still clean.
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ one failure: mobile:test (comment-section.spec.tsx) — the same
+#   already-documented run-many-only flake (bugs #47/#49/#54/#58).
+#   Standalone nx run mobile:test immediately after: 104/104 clean.
+pnpm exec prettier --check "apps/**/*.{ts,tsx}" "packages/**/*.{ts,tsx}"
+# ^ flagged apps/web/next-env.d.ts (same pre-existing file every prior
+#   milestone's check has flagged) plus six Milestone-18-era files
+#   (auth.controller.ts, posts.module.ts, posts.service.ts,
+#   posts.service.spec.ts, posts-client.ts, posts-client.spec.ts) that
+#   this milestone never touched (confirmed via `git status` — zero
+#   uncommitted changes to any of them) — a pre-existing CRLF/line-ending
+#   artifact from how they were committed, not something Milestone 19
+#   introduced or is responsible for fixing.
+```
+
+No Playwright `apps/web-e2e` test was written or run for this milestone —
+`docs/IMPLEMENTATION_PLAN.md` M19's test scope is explicitly the two `apps/api-e2e`
+integration-test requirements already covered above; a change-password Playwright
+flow is explicitly part of Milestone 20's full critical-path expansion instead.
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -3630,6 +3836,80 @@ Explore ranking/exclusion/pagination behavior matches `docs/DATABASE.md` §6/§1
 open questions Milestone 17's own Next-Milestone note flagged as needing re-derivation,
 and both are recorded above with their reasoning, not left open.
 
+### Milestone 19
+
+- **`change-password` revokes every refresh-token family outright, not just bumping
+  `tokenVersion`** — `docs/API.md` §13 only specified the `tokenVersion` bump, but
+  `POST /auth/refresh` (Milestone 5) never checks `tokenVersion` at all — it just
+  rotates the presented token and re-reads the user row, so a device with a still-valid
+  refresh token could silently mint a fresh access token carrying the *new*
+  `tokenVersion` and never actually be forced to re-login. That would defeat
+  `docs/FEATURES.md` #17's explicit intent ("forced to re-login"). Revoking every
+  family closes that gap; the calling session gets a brand-new token pair in the
+  response specifically so it's never the one interrupted.
+- **`DELETE /me` requires a `currentPassword` body, which `docs/API.md`'s original
+  table didn't specify (it said "See §4" with no body at all)** — added deliberately:
+  this is the first genuinely destructive, irreversible-from-the-UI action in this
+  codebase, and the same defense-in-depth re-confirmation `change-password`/
+  `change-email` already require via `currentPassword` was judged even more warranted
+  here, not less. Both `web` and `mobile` also require an explicit confirmation
+  checkbox/switch before the delete button is even enabled — a second, UI-level layer
+  beyond what the API itself enforces.
+- **No `tokenVersion` bump on `DELETE /me`** — unlike `change-password`, deleting the
+  account needs no `tokenVersion` change to invalidate outstanding access tokens: once
+  `deletedAt` is set, `resolveAuthenticatedUser`'s existing `user.deletedAt` check
+  (Milestone 5) already rejects every access token for that user on its next
+  verification, the identical mechanism that already protects `getSessionUser`/`login`.
+  Only refresh-token revocation needed to be added.
+- **`AuthService` (not `UsersService`) implements `changePassword`/`changeEmail`/
+  `deleteAccount`, and is now exported from `AuthModule`** — these three routes need
+  `PasswordService`/`TokensService`, both of which `AuthService` already composes for
+  `register`/`login`/`refresh`; duplicating that wiring into `UsersService` (which has
+  neither dependency today) would mean either re-injecting both services a second time
+  or inventing a new shared provider for no real benefit. `MeController`
+  (`UsersModule`) calls the newly-exported `AuthService` directly, the same "export
+  what a sibling module's controller genuinely needs" reasoning `AuthModule` already
+  applied to `JwtAuthGuard`/`OptionalAuthGuard`.
+- **`issueSession` refactored into a new private `issueSessionTokens` helper** —
+  `changePassword` needs exactly the token-issuance half of what `issueSession`
+  already did for `register`/`login` (a fresh access+refresh pair), but not the
+  `{ user, ...tokens }` wrapper shape those two callers need and `changePassword`
+  doesn't. Extracted once a second, genuinely different caller needed the narrower
+  shape — the same "add a new shape only once a second caller needs it" judgment
+  `cursor.ts`'s own doc comment already applies to pagination-cursor shapes, applied
+  here to a method extraction instead.
+- **`POST /me/change-password`'s response reuses `RefreshResponse` verbatim, not a new
+  `ChangePasswordResponse`** — both are structurally and conceptually identical: "here
+  is your new access token (and refresh token), keep using it." This revisits
+  Milestone 13's reuse precedent rather than Milestone 15's/18's distinct-naming one,
+  judged correct here because the *purpose* of the response (not just its shape) is
+  genuinely the same as `POST /auth/refresh`'s.
+- **`docs/DATABASE.md` §7 corrected: no centralized Prisma Client `$extends` filter for
+  `deletedAt IS NULL` reads was ever actually built, despite being documented as the
+  design since early in this project** — discovered while implementing `DELETE /me`,
+  the first endpoint to ever actually set `User.deletedAt` through the real API. Every
+  service that reads `User`/`Post`/`Comment` has always filtered `deletedAt: null`
+  manually in its own `where` clause (confirmed by direct inspection across
+  `auth.service.ts`, `comments.service.ts`, `follows.service.ts`, `likes.service.ts`,
+  `posts.service.ts`, `saved-posts.service.ts`, `users.service.ts`) — `users.service.ts`
+  itself already carried a code comment flagging this as far back as Milestone 8, but
+  the doc itself was never corrected until now. Fixed the documentation to describe
+  the system that actually exists (per `CLAUDE.md`'s own instruction) rather than
+  re-architecting a manual pattern that has worked correctly every time it's been
+  applied — a real `$extends` refactor remains a reasonable future cleanup, not an
+  urgent one.
+- **No `apps/web-e2e` Playwright test for this milestone** — `docs/IMPLEMENTATION_PLAN.md`
+  M19's test scope is explicitly only the two `apps/api-e2e` integration-test
+  requirements (both implemented and passing); a change-password browser flow is
+  explicitly called out as part of Milestone 20's full critical-path expansion instead,
+  not an oversight here.
+
+None of Milestone 19's deviations touch `docs/ARCHITECTURE.md`'s core design — the
+`tokenVersion`/refresh-token-revocation mechanism and the `deletedAt`-based rejection
+check are both exactly the mechanisms `docs/ARCHITECTURE.md` §7 already described; this
+milestone is the first to actually exercise them through real endpoints, not a design
+change to either.
+
 ---
 
 ## Bugs Found and Fixed
@@ -4416,6 +4696,44 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     `--project=chromium` only, matching every prior milestone's established practice
     — 23/23, stable across two consecutive runs. See Known Issues below.
 
+### Milestone 19
+
+59. **`docs/DATABASE.md` §7 described a centralized Prisma Client `$extends` filter
+    for `deletedAt IS NULL` reads that was never actually implemented.** Discovered
+    while implementing `DELETE /me` — the first endpoint to ever set `User.deletedAt`
+    through the real API, prompting a close look at every read path that's supposed to
+    respect it. Direct inspection of `auth.service.ts`, `comments.service.ts`,
+    `follows.service.ts`, `likes.service.ts`, `posts.service.ts`,
+    `saved-posts.service.ts`, and `users.service.ts` confirmed every one of them
+    filters `deletedAt: null` manually in its own query — no shared extension exists
+    anywhere in the codebase (confirmed via `grep -rn "\$extends"`, matching only
+    Prisma's own generated internals, never application code). Not a functional bug —
+    every manual filter has always worked correctly on its own — but a real
+    documentation/implementation mismatch dating back at least to Milestone 8
+    (`users.service.ts`'s own code comment already flagged the discrepancy then, but
+    the doc itself was never corrected). Fixed by correcting `docs/DATABASE.md` §7 to
+    describe the real, manual-per-service pattern rather than the never-built
+    centralized one.
+60. **An orphaned `node.exe` process held port 3000, blocking the first full
+    `api-e2e:e2e` run of this milestone with `EADDRINUSE`.** Traced (via
+    `Get-NetTCPConnection` + `Get-CimInstance` identity confirmation before touching
+    it, per standing practice) to this same session's own earlier manual `nx run
+    api:serve` instance, started for live-endpoint smoke testing and stopped via
+    `TaskStop` — but the forked Node child apparently survived that stop, orphaned on
+    the port. This is the same already-documented "continuous-task teardown doesn't
+    reliably run" characteristic (bugs #37/#43), just the first time it's been traced
+    specifically to a `TaskStop`-on-a-manually-started-serve interaction rather than a
+    failed `api-e2e:e2e` attempt. Fixed by confirming the process's identity, then
+    terminating it; the full suite ran clean immediately after.
+61. **One standalone (not `run-many`) `mobile:test` run showed one failure
+    ("1 failed, 103 passed, 104 total") with no code change on my end since the prior
+    clean run; two immediate re-runs were both clean (104/104).** The specific failing
+    test wasn't captured before re-running, so unlike bugs #47/#49/#54/#58 this can't be
+    confidently attributed to the same `comment-section.spec.tsx` pattern — recorded
+    honestly as an unexplained, seemingly one-off standalone flake rather than assumed
+    to be the known `run-many`-only issue. Noted, not escalated, consistent with how a
+    prior milestone treated a similar single, non-reproducible standalone failure.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -4702,6 +5020,41 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   milestones' own e2e runs — a periodic dev-database reset (outside of migrations,
   which this is not) is the eventual fix if it ever becomes disruptive, not attempted
   here.
+- **Deleting an account (Milestone 19) doesn't cascade to hide that account's existing
+  posts/comments/likes from feed, explore, or other users' profile grids** — only the
+  deleted account's own profile (`GET /users/:username`) and search results disappear;
+  a soft-deleted user's prior posts remain fully visible everywhere else they already
+  appeared. Not a gap: `docs/IMPLEMENTATION_PLAN.md` M19's own test wording only calls
+  for "soft-deleted users disappear from public reads (profile, search)," and
+  `docs/DATABASE.md` §7's soft-delete design has always been per-row, not cascading.
+  Worth a deliberate design decision in a future milestone if "delete my account"
+  should also mean "and scrub everything I posted" — not assumed here.
+- **No centralized Prisma Client `$extends` filter for `deletedAt IS NULL` reads
+  exists (corrected in `docs/DATABASE.md` §7, Milestone 19, bug #59)** — every service
+  that reads `User`/`Post`/`Comment` filters `deletedAt: null` manually in its own
+  query. This has worked correctly everywhere it's been applied since Milestone 8, but
+  any *new* service added in a future milestone that reads one of these three models
+  needs to remember to add the same manual filter itself — there's no structural
+  guarantee catching an omission. Revisit with a real `$extends` refactor once a
+  consumer actually forgets it (or proactively, if a future milestone has the scope),
+  not before.
+- **`apps/mobile`'s `SettingsScreen` doesn't refresh the auth context's stored `user`
+  after `deleteAccount` the way `changeEmail`'s `setUser(updated)` does** — there's
+  nothing left to refresh into (the account no longer exists), so `setUser(null)` plus
+  an immediate `router.replace` is the correct behavior, not an oversight; noted only
+  so a future reader doesn't mistake the asymmetry with `changeEmail`'s handling for a
+  missed update.
+- **No forgot-password / email-based reset flow exists** — `POST /me/change-password`
+  (Milestone 19) is authenticated-only (requires knowing the current password); there
+  is no unauthenticated "email me a reset link" path. This was never actually specified
+  by `docs/API.md` §13 or `docs/FEATURES.md` #17 — both only ever described the
+  authenticated change-password flow — so it isn't a gap relative to this milestone's
+  real scope. Worth noting, though: `docs/ARCHITECTURE.md` §13 defers "email delivery
+  provider for production" specifically "to the Account Settings / password-reset
+  milestone," anticipating this milestone would need one — it didn't, since no
+  email-sending flow was ever part of the actual spec. That open question remains
+  exactly as deferred as before, not resolved here; a future milestone adding
+  forgot-password would be the one to actually pick an email provider.
 
 ---
 
@@ -4802,7 +5155,14 @@ at all, `ExploreService`'s raw-SQL-for-ranking-only / Prisma-for-the-rest split,
 the third register-throttle increase, the `findInExplore` pagination-walk test-
 robustness decision, and staying Chromium-only for web-e2e despite installing
 Firefox/WebKit) are equally each decided and recorded above with rationale, not left
-open. Everything else recorded in
+open. Milestone 19's seven deviations (revoking every refresh-token family on
+change-password rather than relying on the `tokenVersion` bump alone, requiring a
+`currentPassword` body on `DELETE /me` beyond what the docs originally specified, no
+`tokenVersion` bump needed for account deletion, `AuthService` rather than
+`UsersService` implementing all three new `/me` mutations, the `issueSessionTokens`
+extraction, reusing `RefreshResponse` verbatim for change-password's response, and
+correcting `docs/DATABASE.md` §7's `$extends` inaccuracy) are equally each decided and
+recorded above with rationale, not left open. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -4813,82 +5173,95 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 19 — Account Settings**: per `docs/IMPLEMENTATION_PLAN.md`, three new
-`/me` mutations plus settings screens on both platforms — no new tables, but the
-first milestone to touch `User.tokenVersion`/`passwordHash` outside of registration
-itself, and the first to implement a real, testable session-revocation story.
+**Milestone 20 — Web E2E Coverage + Hardening Pass**: per `docs/IMPLEMENTATION_PLAN.md`,
+the last milestone on the summary table — no new API surface, no new schema. Four
+genuinely different kinds of work, not one: (1) a full-critical-path Playwright suite,
+(2) a security/hardening review against `docs/ARCHITECTURE.md` §11, (3) a risk-register
+review against §12, and (4) standing up actual CI. Re-read `docs/IMPLEMENTATION_PLAN.md`'s
+M20 section and all of `docs/ARCHITECTURE.md` §11–§13 in full before starting — this is
+the first milestone whose job is explicitly to look backward across everything already
+built, not to add a new feature.
 
-1. API (`docs/API.md` §13): `POST /me/change-password` (body
-   `{ currentPassword, newPassword }` — verify `currentPassword` against the stored
-   `argon2id` hash before accepting, then bump `User.tokenVersion` to invalidate every
-   other session's access token, the same `tokenVersion`-claim mechanism
-   `AuthModule` already established in Milestone 5 for logout-all-devices); `POST
-/me/change-email` (body `{ newEmail, currentPassword }` — decide whether this also
-   bumps `tokenVersion` or only requires re-verification, and whether/how it
-   interacts with `emailVerifiedAt`, which exists in the schema but has never been
-   set by anything yet — re-read `docs/DATABASE.md` §5 before assuming); `DELETE /me`
-   (`docs/API.md` §4/§13 — soft-deletes via `deletedAt`, same column every other
-   soft-delete already uses, and revokes all refresh token families, the same
-   `logout({ allDevices: true })` mechanism Milestone 5 built).
-2. Decide how a password/email change interacts with the _current_ session's own
-   access token: `docs/API.md` §13 already specifies bumping `tokenVersion`
-   invalidates "other sessions'" tokens, implying the changing session needs a
-   freshly-issued token in the same response (not logged out by its own change) —
-   confirm this is actually how `AuthService`'s existing `tokenVersion`-check
-   middleware/guard behaves before assuming, and decide what `POST /me/change-
-password`'s response body actually contains (a new access token? nothing, requiring
-   a client-side refresh?).
-3. Decide account-deletion's exact blast radius before implementing `DELETE /me`:
-   `docs/API.md` §13 says "soft delete + full session revocation," but re-derive
-   whether a soft-deleted user's existing posts/comments/likes/follows remain visible
-   to others (likely: profile/search disappear per the test requirement below, but
-   do their *posts* vanish from others' feeds/explore too, or only their profile?) —
-   `docs/DATABASE.md`'s soft-delete section (§7) and every prior milestone's
-   `deletedAt IS NULL` filtering convention is the right starting point, not a new
-   invention.
-4. Web + mobile: settings screens for change-password, change-email, and delete-
-   account (with a real confirmation step — this is the first genuinely destructive,
-   irreversible-from-the-UI action in this codebase). Decide whether delete-account
-   needs a re-authentication step (re-enter password) before executing, the same
-   defense-in-depth pattern `change-password`/`change-email` already require via
-   `currentPassword`.
-5. **Tests**: an integration test confirming a password change invalidates other
-   sessions' access tokens (via `tokenVersion` mismatch) while the *changing*
-   session's own new token still works (`docs/IMPLEMENTATION_PLAN.md`'s own wording
-   — this needs two real logged-in sessions for the same user, a new test shape this
-   codebase hasn't needed before); an account-deletion integration test confirming a
-   soft-deleted user disappears from public reads (profile, search — and decide
-   whether explore/feed too, per point 3 above) but the row remains in the DB.
+1. **Full critical-path Playwright suite** (`docs/IMPLEMENTATION_PLAN.md`'s own
+   wording): register → login → edit profile → upload avatar → follow another user →
+   create a multi-image post → appear in follower's feed → like → comment → save →
+   appear in search → appear in explore → receive + read a notification → change
+   password → log out, as one continuous, realistic user journey (or a small number of
+   connected specs), not just the existing per-feature smoke tests run independently.
+   Decide whether this replaces or supplements the existing `apps/web-e2e` spec files
+   (likely: supplements — the existing files already cover isolated feature
+   correctness; this one proves the features compose end-to-end for one user).
+   "Change password" here is this codebase's first Playwright coverage of that flow at
+   all (Milestone 19 only got `apps/api-e2e` coverage, deliberately, per its own
+   Deviations entry) — write it fresh, don't assume `settings.spec.ts` exists yet.
+2. **Resolve the Firefox/WebKit cross-browser flakiness** (Milestone 18, bug #58/Known
+   Issues) before assuming multi-browser coverage is achievable here, or explicitly
+   decide to stay Chromium-only for this milestone too and say so. Start by
+   reproducing one scattered failure in isolation (e.g. `--project=firefox --grep
+"<name>"`), per the Known Issues entry's own suggested starting point — don't re-run
+   the whole suite across all three browsers and hope it's fixed.
+3. **Security/hardening review against `docs/ARCHITECTURE.md` §11's checklist**:
+   confirm Helmet headers and the CORS allow-list are actually configured (not just
+   documented as intended) and *effective under test* — e.g. an actual cross-origin
+   request from a disallowed origin should be rejected, not just assumed blocked;
+   confirm the global/`/auth/*` throttles are real, working rate limits (the existing
+   `api-e2e` suite already exercises them incidentally — formalize that into an
+   explicit hardening-focused test if gaps exist); grep built client bundles
+   (`apps/web`'s `.next` output, `apps/mobile`'s Hermes bundles) for anything that
+   looks like a leaked secret (`JWT_ACCESS_TOKEN_SECRET`, `DATABASE_URL`, S3
+   credentials) — there shouldn't be any, since secrets only ever live server-side
+   per `packages/config`, but this milestone is explicitly the point to verify that
+   claim rather than just trust it.
+4. **Risk register review against `docs/ARCHITECTURE.md` §12**: for each of the 10
+   rows, confirm what was actually built still matches the "Resolved"/"Exercised for
+   real" note already recorded (most do, per every milestone's own Deviations
+   entries), and flag anything that's drifted. Risk #7 (search relevance,
+   `pg_trgm`) and risk #3 (feed fan-out-on-read) are both explicitly flagged as
+   "revisit only if real usage shows otherwise" — confirm neither needs revisiting
+   yet (almost certainly still true at this test-data scale) rather than silently
+   carrying the note forward unchecked. `docs/ARCHITECTURE.md` §13's "email delivery
+   provider... deferred to the Account Settings / password-reset milestone" note
+   turned out to not apply (Milestone 19 never needed one — see its Known Issues
+   entry) — correct or re-scope that open question while reviewing §13, since it's
+   now stale relative to what actually shipped.
+5. **CI pipeline**: `nx affected -t lint test build e2e` gating merges — this is the
+   first milestone to actually need a CI config (no `.github/workflows/` or
+   equivalent exists yet; confirm by checking before assuming one does). Decide the
+   CI platform (GitHub Actions is the implicit default given this is a `git`
+   repository with no other CI references anywhere in the docs) and whether `e2e`
+   in CI needs a different Postgres/MinIO bring-up story than this local Docker Compose
+   setup — don't assume the dev-environment scripts translate directly to CI without
+   checking.
+6. **Decide the next feature** (Stories, Reels, DMs, push, realtime) once the above is
+   done — this is explicitly the point `docs/IMPLEMENTATION_PLAN.md` designates for
+   that decision, not before.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 19 section,
-`docs/API.md` §4/§13, and `docs/DATABASE.md` §5 (`User.tokenVersion`/
-`emailVerifiedAt`/`deletedAt`) and §7 (soft delete) in full — this is the first
-milestone since Milestone 5 to touch the token-versioning mechanism, and the first
-ever to touch `User.deletedAt`, so don't assume either behaves exactly like any
-single prior precedent without checking. The `/auth/register` throttle has
-comfortable headroom (roughly 38/60 used after Milestone 18's `explore.spec.ts`);
-keep applying the standing share-via-`beforeAll` discipline regardless — this
-milestone's two-session password-change test in particular should register the
-minimum accounts it actually needs. For any single-file `apps/web-e2e` Playwright
-run, use `--grep "<name>"` placed **after** the trailing `--` together with
-`--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name" --project=chromium`),
-**never** `--testPathPatterns` and **never** `--grep=X` before a separate trailing
-`--` block — both of those silently either run the whole suite or drop the filter,
-confirmed four times now (Milestones 14, 15, 16, and 17); the
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s Milestone 20 section and
+`docs/ARCHITECTURE.md` §11–§13 in full. The `/auth/register` throttle still has
+comfortable headroom after Milestone 19's `account-settings.spec.ts` added 9 more
+registrations (confirmed empirically: the full suite ran clean, no `429`s, across
+three consecutive runs) — keep applying the standing share-via-`beforeAll` discipline
+regardless — the new
+full-critical-path Playwright suite in particular should register the minimum accounts
+it actually needs, same as every `apps/api-e2e` file already does. For any single-file
+`apps/web-e2e` Playwright run, use `--grep "<name>"` placed **after** the trailing `--`
+together with `--project=chromium` (e.g. `nx run web-e2e:e2e -- --grep "name"
+--project=chromium`), **never** `--testPathPatterns` and **never** `--grep=X` before a
+separate trailing `--` block — both of those silently either run the whole suite or
+drop the filter, confirmed four times now (Milestones 14, 15, 16, and 17); the
 `-- --grep ... --project=...` combined form is the only one confirmed reliable.
-Firefox/WebKit are now installed but not yet a usable validation target (Milestone
-18, bug #58/Known Issues) — keep validating `apps/web-e2e` with `--project=chromium`
-only, don't assume this has been fixed without checking. If running the full
-`apps/web-e2e` suite twice in a row against the same long-lived `api:serve` process,
-expect the workspace-wide 100 req/min/IP throttle to trip on the second run —
-restart `api:serve` between full-suite re-runs to reset its in-memory counter, the
-same standing Milestone 13 workaround (and don't assume a mass failure immediately
-after a _fresh_ restart is the same thing — Milestone 17 hit one that wasn't, see
-Known Issues). If `apps/api-e2e` needs to run while port 3000 is occupied by
-something unrelated to this repo, both `global-setup.ts` and `test-setup.ts` already
-read `PORT`/`HOST` from the environment — prefix the command with `PORT=3100` (or
-any free port) rather than touching whatever else is bound to 3000. Port 3000 itself
-was left free at the end of Milestone 18 (the `api:serve` process started for this
-milestone's own `web-e2e:e2e` validation was stopped afterward) — check its current
-state fresh rather than assuming either way, since that's this machine's own local
-state, not something this repo controls.
+Firefox/WebKit are installed but not yet a usable validation target (Milestone 18, bug
+#58/Known Issues) — this milestone is explicitly where that gets investigated (see
+point 2 above), not where it's assumed fixed. If running the full `apps/web-e2e` suite
+twice in a row against the same long-lived `api:serve` process, expect the
+workspace-wide 100 req/min/IP throttle to trip on the second run — restart `api:serve`
+between full-suite re-runs to reset its in-memory counter, the same standing Milestone
+13 workaround (and don't assume a mass failure immediately after a _fresh_ restart is
+the same thing — Milestone 17 hit one that wasn't, see Known Issues). If `apps/api-e2e`
+needs to run while port 3000 is occupied by something unrelated to this repo, both
+`global-setup.ts` and `test-setup.ts` already read `PORT`/`HOST` from the environment —
+prefix the command with `PORT=3100` (or any free port) rather than touching whatever
+else is bound to 3000. Check port 3000's current state fresh before relying on it —
+Milestone 19 found and killed one of its *own* orphaned processes there mid-session
+(bug #60); that's exactly the kind of workflow friction CI (point 5 above) would
+eliminate by never reusing a long-lived local process in the first place.
