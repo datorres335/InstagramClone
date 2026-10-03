@@ -35,11 +35,24 @@ services:
       retries: 10
 
   minio:
-    # MinIO removed its images from Docker Hub (2026-09-11); quay.io is now
-    # the canonical registry — see https://github.com/minio/minio/issues (Hub deprecation).
-    image: quay.io/minio/minio:latest
+    # MinIO removed its images from Docker Hub (2026-09-11), moving to
+    # quay.io as the canonical registry — then quay.io/minio/* *also*
+    # started rejecting anonymous pulls with "unauthorized: access to the
+    # requested resource is not authorized" starting 2026-09-24 (confirmed
+    # directly: this exact image broke a real GitHub Actions run of
+    # .github/workflows/ci.yml on first use, docs/PROGRESS.md Milestone 20
+    # Known Issues). Every registry MinIO itself controls is now a closed
+    # source for an anonymous CI pull. Switched to `bitnamilegacy/minio` —
+    # Broadcom's frozen, still-publicly-pullable archive of pre-lockdown
+    # Bitnami MinIO builds, the fix dozens of independent projects
+    # converged on independently for the same breakage. Pinned to a
+    # specific release, not `:latest` — this is a frozen archive, not an
+    # actively maintained tag.
+    image: bitnamilegacy/minio:2025.4.22
     restart: unless-stopped
-    command: server /data --console-address ":9001"
+    # No `command: server /data ...` — the Bitnami image's own entrypoint
+    # starts the server automatically; overriding it isn't needed (and
+    # isn't how the Bitnami image is designed to be driven).
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-instagram_clone}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-instagram_clone_secret}
@@ -47,15 +60,18 @@ services:
       - '${MINIO_API_PORT:-9000}:9000'
       - '${MINIO_CONSOLE_PORT:-9001}:9001'
     volumes:
-      - minio_data:/data
+      # Bitnami's image stores data under /bitnami/minio/data, not /data.
+      - minio_data:/bitnami/minio/data
     healthcheck:
+      # The Bitnami image bundles `mc` too, so this needs no change.
       test: ['CMD', 'mc', 'ready', 'local']
       interval: 5s
       timeout: 5s
       retries: 10
 
   minio-init:
-    image: quay.io/minio/mc:latest
+    # Same quay.io lockdown, same bitnamilegacy fix, as `minio` above.
+    image: bitnamilegacy/minio-client:2025.4.16
     depends_on:
       minio:
         condition: service_healthy
@@ -63,11 +79,26 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-instagram_clone}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-instagram_clone_secret}
       MINIO_BUCKET: ${MINIO_BUCKET:-instagram-clone-media}
+    # `--config-dir /tmp/mc` on every mc call: the Bitnami image runs as a
+    # non-root uid, and mc's default config dir isn't writable by it.
+    # The retry loop around `alias set` is real, not defensive paranoia:
+    # confirmed reproducible locally — `minio`'s healthcheck (`mc ready
+    # local`, run from inside that container against its own localhost)
+    # can report healthy a moment before the server actually accepts
+    # *external* connections from another container on the Docker network,
+    # so `depends_on: condition: service_healthy` alone isn't quite enough.
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD &&
-      mc mb -p local/$$MINIO_BUCKET &&
-      mc anonymous set download local/$$MINIO_BUCKET &&
+      ok=1 &&
+      for i in 1 2 3 4 5; do
+        if mc --config-dir /tmp/mc alias set local http://minio:9000 $$MINIO_ROOT_USER $$MINIO_ROOT_PASSWORD; then
+          ok=0 && break
+        fi
+        echo 'minio not reachable yet, retrying...' && sleep 2
+      done &&
+      if [ \"$$ok\" -ne 0 ]; then echo 'minio never became reachable' && exit 1; fi &&
+      mc --config-dir /tmp/mc mb -p local/$$MINIO_BUCKET &&
+      mc --config-dir /tmp/mc anonymous set download local/$$MINIO_BUCKET &&
       exit 0
       "
 

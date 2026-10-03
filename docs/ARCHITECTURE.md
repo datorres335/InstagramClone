@@ -491,12 +491,32 @@ code only ever uses the AWS SDK v3 S3 client with a configurable `endpoint`.
 `docker-compose.yml` at the repo root provides infrastructure only (never application
 code, which runs via Nx on the host for fast iteration):
 
-| Service    | Image             | Purpose                                                                           |
-| ---------- | ----------------- | --------------------------------------------------------------------------------- |
-| `postgres` | `postgres:17`     | Primary database                                                                  |
-| `minio`    | `minio/minio`     | S3-compatible object storage + `minio/mc` init container to create the dev bucket |
-| `redis`    | `redis:7`         | BullMQ job queue, throttler storage                                               |
-| `maildev`  | `maildev/maildev` | Catches outbound email locally (password reset, etc.)                             |
+| Service    | Image                 | Purpose                                                                                   |
+| ---------- | --------------------- | ----------------------------------------------------------------------------------------- |
+| `postgres` | `postgres:17-alpine`  | Primary database                                                                          |
+| `minio`    | `bitnamilegacy/minio` | S3-compatible object storage + `bitnamilegacy/minio-client` init container for the bucket |
+| `redis`    | `redis:7-alpine`      | BullMQ job queue, throttler storage                                                       |
+| `maildev`  | `maildev/maildev`     | Catches outbound email locally (password reset, etc.)                                     |
+
+**`minio`/`minio-init` pinned to `bitnamilegacy/*` images, not the official `minio/minio`/
+`minio/mc` (corrected after Milestone 20's CI pipeline hit this on its very first real
+GitHub Actions run — see `docs/PROGRESS.md`'s Milestone 20 Known Issues/Bugs Found):**
+MinIO withdrew its images from Docker Hub (2026-09-11), then `quay.io/minio/*` _also_
+started rejecting anonymous pulls with `401 unauthorized` starting 2026-09-24 — every
+registry MinIO itself controls became a closed source for an anonymous CI pull
+simultaneously. `bitnamilegacy/minio`/`bitnamilegacy/minio-client` are Broadcom's frozen,
+still-publicly-pullable archive of pre-lockdown Bitnami MinIO builds — the fix dozens of
+independent projects converged on for the same breakage. Two real consequences of the
+switch: the Bitnami image stores data under `/bitnami/minio/data`, not `/data` (the
+compose file's `minio_data` volume mount changed to match — a pre-existing `minio_data`
+volume from the old root-owned official image will _not_ be writable by the Bitnami
+image's non-root user; remove and let Compose recreate it if upgrading an existing local
+environment), and `mc` calls from the init container need an explicit `--config-dir`
+(that same non-root-user restriction). A startup-race retry loop was also added to
+`minio-init`'s entrypoint: `minio`'s healthcheck can report healthy a moment before the
+server actually accepts connections from _other_ containers on the Docker network, which
+`depends_on: condition: service_healthy` alone doesn't fully cover — confirmed
+reproducible, not theoretical.
 
 `.env.example` at the root documents every variable consumed by `packages/config`;
 each app loads only the subset it needs, validated at boot.

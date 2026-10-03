@@ -174,7 +174,7 @@ pipeline. Both `web` and `mobile` gained an explore grid screen (mobile's via re
 `onEndReached` infinite scroll, matching Explore's real cursor — unlike search's
 debounce-only UI), reusing the profile grid's tile sizing constants on mobile.
 Milestone 19 is the first milestone since Milestone 5 to touch the token-versioning
-mechanism and the first ever to actually *set* `User.deletedAt` through a real
+mechanism and the first ever to actually _set_ `User.deletedAt` through a real
 endpoint: three new `/me` mutations — `POST /me/change-password` (bumps
 `tokenVersion`, which invalidates every outstanding access token system-wide
 including the calling session's own, so it additionally revokes every refresh-token
@@ -1185,14 +1185,14 @@ userId`)
 
 - [x] `prisma/schema.prisma` — GIN trigram indexes on `User.username` and
       `User.fullName` (`@@index([username(ops: raw("gin_trgm_ops"))], type:
-    Gin)`, confirming Prisma 7 supports the operator-class/index-type
+  Gin)`, confirming Prisma 7 supports the operator-class/index-type
       syntax natively, no preview feature needed) — a new migration,
       hand-placed via the same `prisma migrate diff` + `migrate deploy`
       workaround every prior migration has used. Two statements had no
       schema-DSL representation at all and were hand-added to the generated
       SQL, the same way `citext` was in migration 0001: `CREATE EXTENSION
-    IF NOT EXISTS pg_trgm` and (new this milestone) a dynamic `DO $$ ...
-    ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
+  IF NOT EXISTS pg_trgm` and (new this milestone) a dynamic `DO $$ ...
+  ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
       block, lowering the default `0.3` threshold so the documented
       2-character query minimum actually returns real short-prefix matches
       (discovered empirically: `similarity('alice', 'al') = 0.2857`, under
@@ -1332,7 +1332,7 @@ userId`)
       (`changePassword`, `changeEmail`, `deleteAccount`), each verifying
       `currentPassword` first; `changePassword` bumps `tokenVersion`,
       revokes every refresh-token family via `TokensService
-      .revokeAllForUser`, and issues a fresh token pair for the calling
+    .revokeAllForUser`, and issues a fresh token pair for the calling
       session via a new private `issueSessionTokens` helper (extracted from
       the existing `issueSession`, now its second real caller);
       `deleteAccount` sets `deletedAt` and revokes every refresh-token
@@ -1344,7 +1344,7 @@ userId`)
 - [x] `apps/api/src/modules/users/me.controller.ts` — three new routes:
       `POST /me/change-password` (sets the rotated refresh cookie on
       success, same as `AuthController`'s own routes), `POST
-      /me/change-email`, `DELETE /me` (clears the refresh cookie on
+    /me/change-email`, `DELETE /me` (clears the refresh cookie on
       success) — all delegate to the newly-exported `AuthService`, not
       `UsersService`
 - [x] `packages/validation`'s new `account-settings.ts`
@@ -4054,7 +4054,7 @@ and both are recorded above with their reasoning, not left open.
   `tokenVersion`** — `docs/API.md` §13 only specified the `tokenVersion` bump, but
   `POST /auth/refresh` (Milestone 5) never checks `tokenVersion` at all — it just
   rotates the presented token and re-reads the user row, so a device with a still-valid
-  refresh token could silently mint a fresh access token carrying the *new*
+  refresh token could silently mint a fresh access token carrying the _new_
   `tokenVersion` and never actually be forced to re-login. That would defeat
   `docs/FEATURES.md` #17's explicit intent ("forced to re-login"). Revoking every
   family closes that gap; the calling session gets a brand-new token pair in the
@@ -4094,7 +4094,7 @@ and both are recorded above with their reasoning, not left open.
   `ChangePasswordResponse`** — both are structurally and conceptually identical: "here
   is your new access token (and refresh token), keep using it." This revisits
   Milestone 13's reuse precedent rather than Milestone 15's/18's distinct-naming one,
-  judged correct here because the *purpose* of the response (not just its shape) is
+  judged correct here because the _purpose_ of the response (not just its shape) is
   genuinely the same as `POST /auth/refresh`'s.
 - **`docs/DATABASE.md` §7 corrected: no centralized Prisma Client `$extends` filter for
   `deletedAt IS NULL` reads was ever actually built, despite being documented as the
@@ -4186,7 +4186,7 @@ change to either.
   repeated observation that Firefox/WebKit have a measurably higher flake rate than
   Chromium in this environment. Each matrix entry is its own fully isolated GitHub
   Actions runner specifically to eliminate the register/login-throttle collision that
-  made running all three browsers together *locally* against one shared server
+  made running all three browsers together _locally_ against one shared server
   unreliable — isolation solves the throttle problem completely, but doesn't change
   the underlying per-browser timing-sensitivity difference, so the job stays
   non-blocking rather than assuming isolation alone makes it as reliable as Chromium.
@@ -4199,8 +4199,13 @@ change to either.
 - **`.github/workflows/ci.yml` was validated only as syntactically-correct YAML with
   the expected job names — never run on an actual GitHub Actions runner** — this
   environment has no way to trigger a real Actions run without pushing a commit or
-  opening a PR, neither of which was asked for. A genuinely unverified risk, recorded
-  honestly in Known Issues below rather than claimed as tested.
+  opening a PR, neither of which was asked for. A genuinely unverified risk at the
+  time, recorded honestly rather than claimed as tested — **and immediately proven
+  real**: the user pushed and ran it shortly after, and every job failed on its first
+  attempt (bug #68 — a dated upstream MinIO registry lockdown, not a mistake in this
+  workflow's own logic). Fixed in `docker-compose.yml`, re-verified thoroughly in this
+  local environment (which can reproduce the same anonymous-pull path CI uses), not
+  yet re-confirmed on an actual Actions run as of this writing.
 
 None of Milestone 20's deviations touch `docs/ARCHITECTURE.md`'s core design, except
 where they directly correct it (the risk-register staleness in §12, the health-check
@@ -4962,7 +4967,7 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     history and reasoning). Re-ran the full suite twice after the fix: 116/116 both
     times.
 57. **`explore.spec.ts`'s `'ranks the higher-engagement post above the lower-
-    engagement one'` test failed deterministically after the throttle fix above,
+engagement one'` test failed deterministically after the throttle fix above,
     but the underlying ranking logic was correct.** Root cause (confirmed via direct
     `psql` queries, not guessed): this dev database has accumulated 521 posts within
     Explore's 7-day window from every prior milestone's own e2e runs across this
@@ -5015,7 +5020,7 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     `api-e2e:e2e` run of this milestone with `EADDRINUSE`.** Traced (via
     `Get-NetTCPConnection` + `Get-CimInstance` identity confirmation before touching
     it, per standing practice) to this same session's own earlier manual `nx run
-    api:serve` instance, started for live-endpoint smoke testing and stopped via
+api:serve` instance, started for live-endpoint smoke testing and stopped via
     `TaskStop` — but the forked Node child apparently survived that stop, orphaned on
     the port. This is the same already-documented "continuous-task teardown doesn't
     reliably run" characteristic (bugs #37/#43), just the first time it's been traced
@@ -5065,7 +5070,7 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     Fixed by ranking on `GREATEST(similarity(username, …), similarity(full_name, …))`
     instead — a genuine ranking correctness fix (`docs/DATABASE.md` §6), not a
     workaround for test data volume the way Milestone 18's `findInExplore` was for a
-    *pagination* problem; this one had no pagination to walk since `GET /search/users`
+    _pagination_ problem; this one had no pagination to walk since `GET /search/users`
     has none at all (docs/API.md §11).
 65. **A confirmed, open, upstream Next.js App Router issue: `redirect()` inside a
     Server Action bound to `useActionState`, when the form is resubmitted after that
@@ -5074,7 +5079,7 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
     log out → log back in sequence getting permanently stuck on `/login` after a
     genuinely successful second login attempt.** Isolated to a minimal repro (register
     → log out → fail a login once → retry with the correct password on the same,
-    never-reloaded page) that reproduces with *zero* password-change involvement,
+    never-reloaded page) that reproduces with _zero_ password-change involvement,
     confirmed independent of `redirect()` vs. a client-side `router.push()`/
     `window.location.href` alternative (both tried, neither worked — the underlying
     `useActionState` `state` genuinely never updates on the second dispatch, observed
@@ -5101,13 +5106,49 @@ tsconfig.app.json` excludes `src/**/*.spec.ts` from its `tsc --noEmit` scan, and
 67. **Several `api:serve` background processes orphaned on port 3000 across this
     milestone's own manual live-testing, more frequently than any single prior
     milestone.** Each time, traced to this same session's own earlier `nx run
-    api:serve` instance via `Get-NetTCPConnection`/`Get-CimInstance` identity
+api:serve` instance via `Get-NetTCPConnection`/`Get-CimInstance` identity
     confirmation before touching it (per standing practice — never assumed, always
     confirmed-own before killing). Same already-documented "continuous-task teardown
     doesn't reliably run after `TaskStop`" characteristic as bugs #37/#43/#60, now
     recurring frequently enough that checking for and clearing an orphaned process is
     treated as a routine, expected step after every manual `api:serve` use in this
     environment — not an occasional troubleshooting one.
+68. **The very first real run of `.github/workflows/ci.yml` on GitHub Actions failed
+    every job at the identical step: `Start infrastructure (Postgres, Redis, MinIO)`,
+    with `minio-init Error unauthorized: access to the requested resource is not
+authorized`.** Confirmed via web search as a widespread, dated upstream event, not
+    specific to this repository's config: MinIO withdrew its images from Docker Hub
+    (2026-09-11, already documented in `docker-compose.yml`'s own prior comment), then
+    `quay.io/minio/minio` and `quay.io/minio/mc` _also_ started rejecting anonymous
+    pulls with `401 unauthorized` starting 2026-09-24 — breaking every CI pipeline
+    anywhere that pulled these images anonymously, confirmed across more than a dozen
+    independent GitHub repositories hitting the identical error in the same window.
+    Local dev never surfaced this because the images were already pulled and cached
+    from before the lockdown; a fresh GitHub Actions runner always pulls cold. Fixed
+    by switching `minio`/`minio-init` to `bitnamilegacy/minio:2025.4.22`/
+    `bitnamilegacy/minio-client:2025.4.16` — Broadcom's frozen, still-publicly-pullable
+    archive of pre-lockdown Bitnami MinIO builds, the fix the wider community
+    independently converged on for the same breakage. Verified locally by reproducing
+    the exact failure mode (a fresh `docker compose up`, not relying on a cached pull)
+    and confirming the fix resolves it: `apps/api-e2e`'s full media pipeline test
+    (presign → direct MinIO `PUT` → complete → poll) and `apps/web-e2e`'s
+    critical-path test (which uploads both an avatar and a post image) both pass
+    against the new images, run repeatedly. A second, genuine issue surfaced during
+    that same verification and was also fixed: the pre-existing `minio_data` Docker
+    volume, created under the old image's root user, wasn't writable by the new
+    image's non-root user (`Permission denied` on `/bitnami/minio/data/.root_user`) —
+    expected and harmless for CI (always a fresh volume) but needed a one-time local
+    volume removal to test correctly, now documented in `docs/ARCHITECTURE.md` §9 for
+    anyone else upgrading an existing local environment. A third, genuine _race
+    condition_ surfaced independently across repeated fresh-stack test runs (roughly
+    1 in 4): `minio-init` connecting to `minio` immediately after `depends_on:
+condition: service_healthy` was satisfied occasionally got `connection refused`,
+    confirming `minio`'s healthcheck (`mc ready local`, checked from inside that same
+    container against its own localhost) can report healthy a moment before the
+    server actually accepts connections from _other_ containers on the Docker
+    network. Fixed with a 5-attempt, 2-second-interval retry loop around `mc alias
+set` in `minio-init`'s entrypoint — confirmed via repeated fresh `docker compose
+down && up -d --wait` cycles afterward, all clean.
 
 ---
 
@@ -5408,7 +5449,7 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   exists (corrected in `docs/DATABASE.md` §7, Milestone 19, bug #59)** — every service
   that reads `User`/`Post`/`Comment` filters `deletedAt: null` manually in its own
   query. This has worked correctly everywhere it's been applied since Milestone 8, but
-  any *new* service added in a future milestone that reads one of these three models
+  any _new_ service added in a future milestone that reads one of these three models
   needs to remember to add the same manual filter itself — there's no structural
   guarantee catching an omission. Revisit with a real `$extends` refactor once a
   consumer actually forgets it (or proactively, if a future milestone has the scope),
@@ -5457,7 +5498,7 @@ compose up -d --wait` step in particular (MinIO's healthcheck interacting with i
   `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
   underlying per-browser timing sensitivity hasn't been root-caused — isolation only
   removed the register/login-throttle collision that made running all three browsers
-  together *locally* unreliable, a different (also real) problem. If a future
+  together _locally_ unreliable, a different (also real) problem. If a future
   milestone wants Firefox/WebKit to actually gate merges, start by reproducing a single
   scattered failure in true isolation (`--project=firefox --grep "<name>"`, repeated
   many times) rather than assuming CI's per-job isolation alone closes the gap.
@@ -5583,7 +5624,7 @@ fix on `/settings`, keeping the Firefox/WebKit CI job non-blocking, reusing
 `docker-compose.yml` directly in CI rather than GitHub Actions' `services:` key, and
 deciding Direct Messages as the next feature with realtime transport deferred to its
 own later milestone) are equally each decided and recorded above with rationale, not
-left open — including the one genuinely *unresolved* technical question this
+left open — including the one genuinely _unresolved_ technical question this
 milestone surfaced (the upstream Next.js `useActionState`/`redirect()` issue, risk #11),
 which is explicitly recorded as found-but-not-fixed rather than silently left
 ambiguous. Everything else recorded in
