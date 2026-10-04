@@ -59,6 +59,14 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await page.getByRole('button', { name: 'Follow' }).click();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();
     await expect(page.getByText('1 followers')).toBeVisible();
+    // `FollowButton` fires `router.refresh()` as a fire-and-forget
+    // background fetch after a successful toggle — reloading immediately
+    // can collide with that still-in-flight request (Firefox aborts the
+    // collision with `NS_BINDING_ABORTED`; Chromium tolerates it, see
+    // critical-path.spec.ts for the full explanation). A short explicit
+    // wait, not `waitForLoadState('networkidle')` (disallowed by this
+    // repo's `playwright/no-networkidle` lint rule).
+    await page.waitForTimeout(500);
 
     // Reload from scratch to prove it's persisted server-side.
     await page.reload();
@@ -111,6 +119,9 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await loginThroughUi(page, viewer);
     await page.goto(`/${target.username}`);
     await page.getByRole('button', { name: 'Follow' }).click();
+    // Same `router.refresh()`-vs-navigation race as above — settle before
+    // navigating away.
+    await page.waitForTimeout(500);
     await page.goto(`/${otherFollower.username}`);
     await page.getByRole('button', { name: 'Follow' }).click();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();

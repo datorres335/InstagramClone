@@ -121,6 +121,16 @@ test.describe('critical path: one continuous journey across every feature', () =
     await expect(
       followerPage.getByRole('button', { name: 'Unfollow' }),
     ).toBeVisible();
+    // `FollowButton` fires `router.refresh()` as a fire-and-forget
+    // background fetch after a successful toggle (its own doc comment
+    // explains why) — navigating away immediately can collide with that
+    // still-in-flight request. Firefox aborts the collision with
+    // `NS_BINDING_ABORTED`; Chromium tolerates it. A short explicit wait
+    // (not `waitForLoadState('networkidle')` — disallowed by this repo's
+    // `playwright/no-networkidle` lint rule, and a fixed wait is simpler
+    // and more predictable for settling one known same-origin fetch than
+    // waiting for all network activity to go quiet) avoids the race.
+    await followerPage.waitForTimeout(500);
 
     // ---- appear in follower's feed ----
     await followerPage.goto('/home');

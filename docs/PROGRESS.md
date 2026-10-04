@@ -5502,6 +5502,44 @@ migrate deploy` hits it too, not only `migrate dev`'s shadow database as
     database (150/150) and the full `web-e2e` Chromium suite (26/26, stable
     across two runs) to confirm nothing else depended on the old ordering.
 
+### Milestone 21 (continued — root-causing part of the "pre-existing Firefox flakiness")
+
+74. **Corrects the previous entry's framing: part of what's been bucketed as
+    generic, unexplained Firefox/WebKit flakiness since Milestone 18 (bug
+    #58) actually has a concrete, fixable root cause, found after the user
+    reported the real `cross-browser-e2e` CI job failing on the _same_ test
+    four consecutive re-runs** (not a different random test each time, the
+    signature this file's own prior entry leaned on to call it "accepted
+    flakiness" — a real, reproducible distinction worth re-examining when a
+    failure recurs identically rather than assuming it's already-understood
+    noise). The failing test, `critical-path.spec.ts`, was erroring on
+    `followerPage.goto('/home')` with Firefox's `NS_BINDING_ABORTED; maybe
+frame was detached?` immediately after a `FollowButton` click. Root
+    cause: `FollowButton`'s `handleClick` (`apps/web/.../follow-button.tsx`)
+    deliberately fires `router.refresh()` as a fire-and-forget background
+    fetch after a successful toggle, documented in its own code comment —
+    correct, intentional application behavior, not a bug. But three
+    `web-e2e` tests immediately followed a follow-toggle click with a hard
+    navigation (`page.goto()`/`page.reload()`) on the same page, which can
+    collide with that still-in-flight background fetch; Firefox aborts the
+    collision, Chromium tolerates it, which is exactly why this only ever
+    surfaced under the non-blocking cross-browser job and never the
+    Chromium-gated one. Fixed in the three affected spots
+    (`critical-path.spec.ts` once, `follows.spec.ts` twice) with a short
+    explicit `page.waitForTimeout(500)` before the navigation — not
+    `waitForLoadState('networkidle')`, which this repo's own
+    `playwright/no-networkidle` eslint rule disallows, and which is the
+    wrong tool anyway once Milestone 22 adds a WebSocket/SSE connection
+    that would never go network-idle. Verified via repeated local runs
+    under `--project=firefox`: `critical-path.spec.ts` 6/7 clean (the one
+    failure was an unrelated Firefox GPU-compositor crash annotation, not
+    `NS_BINDING_ABORTED`), `follows.spec.ts` 3/3 clean, full Chromium suite
+    unaffected (26/26). The _other_ Firefox/WebKit flakiness this codebase
+    has tracked since Milestone 18 (different tests failing on different
+    runs — `comment-post`/`like-post`/`profile`/`save-post`, none of which
+    touch `FollowButton`) remains genuinely unexplained; this fix narrows
+    that class, it doesn't close it.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
