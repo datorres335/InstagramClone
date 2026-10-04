@@ -11,3 +11,4 @@ export * from './lib/notification';
 export * from './lib/search';
 export * from './lib/explore';
 export * from './lib/account-settings';
+export * from './lib/conversation';

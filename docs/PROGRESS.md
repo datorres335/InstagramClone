@@ -8,8 +8,8 @@ It should be updated after every completed milestone or meaningful development s
 
 ## Current Status
 
-**Phase:** Core Features (MVP feature set complete as of this milestone)
-**Current Milestone:** Milestone 20 — Web E2E Coverage + Hardening Pass
+**Phase:** Post-MVP Features
+**Current Milestone:** Milestone 21 — Direct Messages (Foundation)
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -228,6 +228,30 @@ deciding the next feature post-MVP: **Direct Messages**, with realtime transport
 consumer alongside `Notification`'s existing poll-based design — see the
 Architectural Decisions entry below for the reasoning, and `docs/IMPLEMENTATION_PLAN.md`
 M21/M22 for the resulting scope.
+
+Milestone 21 ships that feature: a new `Conversation`/`ConversationParticipant`/
+`Message` schema (migration `0010_direct_messages`, the join-table shape the
+Milestone 20 decision recommended, supporting group chat later without a breaking
+change even though this MVP only ever creates 1:1 conversations), a new
+`ConversationsModule` (`POST /conversations`, `GET /conversations`, `GET
+/conversations/:id`, `GET /conversations/:id/messages`, `POST
+/conversations/:id/messages` — `docs/API.md` §17), and inbox + thread screens on
+both `apps/web` and `apps/mobile`, poll-based for new messages exactly as
+Milestone 20's decision specified. This milestone also introduces this codebase's
+first **membership** authorization check ("is the caller a participant in this
+conversation") — every prior domain module has used single-owner or follow-based
+authorization instead. A real, previously-undetected clock-skew issue on this dev
+box (Docker Desktop/WSL2 on Windows: the Postgres container's clock measured ~390ms
+adrift from the host/API server's) surfaced while writing the Playwright coverage
+for this milestone — two timestamp-ordered DB rows created a few dozen milliseconds
+apart in real wall-clock time landed with their `createdAt` values in the _wrong_
+relative order, confirmed by inspecting `messages` directly, not a logic bug in
+`ConversationsService`. Also raised the workspace's global default rate limit
+(100→200 req/min/IP) — the same "real suite usage outgrew the limit" pattern every
+`/auth/*` per-route throttle increase in this project's history has followed, just
+on the global default this time (`apps/web-e2e`'s parallel-worker Playwright run
+against one shared dev server/IP, with this milestone's own new requests added on
+top, tipped it over).
 
 ---
 
@@ -1185,14 +1209,14 @@ userId`)
 
 - [x] `prisma/schema.prisma` — GIN trigram indexes on `User.username` and
       `User.fullName` (`@@index([username(ops: raw("gin_trgm_ops"))], type:
-  Gin)`, confirming Prisma 7 supports the operator-class/index-type
+Gin)`, confirming Prisma 7 supports the operator-class/index-type
       syntax natively, no preview feature needed) — a new migration,
       hand-placed via the same `prisma migrate diff` + `migrate deploy`
       workaround every prior migration has used. Two statements had no
       schema-DSL representation at all and were hand-added to the generated
       SQL, the same way `citext` was in migration 0001: `CREATE EXTENSION
-  IF NOT EXISTS pg_trgm` and (new this milestone) a dynamic `DO $$ ...
-  ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
+IF NOT EXISTS pg_trgm` and (new this milestone) a dynamic `DO $$ ...
+ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
       block, lowering the default `0.3` threshold so the documented
       2-character query minimum actually returns real short-prefix matches
       (discovered empirically: `similarity('alice', 'al') = 0.2857`, under
@@ -1332,7 +1356,7 @@ userId`)
       (`changePassword`, `changeEmail`, `deleteAccount`), each verifying
       `currentPassword` first; `changePassword` bumps `tokenVersion`,
       revokes every refresh-token family via `TokensService
-    .revokeAllForUser`, and issues a fresh token pair for the calling
+  .revokeAllForUser`, and issues a fresh token pair for the calling
       session via a new private `issueSessionTokens` helper (extracted from
       the existing `issueSession`, now its second real caller);
       `deleteAccount` sets `deletedAt` and revokes every refresh-token
@@ -1344,7 +1368,7 @@ userId`)
 - [x] `apps/api/src/modules/users/me.controller.ts` — three new routes:
       `POST /me/change-password` (sets the rotated refresh cookie on
       success, same as `AuthController`'s own routes), `POST
-    /me/change-email`, `DELETE /me` (clears the refresh cookie on
+  /me/change-email`, `DELETE /me` (clears the refresh cookie on
       success) — all delegate to the newly-exported `AuthService`, not
       `UsersService`
 - [x] `packages/validation`'s new `account-settings.ts`
@@ -1487,6 +1511,78 @@ IMPLEMENTATION_PLAN.md` M21/M22
       across repeated full-suite runs was never the new critical-path
       test itself, and matches the same already-documented Next-dev-
       server-timing flake class prior milestones have already recorded)
+
+### Milestone 21 — Direct Messages (Foundation)
+
+- [x] `prisma/schema.prisma` — `Conversation`/`ConversationParticipant`/
+      `Message` models (migration `0010_direct_messages`, hand-placed via
+      the established `prisma migrate diff` + `migrate deploy` workaround,
+      `docs/DATABASE.md` §3.11/§8): the join-table shape
+      `docs/IMPLEMENTATION_PLAN.md` M21 recommended, supporting group chat
+      later without a breaking schema change even though this MVP only
+      ever creates 1:1 conversations (enforced in `ConversationsService`,
+      not the schema)
+- [x] `packages/validation/src/lib/conversation.ts` —
+      `startConversationInputSchema`, `createMessageInputSchema`,
+      `messageResponseSchema`/`messageListResponseSchema`,
+      `conversationResponseSchema`/`conversationListResponseSchema`;
+      `otherParticipants`/`sender` reuse `postAuthorSchema` verbatim
+- [x] `apps/api/src/modules/conversations/` — `ConversationsModule`:
+      `POST /conversations` (idempotent 1:1 start-or-get, mirroring
+      `Follow`'s self-referential dedup precedent), `GET /conversations`
+      (newest-activity-first inbox), `GET /conversations/:id` (a
+      single-resource `GET` added beyond the original plan — the thread
+      view needs _something_ to render before any message exists), `GET
+/conversations/:id/messages` (newest-first query/cursor, matching `GET
+/feed`'s convention, **not** comments' oldest-first one — see Deviations),
+      `POST /conversations/:id/messages`. First **membership** ("is the
+      caller a participant") authorization check in this codebase, unlike
+      every prior single-owner/follow-based one
+- [x] `packages/api-client/src/lib/conversations-client.ts` —
+      `start`/`get`/`list`/`listMessages`/`sendMessage`, wired into
+      `ApiClient.conversations`
+- [x] `apps/web/src/app/(app)/messages/` — inbox (`page.tsx` +
+      `conversations-list.tsx`, "load more" + a 10s poll for new activity)
+      and `StartConversationForm`; `apps/web/src/app/(app)/messages/[id]/`
+      — thread view (`page.tsx` + `message-thread.tsx`, "load older" +
+      a 5s poll for new messages); a `Link` to `/messages` added to
+      `/home`'s nav
+- [x] `apps/mobile/src/app/(tabs)/messages.tsx` — inbox tab (mirrors
+      `(tabs)/notifications.tsx`'s infinite-scroll pattern, plus the same
+      poll-for-new-activity); `apps/mobile/src/app/conversation/[id].tsx`
+      — thread screen (inverted `FlatList`, the standard RN chat-list
+      idiom), outside `(tabs)` like `post/[id].tsx`
+- [x] `apps/api-e2e/src/conversations/conversations.spec.ts` (18 tests),
+      `apps/web-e2e/src/direct-messages.spec.ts` (2 tests, Chromium),
+      `apps/mobile/src/__tests__/{messages-screen,conversation-screen}.spec.tsx`
+      (8 tests), plus unit coverage for the service/validation/api-client
+      layers — real accounts and a real conversation/message pipeline
+      against the live Dockerized Postgres throughout, matching every
+      milestone's testing discipline since Milestone 5
+- [x] **Caught and fixed a real design bug before shipping, not after**:
+      the first `GET /conversations/:id/messages` draft copied comments'
+      oldest-first `gt`-keyset convention verbatim — which would have
+      opened every chat thread on its _oldest_ messages instead of its
+      most recent ones. Caught by building the web thread UI against it
+      and noticing the mismatch, not by a failing test; corrected to a
+      newest-first `lt`-keyset query (matching `GET /feed`) with the
+      returned page re-reversed to chronological order, before any UI or
+      test was written against the wrong version. See Deviations below.
+- [x] Raised the workspace's global default throttle 100 → 200 req/min/IP
+      (`apps/api/src/app/app.module.ts`) after a real `ThrottlerException`
+      on `GET /explore` mid-run of the full `web-e2e` Chromium suite —
+      this milestone's new registrations/requests, on top of
+      `critical-path.spec.ts`'s already-substantial existing load across
+      several parallel Playwright workers sharing one dev server/IP,
+      tipped the previous limit over; `security.spec.ts`'s hard-coded
+      `'100'` expectation updated to `'200'` to match
+- [x] Full validation passing: `nx run-many -t lint test build` (11
+      projects; mobile's pre-existing `comment-section.spec.tsx` flake —
+      unrelated to this milestone, confirmed via `git status` showing no
+      changes to that file — reproduced once under full parallel load and
+      passed clean on standalone re-run, the same flake class already
+      documented) + `api:test` (232/232) + `api-e2e:e2e` (150/150) +
+      `web-e2e:e2e` --project=chromium (26/26, two consecutive clean runs) + `mobile:build` (Expo export, web/ios/android bundles)
 
 ---
 
@@ -3066,6 +3162,86 @@ run" characteristic (bugs #37/#43/#60), recurring frequently enough this milesto
 that it's now treated as an expected step after every manual `api:serve` use, not an
 occasional troubleshooting one.
 
+### Milestone 21
+
+```bash
+pnpm nx run prisma:migrate-dev --name 0010_direct_messages
+# ^ failed: P3006/P3018, the shadow-database replay (the one path that
+#   actually re-runs every migration from scratch in order) hit a latent,
+#   pre-existing ordering bug — migration 0005_like's own folder timestamp
+#   sorts before 0004_post's, so replaying by filename order tries to
+#   create `likes` (FK -> posts) before `posts` exists. This was invisible
+#   until now because every migration since 0009 (Milestone 9's bug #22)
+#   has used the migrate-diff + migrate-deploy workaround instead, which
+#   never replays the shadow database. Worked around the same way:
+#   `prisma migrate diff --from-config-datasource --to-schema=prisma/schema.prisma
+#   --script` -> hand-placed migration.sql -> `prisma migrate deploy`.
+#   Verified against the live schema afterward (`psql \d conversations`,
+#   `\d conversation_participants`, `\d messages` — all three matched
+#   schema.prisma exactly).
+pnpm nx run prisma:generate --skip-nx-cache   # clean
+
+pnpm nx run validation:test --skip-nx-cache   # 114/114 (10 new conversation.spec.ts cases)
+pnpm exec tsc --noEmit -p apps/api/tsconfig.app.json   # clean
+pnpm nx run api:test --testPathPatterns=conversations --skip-nx-cache   # 14/14
+pnpm exec nx run api-e2e:e2e --testPathPatterns=conversations --skip-nx-cache
+# ^ 15/15 first pass (before the GET /conversations/:id addition), 18/18
+#   after it.
+
+pnpm nx run api-client:test --skip-nx-cache   # 82/82 (6 new conversations-client.spec.ts cases)
+pnpm nx run api-client:lint --skip-nx-cache   # clean
+pnpm exec tsc --noEmit -p apps/web/tsconfig.json   # clean
+pnpm nx run web:build --skip-nx-cache
+# ^ confirmed /messages and /messages/[id] registered as dynamic (ƒ) routes
+pnpm nx run web:lint --skip-nx-cache   # clean (pre-existing, unrelated
+# avatar-uploader.tsx warning noted since Milestone 9)
+pnpm exec tsc --noEmit -p apps/mobile/tsconfig.json   # clean
+pnpm nx run mobile:lint --skip-nx-cache   # clean
+pnpm nx run mobile:test --testPathPatterns="messages-screen|conversation-screen" --skip-nx-cache
+# ^ 8/8, first run
+pnpm nx run mobile:build --skip-nx-cache   # Expo export — web/ios/android
+# bundles all produced cleanly
+
+pnpm exec nx run web-e2e:e2e -- --grep "direct messages" --project=chromium
+# ^ first run: 1 failed — the inbox still showed alice's own earlier
+#   message as "lastMessage" after bob's (later) reply. Suspected Next.js
+#   fetch caching at first; ruled out by querying the API directly
+#   (bypassing Next entirely) and getting the SAME stale result. Also
+#   found, investigating this, a genuinely orphaned `api:serve` process
+#   from an earlier manual debugging session still bound to port 3000
+#   (confirmed via `Get-NetTCPConnection`/`Get-CimInstance`, killed via
+#   `Stop-Process -Force`) — a real instance of the already-documented
+#   bug #37/#43/#60/#67 class, but NOT the cause of this particular
+#   failure (it reproduced again against a clean server). Root cause
+#   confirmed by querying Postgres directly (`psql -c "SELECT id,
+#   sender_id, body, created_at FROM messages WHERE conversation_id =
+#   '...'"`): bob's reply had an *earlier* `created_at` than alice's
+#   message despite being sent after it. `docker compose exec postgres
+#   psql -c "SELECT now();"` vs. the host clock showed ~390ms of drift —
+#   Docker Desktop's documented WSL2 clock-jitter on Windows, not an
+#   application bug. A 100ms synthetic gap between the two sends wasn't
+#   enough margin and still flaked once; widened to 1s, confirmed stable
+#   across two full-suite reruns afterward.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ full suite: first run, 2 failed — critical-path.spec.ts hit a genuine
+#   ThrottlerException on GET /explore (the global 100/min default,
+#   confirmed by inspecting the thrown error, not the per-route /auth
+#   throttles), and profile.spec.ts's "pre-fills the form" flaked (the
+#   same already-documented bug #46 class, unrelated to this milestone).
+#   Raised the global default 100 -> 200/min/IP; updated
+#   security.spec.ts's hard-coded '100' expectation to '200' to match (it
+#   failed once, for exactly this reason, immediately after the throttle
+#   change — fixed in the same pass). Re-ran twice more: 26/26 both times,
+#   profile.spec.ts's flake did not recur.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache   # 150/150, full suite
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ one failure: mobile:test (comment-section.spec.tsx) — confirmed via
+#   `git status` that this file and its component were untouched this
+#   milestone; the same already-documented run-many-only flake class
+#   (bugs #47/#49/#54/#58/#61/Milestone 20's own recurrence). Clean on
+#   standalone re-run (112/112).
+```
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -4212,6 +4388,67 @@ where they directly correct it (the risk-register staleness in §12, the health-
 throttle exemption, the §13 email-delivery note) — all recorded as corrections above
 and in §11/§12/§13 themselves, not left as silent drift between the docs and the code.
 
+### Milestone 21
+
+- **Added `GET /conversations/:id`, a single-resource endpoint beyond
+  `docs/IMPLEMENTATION_PLAN.md` M21's originally-listed endpoint set** — found while
+  designing the thread view, not anticipated: `GET /conversations/:id/messages`
+  alone can't supply "who am I talking to" for a conversation with zero messages yet
+  (the state immediately after `startConversation`), and there's no other endpoint
+  that returns one conversation's metadata by id. The same "single resource,
+  unwrapped" convention every other `GET /:id` in this codebase already follows, not
+  a new pattern.
+- **`GET /conversations/:id/messages` queries newest-first (`lt`-keyset, matching
+  `GET /feed`/`GET /notifications`), not comments' oldest-first (`gt`-keyset)
+  convention `docs/IMPLEMENTATION_PLAN.md` M21 pointed toward by precedent** —
+  caught and corrected _before_ any UI or test was built against the wrong
+  direction, not after a bug report: building the web thread view against an
+  oldest-first draft made it obvious a chat thread needs to open on recent activity
+  the way every other newest-first list in this codebase does, not read start-to-
+  finish the way a comment thread (loaded once, read top-to-bottom) does. The
+  returned page is re-reversed to chronological order within `ConversationsService
+.getMessages` itself, so every caller still renders top-to-bottom without needing
+  its own reversal logic. See Bugs Found below for the full before/after.
+- **`ConversationResponse` carries `unreadCount`/`otherParticipants`/`lastMessage`,
+  beyond the bare `Message(conversationId, senderId, body, readAt, createdAt)`
+  schema sketch `docs/IMPLEMENTATION_PLAN.md` M21 specified** — the inbox list
+  needs all three to be useful (who's the other person, what was said last, is
+  there anything unread), and `unreadCount` is computed via one batched `groupBy`
+  per page rather than one query per conversation, the same "batch per page, not per
+  row" shape `LikesService.getLikeStateForPosts` established (Milestone 13).
+- **`Message.readAt` is a single nullable timestamp, not a per-participant
+  read-receipt table** — correct and sufficient for this MVP's 1:1-only
+  conversations (there's exactly one "other" participant to read a message), the
+  schema's own join-table shape already keeps group chat open as a _future_
+  migration rather than ruling it out, so this wasn't deferred as a gap, just scoped
+  to what 1:1 actually needs.
+- **The sixth rate-limit increase in this project's history, and the first on the
+  _global default_ rather than a per-route `/auth/*` throttle** — `apps/web-e2e`'s
+  parallel-worker Playwright run against one shared dev server/IP, with this
+  milestone's own new conversations/messages requests and registrations added on
+  top of `critical-path.spec.ts`'s already-substantial load, produced a real
+  `ThrottlerException` on `GET /explore` (a route with no per-route override,
+  confirmed by inspecting the thrown error). Raised 100 → 200/min/IP; updated
+  `security.spec.ts`'s hard-coded `'100'` expectation to `'200'` in the same pass.
+- **`apps/web-e2e/src/direct-messages.spec.ts` waits 1s between two messages sent
+  by different participants, rather than asserting on DB timestamp order
+  immediately** — found via a real, measured ~390ms clock drift between this dev
+  box's host clock and the Postgres Docker container's own clock (`docker compose
+exec postgres psql -c "SELECT now();"` vs. the host clock), consistent with Docker
+  Desktop's documented WSL2 clock-jitter on Windows. Two inserts a few dozen
+  milliseconds apart in real wall-clock time landed with their `created_at` values
+  in the _wrong_ relative order twice in a row (confirmed by querying `messages`
+  directly), which a 100ms synthetic gap didn't reliably clear; 1s does. Not an
+  application bug — `ConversationsService`'s ordering logic is identical in kind to
+  every other timestamp-ordered list in this codebase (feed, notifications,
+  comments), and real users are never millisecond-close like this.
+
+None of Milestone 21's deviations touch `docs/ARCHITECTURE.md`'s core design or
+`docs/IMPLEMENTATION_PLAN.md`'s M21/M22 scope split — all recorded as additions/
+corrections to the plan's own endpoint/schema sketch above, in `docs/API.md` §17,
+and `docs/DATABASE.md` §3.11, not left as silent drift between the docs and the
+code.
+
 ---
 
 ## Bugs Found and Fixed
@@ -5150,6 +5387,59 @@ condition: service_healthy` was satisfied occasionally got `connection refused`,
 set` in `minio-init`'s entrypoint — confirmed via repeated fresh `docker compose
 down && up -d --wait` cycles afterward, all clean.
 
+### Milestone 21
+
+69. **`prisma migrate dev --name 0010_direct_messages` failed with `P3006`/`P3018`
+    against the shadow database**, a latent, pre-existing bug in this repo's
+    migration folder _names_, not anything wrong with the new migration itself:
+    `prisma/migrations/20260929213739_0005_like`'s own generation timestamp sorts
+    _before_ `prisma/migrations/20260929225738_0004_post`'s, so replaying every
+    migration from scratch in filename order (what `migrate dev` does to populate
+    the shadow database) tries to `CREATE TABLE likes (... REFERENCES posts ...)`
+    before `posts` exists. Invisible until now because every migration since
+    `0002_media` (Milestone 9's bug #22) has used the `migrate diff` +
+    hand-placed-folder + `migrate deploy` workaround instead — a path that applies
+    only _new_ migrations against the real database and never triggers a full
+    shadow-database replay. Not fixed at the source (renaming an already-applied
+    migration folder would desync it from every environment's `_prisma_migrations`
+    table, a materially riskier change than this milestone's own scope called for);
+    worked around by using the same `migrate diff`/`migrate deploy` path every
+    migration since Milestone 9 already uses, which never hits this replay path.
+    Confirmed the new tables match `schema.prisma` exactly via `psql \d`.
+70. **A `web-e2e` test for seeing another participant's reply chased what looked
+    like three different causes before the real one.** First suspected Next.js
+    fetch-response caching (the inbox kept showing a stale `lastMessage` on a
+    second `/messages` visit); ruled out by querying the API directly with
+    Playwright's `request` fixture (bypassing Next.js entirely) and getting the
+    _same_ stale result. While investigating, also found a genuinely orphaned
+    `api:serve` process (`node.exe`) still bound to port 3000 from an earlier
+    manual debugging session in this same session — the same bug #37/#43/#60/#67
+    class, confirmed via `Get-NetTCPConnection`/`Get-CimInstance` and killed via
+    `Stop-Process -Force` — but killing it and re-running showed the identical
+    failure against a verified-clean server, ruling that out too. The real cause,
+    found by querying `messages` directly in Postgres: bob's reply had an
+    _earlier_ `created_at` than alice's message despite being sent after it, in
+    real wall-clock time, by a test-code `await` chain that strictly orders the
+    two. `docker compose exec postgres psql -c "SELECT now();"` compared against
+    the host clock at the same instant showed ~390ms of drift — consistent with
+    Docker Desktop's documented WSL2 clock-jitter on Windows, not a logic bug in
+    `ConversationsService` (whose ordering is identical in kind to every other
+    timestamp-ordered list in this codebase). Fixed in the test, not the
+    application: a 1s synthetic gap between the two sends (100ms wasn't enough
+    margin and still flaked once), confirmed stable across two full-suite reruns.
+71. **The full `web-e2e` Chromium suite hit a real `ThrottlerException` on `GET
+/explore`** (`critical-path.spec.ts`, mid-journey) once this milestone's new
+    conversations/messages requests and registrations were added on top of the
+    suite's already-substantial existing load across several parallel Playwright
+    workers sharing one dev server/IP — the global default throttle (100/min/IP),
+    not a per-route `/auth/*` one, confirmed by inspecting the thrown error
+    directly. The same "suite outgrew the limit" pattern every previous
+    `/auth/register`/`/auth/login`/`/auth/refresh` increase in this project's
+    history has followed, just on the global default this time. Raised 100 →
+    200/min/IP; `apps/api-e2e/src/security/security.spec.ts`'s hard-coded `'100'`
+    expectation updated to `'200'` in the same pass (it failed for exactly this
+    reason on the next full run, fixed immediately).
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -5627,7 +5917,18 @@ own later milestone) are equally each decided and recorded above with rationale,
 left open — including the one genuinely _unresolved_ technical question this
 milestone surfaced (the upstream Next.js `useActionState`/`redirect()` issue, risk #11),
 which is explicitly recorded as found-but-not-fixed rather than silently left
-ambiguous. Everything else recorded in
+ambiguous. Milestone 21's six deviations (adding `GET /conversations/:id` beyond
+the originally-planned endpoint list, `GET /conversations/:id/messages` querying
+newest-first/`lt`-keyset rather than copying comments' oldest-first/`gt`-keyset
+convention — caught and corrected before any UI or test was built against the
+wrong direction, not after, see Bugs Found, `unreadCount`/`otherParticipants` as
+additions to `ConversationResponse` beyond the plan's bare schema sketch, a single
+nullable `Message.readAt` rather than a per-participant read-receipt table
+(correct for 1:1, would need revisiting for group chat), the sixth global-default
+(not per-route) throttle increase, and widening a Playwright test's synthetic
+delay to 1s to clear measured Docker Desktop clock jitter rather than relying on
+sub-tick DB timestamp ordering) are equally each decided and recorded above with
+rationale, not left open. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -5638,81 +5939,87 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 21 — Direct Messages (Foundation)**: per `docs/IMPLEMENTATION_PLAN.md`
-(the section added in Milestone 20 itself, since M20 explicitly designated that
-milestone as the point to decide the next post-MVP feature) — the first genuinely new
-feature since Milestone 20 closed out the originally-planned MVP, and the first
-milestone needing a brand-new authorization shape this codebase hasn't needed before
-("is the viewer a participant in this conversation," not single-owner or
-follow-based). Realtime transport (WebSocket/SSE) is explicitly **not** part of this
-milestone — see M22 — DMs ships poll-based first, matching `Notification`'s own MVP
-choice, so this milestone's scope stays schema + REST + UI only.
+**Milestone 22 — Realtime Transport (WebSocket/SSE)**: per
+`docs/IMPLEMENTATION_PLAN.md` M22, deliberately deferred until there were _two_ real
+poll-based consumers needing it — `Notification` (Milestone 16) and now `Message`
+(Milestone 21) both qualify, so this is the first milestone where building shared
+realtime infrastructure is justified by actual consumers rather than a single
+hypothetical one (the same "don't build it for one" discipline this codebase
+followed for `pg_trgm` until Milestone 17 actually needed it).
 
-1. **Schema** (`docs/DATABASE.md` needs a new table design before implementing,
-   following this project's own "logical design only until the milestone that adds
-   it" convention): decide `Conversation` + `ConversationParticipant` (a join table,
-   supporting both 1:1 and group chat) vs. a bare `Message(senderId, recipientId)`
-   pair (1:1-only, simpler, but a breaking schema change if group chat is ever added
-   later). `docs/IMPLEMENTATION_PLAN.md` M21 recommends the join-table shape even for
-   a 1:1-only MVP given how cheap that optionality is to keep open — confirm this is
-   still the right call before implementing, don't just accept it uncritically.
-   `Message(conversationId, senderId, body, readAt, createdAt)`.
-2. **API** (`docs/API.md` needs a new §16+ before implementing): `POST /conversations`
-   — decide the idempotency key for "starting a conversation with someone you already
-   have one with" (the participant set, most likely — mirroring `Follow`'s
-   self-referential dedup precedent, Milestone 10) so it returns the existing
-   conversation, not a duplicate. `GET /conversations` (inbox list, likely
-   newest-activity-first, not newest-created — decide which). `GET
-/conversations/:id/messages` (cursor-paginated, the established convention). `POST
-/conversations/:id/messages`. The authorization check — "is the caller actually a
-   participant in this conversation" — is genuinely new; don't reach for
-   `OptionalAuthGuard`/`JwtAuthGuard` alone the way every single-owner or
-   follow-based endpoint has so far — this needs an explicit membership check against
-   `ConversationParticipant`, the first of its kind in this codebase.
-3. **Web + mobile**: an inbox list screen + a conversation thread view. Poll-based new-
-   message detection (matching `NotificationBadge`'s existing pattern, Milestone 16) —
-   don't reach for WebSocket/SSE here; that's M22's explicit job once this milestone
-   gives it a second real consumer.
-4. **Tests**: conversation-creation idempotency for the same participant pair (the new
-   test shape, mirroring Follow's own self-referential dedup test); message
-   pagination (the established cursor-pagination test shape, nothing new there); a
-   non-participant rejected from reading/posting to a conversation they're not in
-   (`403` — the first test of this specific "membership," not "ownership" or
-   "following," authorization shape).
+1. **Decide WebSocket vs. SSE before implementing** (`docs/IMPLEMENTATION_PLAN.md`
+   M22 flags this as a real decision, not a formality): SSE is plain HTTP, simpler to
+   add alongside the existing REST API, but one-directional — fine for "a new
+   message/notification arrived" pushes, not for anything needing the client to send
+   over the same channel. WebSocket (`@nestjs/websockets`, Nest's native support)
+   is bidirectional but a materially bigger surface (connection lifecycle,
+   reconnection, auth-on-upgrade). Re-derive which this codebase actually needs from
+   what Milestones 16/21 actually do (both are currently receive-only pushes from
+   the client's perspective — the client always sends via the existing REST
+   endpoints, never over the realtime channel itself) rather than assuming either.
+2. **Retrofit, don't replace**: `NotificationBadge`'s poll and `MessagesScreen`'s/
+   `ConversationsList`'s/`MessageThread`'s polls (`apps/web`'s 10s/5s intervals,
+   `apps/mobile`'s equivalents) should become push-driven, but the underlying data
+   shapes (`NotificationResponse`, `ConversationResponse`, `MessageResponse`) don't
+   need to change — this is a transport swap under already-correct response types,
+   not a new feature surface.
+3. **Auth on the realtime channel**: every existing endpoint uses `Authorization:
+Bearer <accessToken>` (docs/API.md §1); a WebSocket upgrade request or an SSE
+   connection needs its own equivalent (a short-lived token in the connection URL,
+   or the upgrade request's own headers if the transport allows it) — don't assume
+   the browser's existing httpOnly refresh cookie is usable here, since neither
+   WebSocket nor `EventSource` (the browser SSE client) lets JS attach custom
+   headers to the initial handshake the way `fetch` does.
+4. **Tests**: a client receiving a pushed event without needing to poll (the new
+   test shape this milestone introduces); a disconnected/reconnecting client still
+   catching up correctly (falling back to a REST fetch on reconnect, not assuming
+   zero missed events) — the first test of this specific "don't lose events across
+   a connection gap" property in this codebase.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s M21/M22 sections (both new
-this milestone) and `docs/DATABASE.md` §1 (conventions) before inventing a new table
-shape. The `/auth/login`/`/auth/refresh` throttles were just raised 10→20/min/IP this
-milestone (Milestone 20) specifically because real suite usage had reached their
-previous limit with zero headroom — this new feature's own test file registering
-multiple accounts for conversation/participant tests will add further to that
-same shared budget; count real call sites before assuming headroom, the same
-discipline every register-throttle increase in this project's history has followed.
-For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"` placed
-**after** the trailing `--` together with `--project=chromium` (e.g. `nx run
+Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s M22 section and
+`docs/ARCHITECTURE.md`'s non-goals note (REST-only "in the MVP") before assuming the
+whole API needs to change — this is additive, a new channel alongside the existing
+REST surface, not a REST-to-WebSocket migration. The workspace's global default
+throttle was just raised 100→200/min/IP this milestone (Milestone 21) specifically
+because `apps/web-e2e`'s parallel-worker run outgrew the previous limit — a
+WebSocket/SSE connection test file adds yet more concurrent load to that same shared
+budget; count real call sites before assuming headroom, the same discipline every
+throttle increase in this project's history has followed (six increases so far:
+`/auth/register` four times, `/auth/login`/`/auth/refresh` once, the global default
+once). For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"`
+placed **after** the trailing `--` together with `--project=chromium` (e.g. `nx run
 web-e2e:e2e -- --grep "name" --project=chromium`), **never** `--testPathPatterns` and
 **never** `--grep=X` before a separate trailing `--` block — both of those silently
 either run the whole suite or drop the filter, confirmed four times now (Milestones
 14, 15, 16, and 17); the `-- --grep ... --project=...` combined form is the only one
-confirmed reliable. `apps/web-e2e`'s `webServer` now starts `api:serve` automatically
-(Milestone 20) — the long-standing "start it manually first" step is gone; don't
-reintroduce it out of habit. Firefox/WebKit have a measured higher flake rate than
-Chromium (Milestone 18 bug #58, reconfirmed Milestone 20) and CI's own cross-browser
-job is explicitly non-blocking for exactly that reason — keep validating new
-`web-e2e` work with `--project=chromium` as the real gate, treating Firefox/WebKit
-runs as informational. Watch for the confirmed, open upstream Next.js
+confirmed reliable. For `apps/api-e2e`, `--testPathPatterns=<name>` (Jest) works
+directly; vitest-based packages (`api-client`, `validation`) don't support that flag
+at all — run their full suite or use vitest's own `-t`/file-path filtering instead,
+confirmed this milestone. `apps/web-e2e`'s `webServer` starts `api:serve`
+automatically (Milestone 20) — the long-standing "start it manually first" step is
+gone; don't reintroduce it out of habit. Firefox/WebKit have a measured higher flake
+rate than Chromium (Milestone 18 bug #58, reconfirmed Milestones 20/21) and CI's own
+cross-browser job is explicitly non-blocking for exactly that reason — keep
+validating new `web-e2e` work with `--project=chromium` as the real gate, treating
+Firefox/WebKit runs as informational. Watch for the confirmed, open upstream Next.js
 `useActionState`/`redirect()` issue (`docs/ARCHITECTURE.md` §12 risk #11) if this
 milestone's own forms resubmit on the same page after a prior non-redirecting
 result — the known workaround is a `page.reload()` between attempts in tests, a real
-production fix is still unresolved upstream. If `apps/api-e2e` needs to run while
-port 3000 is occupied by something unrelated to this repo, both `global-setup.ts` and
+production fix is still unresolved upstream. If a Playwright test sends two
+timestamp-ordered writes from different request paths within less than ~1s of real
+wall-clock time, add an explicit gap between them rather than asserting on DB
+`createdAt` ordering directly — this dev box's Postgres container measured ~390ms of
+clock drift from the host (Milestone 21 bug #70), consistent with Docker Desktop's
+documented WSL2 clock-jitter on Windows. If `apps/api-e2e` needs to run while port
+3000 is occupied by something unrelated to this repo, both `global-setup.ts` and
 `test-setup.ts` already read `PORT`/`HOST` from the environment — prefix the command
 with `PORT=3100` (or any free port) rather than touching whatever else is bound to
 3000, and always confirm a process's identity (`Get-NetTCPConnection`/
 `Get-CimInstance`) before ever killing anything on that port — orphaned `api:serve`
-processes from `TaskStop` not reliably killing the forked child have recurred
-repeatedly across Milestones 18–20 (bugs #37/#43/#60/#67) and are now a routine,
-expected check, not an occasional one. `.github/workflows/ci.yml` (Milestone 20) has
-never run on a real GitHub Actions runner — the first PR or push to `main` after this
-milestone's own changes land is the first real test of it; watch the `docker compose
-up -d --wait` step in particular if it fails or hangs.
+processes not reliably killing the forked child have recurred repeatedly across
+Milestones 18–21 (bugs #37/#43/#60/#67/#70) and are now a routine, expected check,
+not an occasional one — this is doubly true for Milestone 22, since a WebSocket
+server holds its listening socket open differently from a plain HTTP server and may
+need its own explicit shutdown verification. `.github/workflows/ci.yml` (Milestone 20) still has not been confirmed clean on an actual GitHub Actions runner as of this
+writing — watch the `docker compose up -d --wait` step in particular if a real CI
+run for this milestone fails or hangs there.

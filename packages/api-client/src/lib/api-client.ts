@@ -1,5 +1,9 @@
 import { type AuthClient, createAuthClient } from './auth-client';
 import { createCommentsClient, type CommentsClient } from './comments-client';
+import {
+  type ConversationsClient,
+  createConversationsClient,
+} from './conversations-client';
 import { createFollowsClient, type FollowsClient } from './follows-client';
 import { HttpClient, type HttpClientConfig } from './http-client';
 import { createLikesClient, type LikesClient } from './likes-client';
@@ -27,6 +31,7 @@ export interface ApiClient {
   savedPosts: SavedPostsClient;
   notifications: NotificationsClient;
   search: SearchClient;
+  conversations: ConversationsClient;
 }
 
 /**
@@ -52,5 +57,6 @@ export function createApiClient(config: HttpClientConfig): ApiClient {
     savedPosts: createSavedPostsClient(http),
     notifications: createNotificationsClient(http),
     search: createSearchClient(http),
+    conversations: createConversationsClient(http),
   };
 }

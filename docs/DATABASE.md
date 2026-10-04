@@ -47,6 +47,7 @@ User ──N:N──▶ Post        (Like: user ↔ post)
 User ──N:N──▶ Post        (SavedPost: user ↔ post)
 Post ──1:N──▶ Comment ──N:1──▶ User (author)
 User ──1:N──▶ Notification (recipient); Notification ──N:1──▶ User (actor, nullable)
+User ──N:N──▶ Conversation (ConversationParticipant); Conversation ──1:N──▶ Message ──N:1──▶ User (sender)
 ```
 
 ## 3. Tables
@@ -290,6 +291,57 @@ trade-off documented as intentional. If the notification type set grows much lar
 (e.g. with mentions, tags, future DMs), revisit in favor of a polymorphic reference or
 per-type tables.
 
+### 3.11 `Conversation`, `ConversationParticipant`, `Message` (implemented Milestone 21)
+
+A join-table shape (`Conversation` + `ConversationParticipant`) rather than a bare
+`Message(senderId, recipientId)` pair — supports group chat later without a
+breaking schema change (`docs/IMPLEMENTATION_PLAN.md` M21). This MVP only ever
+creates 1:1 conversations, enforced in `ConversationsService`, not the schema.
+
+**`Conversation`**
+
+| Column        | Type        | Constraints                                                                                                                                                                                                           |
+| ------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| id            | uuid        | PK                                                                                                                                                                                                                    |
+| createdAt     | timestamptz | default `now()`                                                                                                                                                                                                       |
+| lastMessageAt | timestamptz | default `now()`, bumped on every `sendMessage` call — denormalized from the latest `Message` so the inbox list can order "newest activity first" with a plain index instead of a correlated subquery per conversation |
+
+Indexes: index(`lastMessageAt DESC`) — the inbox-list query.
+
+**`ConversationParticipant`**
+
+| Column         | Type        | Constraints                                           |
+| -------------- | ----------- | ----------------------------------------------------- |
+| conversationId | uuid        | FK → `Conversation.id`, not null, `onDelete: Cascade` |
+| userId         | uuid        | FK → `User.id`, not null, `onDelete: Cascade`         |
+| createdAt      | timestamptz | default `now()`                                       |
+
+Composite PK (`conversationId`, `userId`) — doubles as the uniqueness constraint (a
+user can only be in a given conversation once) and the primary "is :userId a
+participant in :conversationId" access path, the first **membership** check this
+codebase needs (every prior authorization shape has been single-owner or follow-
+based). Secondary index(`userId`) serves "this user's conversations" — the inbox
+list's join side, since the composite PK alone only efficiently serves lookups
+starting with `conversationId`.
+
+**`Message`**
+
+| Column         | Type        | Constraints                                               |
+| -------------- | ----------- | --------------------------------------------------------- |
+| id             | uuid        | PK                                                        |
+| conversationId | uuid        | FK → `Conversation.id`, not null, `onDelete: Cascade`     |
+| senderId       | uuid        | FK → `User.id`, not null, `onDelete: Cascade`             |
+| body           | text        | not null, max ~2200 chars (same cap as `Comment.body`)    |
+| readAt         | timestamptz | nullable — set when the _other_ participant has viewed it |
+| createdAt      | timestamptz | default `now()`                                           |
+
+Indexes: index(`conversationId`, `createdAt`) — the message-thread pagination
+query. No soft delete, no edit — the MVP never needs either
+(`docs/IMPLEMENTATION_PLAN.md` M21 scope). `readAt` is a single nullable timestamp,
+not a per-participant read-receipt table — correct for 1:1 (exactly one "other"
+participant to read it); revisit only if group chat is ever added, since a single
+column can't express "read by 2 of 3 participants."
+
 ## 4. Enums
 
 ```
@@ -297,6 +349,9 @@ MediaPurpose:      AVATAR | POST_IMAGE
 MediaStatus:       PENDING | READY | FAILED
 NotificationType:  FOLLOW | LIKE | COMMENT
 ```
+
+No new enum for Milestone 21 — `Conversation`/`ConversationParticipant`/`Message`
+are all plain tables, nothing with a fixed small value set to justify one.
 
 ## 5. Extensions Required
 
@@ -341,6 +396,8 @@ the current milestone."
 | User search — **implemented Milestone 17**                                                       | `SELECT ... WHERE username % :query OR full_name % :query ORDER BY GREATEST(similarity(username, :query), similarity(full_name, :query)) DESC LIMIT :n` using `pg_trgm`'s `%` similarity operator against the GIN trigram index, executed via raw SQL (`$queryRaw` — `%`/`similarity()` aren't expressible through Prisma's query builder). **Corrected in Milestone 20**: the original pattern ranked by `similarity(username, :query)` alone, which could bury a user matched purely on a strong `full_name` hit beneath unrelated noise — see `docs/PROGRESS.md`'s Milestone 20 deviations. No keyset pagination — see `docs/API.md` §11 for why. |
 | Post detail/feed likes count + is-liked-by-me — **implemented Milestone 13**                     | Two queries per page, not one combined query with subqueries: `SELECT postId, COUNT(*) FROM likes WHERE postId IN (:ids) GROUP BY postId` for counts, and `SELECT postId FROM likes WHERE userId = :me AND postId IN (:ids)` for the viewer's own likes — run via `Promise.all`, batched for a whole page (e.g. the feed) in one pair of calls, not per-post.                                                                                                                                                                                                                                                                                        |
 | Post detail/feed comments count — **implemented Milestone 14**                                   | `SELECT postId, COUNT(*) FROM comments WHERE postId IN (:ids) AND deletedAt IS NULL GROUP BY postId`, batched for a whole page the same way the likes count is, minus the per-viewer dimension a comment count doesn't need.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Conversation inbox (newest activity first, paginated) — **implemented Milestone 21**             | Served directly by index(`lastMessageAt DESC`) on `Conversation`, filtered by `participants.some({ userId })`; each row's `lastMessage` fetched via a nested `include` (`orderBy: createdAt desc, take: 1`) rather than a separate query per conversation. `unreadCount` per conversation is one batched `groupBy` over the whole page (`SELECT conversationId, COUNT(*) FROM messages WHERE conversationId IN (:ids) AND senderId != :me AND readAt IS NULL GROUP BY conversationId`), the same "one query for the whole page" shape the likes/comments counts above use.                                                                           |
+| Conversation thread (messages, paginated) — **implemented Milestone 21**                         | Served by index(`conversationId`, `createdAt`) on `Message`. Query/cursor direction is newest-first (`lt`-keyset, matching the home feed above), **not** comments' oldest-first `gt`-keyset — a chat thread opens on recent activity; the returned page is reversed to chronological order before being returned, so callers always render top-to-bottom.                                                                                                                                                                                                                                                                                            |
 
 ## 7. Soft Delete
 
@@ -379,6 +436,14 @@ adds value.
   ordering-at-a-glance in this doc; the timestamp prefix is what Prisma actually reads.
 - `prisma migrate dev` locally; `prisma migrate deploy` in CI/production — never
   `db push` outside of local prototyping, so migration history stays authoritative.
+  **As implemented, since Milestone 9** (docs/PROGRESS.md's own bug log #22):
+  `prisma migrate dev` hits a non-interactive-environment guard in this setup, so
+  every migration from `0002_media` onward is instead generated via `prisma migrate
+diff --from-config-datasource --to-schema=prisma/schema.prisma --script`, hand-
+  placed into a migration folder following Prisma's own `<timestamp>_000N_name`
+  convention, and applied with `prisma migrate deploy` (which is designed for
+  non-interactive use and never hits the guard) — `0010_direct_messages`
+  (Milestone 21) follows the identical workaround.
 - Destructive changes (column drops/renames) get an explicit expand/contract note in the
   migration's PR description once the project is past its very first schema.
 

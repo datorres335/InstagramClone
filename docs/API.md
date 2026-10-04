@@ -45,11 +45,14 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
 - **Idempotent toggles use `PUT`/`DELETE`, not `POST`**, for follow/like/save, so a
   retried request is safe: `PUT` = ensure the relationship exists, `DELETE` = ensure it
   doesn't. Both return `204 No Content` whether or not the call changed state.
-- **Rate limiting**: `@nestjs/throttler`, applied globally (100 req/min/IP, skipped
-  entirely on `GET /health` — a liveness/readiness endpoint must never be subject to
-  rate limiting, or a load balancer's/orchestrator's own frequent polling would
-  produce false "unhealthy" signals under real traffic; see
-  `docs/PROGRESS.md`'s Milestone 20 deviations) with stricter per-route limits on
+- **Rate limiting**: `@nestjs/throttler`, applied globally (200 req/min/IP — raised
+  from 100 in Milestone 21, since `apps/web-e2e`'s parallel-worker Playwright run
+  against one shared dev server/IP outgrew the previous limit once Milestone 21's
+  own endpoints/tests added to the shared budget; skipped entirely on `GET /health`
+  — a liveness/readiness endpoint must never be subject to rate limiting, or a load
+  balancer's/orchestrator's own frequent polling would produce false "unhealthy"
+  signals under real traffic; see `docs/PROGRESS.md`'s Milestone 20 deviations) with
+  stricter per-route limits on
   `/auth/login`, `/auth/refresh` (20 req/min/IP — raised from 10 in Milestone 20) and
   `/auth/register` (60 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
   in Milestone 12, then to 60 in Milestone 18) to slow credential-stuffing/
@@ -84,6 +87,7 @@ Credentials: true`) enabled since the refresh cookie requires it.
 | Explore          | `/api/v1/explore`                                                                                           |
 | Notifications    | `/api/v1/notifications`                                                                                     |
 | Account settings | `/api/v1/me`                                                                                                |
+| Conversations    | `/api/v1/conversations`, `/api/v1/conversations/:id`, `/api/v1/conversations/:id/messages`                  |
 | Health           | `/api/v1/health`                                                                                            |
 
 ## 3. Auth
@@ -484,3 +488,43 @@ not a resource, and isn't listed as a feature in `docs/FEATURES.md`.
 
 `GET /api/docs` (interactive Swagger UI) and `GET /api/docs-json` (the raw OpenAPI
 document) are also live, gated to non-production via `NODE_ENV` — see §15.
+
+## 17. Direct Messages (implemented Milestone 21)
+
+| Method & path                      | Auth     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /conversations`              | required | Body `{ username }`. Idempotent: starting a conversation with someone you already have one with returns the existing conversation, `200`, not a duplicate; a genuinely new one is `201`. `409` on self-conversation, `404` for an unknown username.                                                                                                                                                                                                                                                                                          |
+| `GET /conversations`               | required | Paginated, newest-activity-first (`lastMessageAt` desc, the same `lt`-keyset convention `GET /feed`/`GET /notifications` use)                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `GET /conversations/:id`           | required | A single conversation by id — added beyond the original plan so the thread view has something to render before any message exists (see below). `403` if the caller isn't a participant, `404` if it doesn't exist.                                                                                                                                                                                                                                                                                                                           |
+| `GET /conversations/:id/messages`  | required | Paginated. Query/cursor direction is newest-first (`lt`-keyset, matching `GET /feed`, **not** `GET /posts/:postId/comments`'s oldest-first convention — a chat thread opens on recent activity); `data` itself is chronological within the page, ready to render top-to-bottom. Same `403`/`404` membership check as above. Viewing a page marks every currently-unread message in the conversation as read (not just the ones on that page) — the same "mark read as a side effect of viewing" convention `GET /notifications` established. |
+| `POST /conversations/:id/messages` | required | Body `{ body }` (max 2200 chars, same cap as `Comment.body`). Same membership check; `201` with the created message.                                                                                                                                                                                                                                                                                                                                                                                                                         |
+
+Required auth on every route — the same "no anonymous or other-viewer case exists"
+reasoning `GET /notifications`/`GET /me/saved` already established: a conversation
+only ever means "one I'm in." The membership check ("is the caller a participant in
+this conversation") is the first **membership**, rather than single-owner or
+follow-based, authorization shape in this codebase — every route past `POST
+/conversations` itself goes through it.
+
+`ConversationResponse`: `{ id, otherParticipants: [{ id, username, fullName,
+avatarUrl }], lastMessage: MessageResponse | null, unreadCount, lastMessageAt,
+createdAt }`. `otherParticipants` is a plural array (excludes the caller) so the
+shape doesn't need to change if group chat is ever added, even though this MVP only
+ever creates 1:1 conversations (enforced in `ConversationsService`, not the schema —
+see `docs/DATABASE.md` §3.11). `otherParticipants[*]`/`MessageResponse.sender` reuse
+`postAuthorSchema` verbatim, the same minimal author shape every other response
+embeds. `unreadCount` is the caller's own unread-message count for that conversation,
+pre-aggregated per page via a single batched `groupBy` (the same "one query for the
+whole page, not one per row" shape `LikesService.getLikeStateForPosts` established).
+
+`MessageResponse`: `{ id, conversationId, sender, body, readAt, createdAt }`. No
+`Notification` side effect for a new message — a DM isn't one of the three
+`NotificationType`s (`docs/DATABASE.md` §3.10), and an unread conversation already
+has its own visible badge via `unreadCount`, so there's no gap being silently
+deferred here the way likes/comments' notification side effect was in Milestones
+13/14.
+
+Poll-based new-message detection on both web and mobile (re-fetching the newest
+page and merging anything not already known by id) — matching `NotificationBadge`'s
+own MVP choice (`docs/ARCHITECTURE.md` non-goals); no WebSocket/SSE until Milestone
+22 gives that transport a second real consumer.

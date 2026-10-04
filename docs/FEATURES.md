@@ -1,7 +1,8 @@
 # Features
 
-Functional specification for the 17 MVP features plus explicit notes on how the
-architecture anticipates the 5 post-MVP features. Each MVP feature lists: summary, core
+Functional specification for the 17 MVP features, one implemented post-MVP feature
+(Direct Messages, Milestone 21), plus explicit notes on how the architecture
+anticipates the remaining 4 post-MVP features. Each feature lists: summary, core
 requirements, explicit out-of-scope items (so scope creep during implementation has a
 written line to check against), and the primary entities/endpoints it touches (cross-
 referenced to `DATABASE.md` / `API.md`).
@@ -244,7 +245,7 @@ referenced to `DATABASE.md` / `API.md`).
   change-password also revokes every other refresh-token family outright (not just the
   tokenVersion bump): a device that still held a valid refresh token could otherwise
   silently mint a fresh access token and never actually be forced to re-login. The
-  *calling* session gets a brand-new token pair in the response, so it's the one
+  _calling_ session gets a brand-new token pair in the response, so it's the one
   device that's never interrupted.
 - Changing email and deleting the account both require re-entering the current
   password first (the same defense-in-depth change-password already needed) — deleting
@@ -275,6 +276,37 @@ referenced to `DATABASE.md` / `API.md`).
   English-only in the MVP; no schema decision here blocks adding i18n later (user-
   authored content like captions/bios is stored as opaque `text`, not locale-tagged).
 
+## Post-MVP Features (implemented)
+
+The 17 MVP features above are what this document originally specified; Milestone 20
+(the MVP's own closing milestone) explicitly designated itself as the point to pick
+the next feature, and Milestone 21 shipped it. Numbered on from the MVP list for a
+single continuous reference, even though it's a later addition, not part of the
+original 17.
+
+### 18. Direct Messages (implemented Milestone 21)
+
+- 1:1 conversations only in this MVP — start a conversation with another user by
+  username (idempotent: messaging someone you already have a conversation with
+  returns the existing one), then send/receive text messages in it.
+- An inbox (newest-activity-first) and a per-conversation thread view, on both web
+  and mobile — a `Conversation`/`ConversationParticipant`/`Message` schema designed
+  to support group chat later without a breaking migration, even though nothing in
+  the MVP ever creates a group.
+- Poll-based new-message detection (matching `Notification`'s own MVP choice) — no
+  WebSocket/SSE transport in this milestone; see Future Features below (Milestone
+  22's explicit job once DMs and notifications together justify building it).
+- Read receipts: a message's `readAt` is set once the other participant views the
+  thread; the inbox surfaces this as a per-conversation unread count.
+- **Out of scope**: group chat (schema allows it, nothing implements it), message
+  editing/deletion, media attachments in messages, typing indicators, message
+  reactions, blocking a user from messaging you (no block/mute feature exists
+  anywhere in this codebase yet, per Feature 17's own scope note).
+- Entities/endpoints: `Conversation`, `ConversationParticipant`, `Message`
+  (`DATABASE.md` §3.11), `POST /conversations`, `GET /conversations`, `GET
+/conversations/:id`, `GET /conversations/:id/messages`, `POST
+/conversations/:id/messages` (`API.md` §17).
+
 ## Future Features (explicitly out of MVP)
 
 For each, a note on how the current design avoids foreclosing it:
@@ -287,15 +319,19 @@ For each, a note on how the current design avoids foreclosing it:
   materially bigger background-job workload than image variants, which is exactly why
   it's excluded from the MVP (`ARCHITECTURE.md` risk #4 already flags the in-process
   job runner as an MVP-only choice partly in anticipation of this).
-- **Direct messaging**: a genuinely new domain (conversations/messages, likely needing
-  its own read/delivery-state model); does not reuse existing tables, and is not
-  designed here.
+- **Direct messaging**: **implemented in Milestone 21 — see "Post-MVP Features
+  (implemented)" below.** (This bullet originally described it as a not-yet-designed
+  future feature; it's kept here, corrected, rather than deleted, so this section's
+  own history stays legible.)
 - **Push notifications**: the `Notification` table (`DATABASE.md` §3.10) already
   captures "what happened" independent of delivery mechanism; adding push is adding a
   delivery channel (device token registration + a push provider) that consumes the same
   notification-creation events, not a redesign of notifications themselves.
-- **Real-time events** (live like/comment counts, live feed updates, DM delivery): the
-  API is REST-only in the MVP by explicit non-goal; a future WebSocket/SSE gateway would
-  sit alongside the REST API (Nest supports this natively via `@nestjs/websockets`) and
-  would primarily push the same domain events already flowing through the background-job
-  system, rather than requiring a new event model.
+- **Real-time events** (live like/comment counts, live feed updates, instant DM
+  delivery): the API is REST-only by explicit non-goal; DMs (Milestone 21) and
+  notifications (Milestone 16) both ship poll-based for now. A future WebSocket/SSE
+  gateway (Milestone 22, once these two give it a second real consumer to justify
+  it) would sit alongside the REST API (Nest supports this natively via
+  `@nestjs/websockets`) and would primarily push the same domain events already
+  flowing through the background-job system/poll responses, rather than requiring a
+  new event model.

@@ -12,6 +12,7 @@ import { API_ENV, ConfigModule } from '../config/config.module';
 import { HealthModule } from '../health/health.module';
 import { AuthModule } from '../modules/auth/auth.module';
 import { CommentsModule } from '../modules/comments/comments.module';
+import { ConversationsModule } from '../modules/conversations/conversations.module';
 import { FollowsModule } from '../modules/follows/follows.module';
 import { LikesModule } from '../modules/likes/likes.module';
 import { MediaModule } from '../modules/media/media.module';
@@ -39,14 +40,24 @@ import { StorageModule } from '../storage/storage.module';
     SavedPostsModule,
     NotificationsModule,
     SearchModule,
+    ConversationsModule,
     // A modest workspace-wide default (docs/API.md §1); AuthController
     // overrides this with stricter per-route limits via @Throttle().
     // In-memory storage (the default) — not the Redis-backed storage
     // ARCHITECTURE.md §5.2 anticipates, since that only matters once
     // multiple API instances share rate-limit state, which doesn't exist
-    // yet (see docs/PROGRESS.md Milestone 5 deviations).
+    // yet (see docs/PROGRESS.md Milestone 5 deviations). Raised 100→200
+    // in Milestone 21: `apps/web-e2e`'s Playwright run uses several
+    // parallel workers against one shared dev server/IP, and
+    // `critical-path.spec.ts`'s single continuous journey plus Milestone
+    // 21's new conversations endpoints/tests pushed real concurrent usage
+    // past the previous limit (confirmed by a real `ThrottlerException` on
+    // `GET /explore` mid-run) — the same "suite outgrew the limit" pattern
+    // every `/auth/*` throttle increase in this project's history has
+    // followed, just on the global default this time instead of a
+    // per-route one.
     ThrottlerModule.forRoot({
-      throttlers: [{ ttl: 60_000, limit: 100 }],
+      throttlers: [{ ttl: 60_000, limit: 200 }],
     }),
     // Shared Redis connection for every BullMQ queue (just `media` today —
     // docs/ARCHITECTURE.md §8). `maxRetriesPerRequest: null` is required by

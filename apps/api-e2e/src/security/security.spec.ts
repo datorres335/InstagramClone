@@ -73,11 +73,11 @@ describe('security: rate limiting is real, not just documented', () => {
   // wrong-password attempts, the 11th+ returning 429 — see docs/PROGRESS.md
   // Milestone 20 Validation Performed) — this header-based check locks in
   // the same mechanism permanently without that collision risk.
-  it('tags the global default throttle (100/min) on a route with no override', async () => {
+  it('tags the global default throttle (200/min, raised from 100 in Milestone 21) on a route with no override', async () => {
     const res = await axios.get('/api/v1/search/users?q=ab');
 
-    expect(res.headers['x-ratelimit-limit']).toBe('100');
-    expect(Number(res.headers['x-ratelimit-remaining'])).toBeLessThan(100);
+    expect(res.headers['x-ratelimit-limit']).toBe('200');
+    expect(Number(res.headers['x-ratelimit-remaining'])).toBeLessThan(200);
   });
 
   it('tags a stricter per-route override (20/min) on /auth/login, distinct from the global default', async () => {

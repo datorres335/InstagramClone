@@ -76,6 +76,9 @@ model User {
   notificationsReceived Notification[] @relation("NotificationRecipient")
   notificationsSent     Notification[] @relation("NotificationActor")
 
+  conversationParticipations ConversationParticipant[]
+  messagesSent               Message[]
+
   @@index([deletedAt])
   // GIN trigram indexes powering User Search's similarity() ranking
   // (docs/DATABASE.md §5/§6, Milestone 17) — `pg_trgm`'s `gin_trgm_ops`
@@ -381,4 +384,76 @@ model Notification {
   // notifications, newest first" (docs/DATABASE.md §3.10).
   @@index([recipientId, isRead, createdAt(sort: Desc)])
   @@map("notifications")
+}
+
+/// A messaging thread (docs/DATABASE.md §3.11, docs/FEATURES.md DMs,
+/// Milestone 21). A join-table shape (`ConversationParticipant`) rather than
+/// a bare `Message(senderId, recipientId)` pair — supports group chat later
+/// without a breaking schema change (docs/IMPLEMENTATION_PLAN.md M21). The
+/// MVP only ever creates 1:1 conversations, enforced in
+/// `ConversationsService`, not the schema.
+model Conversation {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Denormalized from the latest Message, bumped on every send — lets the
+  // inbox list order "newest activity first" with a plain index instead of
+  // a correlated subquery per conversation.
+  lastMessageAt DateTime @default(now()) @map("last_message_at") @db.Timestamptz
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([lastMessageAt(sort: Desc)])
+  @@map("conversations")
+}
+
+/// Join row between a `Conversation` and a `User` (docs/DATABASE.md §3.11).
+/// Composite PK doubles as the uniqueness constraint (a user can only be in
+/// a given conversation once) and the primary "is this user a participant"
+/// access path — the first "membership," not "ownership"/"following,"
+/// authorization shape in this codebase.
+model ConversationParticipant {
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // The composite PK serves "is :userId a participant in :conversationId"
+  // directly. The secondary index on userId alone serves "this user's
+  // conversations" (the inbox list's join side).
+  @@id([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+/// A single message within a `Conversation` (docs/DATABASE.md §3.11). No
+/// soft delete, no edit — the MVP never needs either
+/// (docs/IMPLEMENTATION_PLAN.md M21 scope).
+model Message {
+  id String @id @default(uuid(7)) @db.Uuid
+
+  conversationId String       @map("conversation_id") @db.Uuid
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  senderId String @map("sender_id") @db.Uuid
+  sender   User   @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  body String
+
+  // Set when the *other* participant has viewed this message — read receipts
+  // beyond a boolean matter once group chat exists (M21 recommends keeping
+  // that door open), but a single nullable timestamp is enough for 1:1.
+  readAt DateTime? @map("read_at") @db.Timestamptz
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  // Serves "messages in this conversation, oldest first" (keyset pagination,
+  // the established convention).
+  @@index([conversationId, createdAt])
+  @@map("messages")
 }

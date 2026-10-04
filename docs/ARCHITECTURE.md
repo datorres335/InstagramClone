@@ -566,7 +566,8 @@ protection is what makes it actually gate merges.
 - **Every claim above was verified live, not just read off this document, in Milestone
   20's hardening pass** (`apps/api-e2e/src/security/security.spec.ts` formalizes it):
   Helmet headers and the CORS allow-list are genuinely present/effective on real HTTP
-  responses, not just configured-and-assumed; the global default (100/min/IP) and a
+  responses, not just configured-and-assumed; the global default (100/min/IP at the
+  time, raised to 200/min/IP in Milestone 21 — see `docs/API.md` §1) and a
   stricter per-route override (`/auth/login`, 20/min/IP) both tag distinct
   `X-RateLimit-Limit` values and were independently confirmed, via manual live testing,
   to actually return `429` once exceeded; built client bundles (`apps/web/.next/static`,
