@@ -5845,8 +5845,11 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   this milestone; **not yet reconfirmed by an actual passing GitHub Actions run** —
   the next push is the real test of these three fixes together.
 - **Firefox/WebKit's higher measured flake rate (Milestone 18 bug #58, reconfirmed
-  Milestone 20) is now structurally contained (CI's cross-browser job is
-  `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
+  Milestones 20 and 21 — including on the first real GitHub Actions run of Milestone
+  21's push, `comment-post`/`like-post`/`profile`/`save-post` failing, a different
+  subset on each of two consecutive local re-runs, the clear signature of flakiness
+  rather than a real regression) is now structurally contained (CI's cross-browser job
+  is `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
   underlying per-browser timing sensitivity hasn't been root-caused — isolation only
   removed the register/login-throttle collision that made running all three browsers
   together _locally_ unreliable, a different (also real) problem. If a future
