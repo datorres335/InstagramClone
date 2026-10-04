@@ -125,6 +125,13 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await page.goto(`/${otherFollower.username}`);
     await page.getByRole('button', { name: 'Follow' }).click();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();
+    // Same `router.refresh()`-vs-navigation race as above — settle before
+    // navigating away. Missed on the first pass (bug #74); caught via a
+    // WebKit-specific symptom of the identical race — "Navigation to
+    // .../followers is interrupted by another navigation" — on a later
+    // real CI run, the same underlying collision as Firefox's
+    // `NS_BINDING_ABORTED`, just a different browser's error surface.
+    await page.waitForTimeout(500);
 
     await page.goto(`/${target.username}/followers`);
     const row = page.getByText(`@${otherFollower.username}`).locator('..');

@@ -60,6 +60,11 @@ test.describe('comments: comment on a post', () => {
 
     // Reload to prove it's persisted server-side, not just local state.
     await page.reload();
+    // Same family of WebKit-specific settle issue documented in
+    // critical-path.spec.ts — kept here even though this isn't a form
+    // `fill()` case, since `toBeVisible()`'s own 5s auto-retry wasn't
+    // enough on its own (confirmed via repeated local WebKit runs).
+    await page.waitForTimeout(500);
     await expect(page.getByText('Great shot!')).toBeVisible();
     await expect(page.getByText('1 comments')).toBeVisible();
 

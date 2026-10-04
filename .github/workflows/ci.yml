@@ -121,11 +121,26 @@ jobs:
       # take different CLI flags — a shared `-t e2e` invocation can't safely
       # forward `--project=chromium` to both without one of them choking on
       # a flag it doesn't understand.
+      #
+      # `--exclude=<project>`, not `-p <project>`: this Nx version's
+      # `affected` command has no `-p`/`--projects` inclusion filter at all
+      # (confirmed via `nx affected --help` — only `--exclude` exists).
+      # `-p <project>` was silently swallowed as an unrecognized flag and
+      # forwarded to whatever project `affected` actually resolved from the
+      # real git diff, with zero actual scoping — meaning each step could
+      # run the *other* project's e2e target under the wrong tool (Jest
+      # flags reaching Playwright, or vice versa) any time a commit touched
+      # only one side. Confirmed directly: a commit touching only
+      # `apps/web-e2e` files made `nx affected -t e2e -p api-e2e` plan
+      # `web-e2e:e2e`, not `api-e2e:e2e` (docs/PROGRESS.md bug log). Since
+      # exactly two projects in this workspace have an `e2e` target
+      # (`nx show projects --with-target=e2e` → `api-e2e`, `web-e2e`),
+      # excluding one always leaves the other as the only possible match.
       - name: API E2E (affected)
-        run: pnpm exec nx affected -t e2e -p api-e2e
+        run: pnpm exec nx affected -t e2e --exclude=web-e2e
 
       - name: Web E2E — Chromium (affected)
-        run: pnpm exec nx affected -t e2e -p web-e2e -- --project=chromium
+        run: pnpm exec nx affected -t e2e --exclude=api-e2e -- --project=chromium
 
       - name: Stop infrastructure
         if: always()

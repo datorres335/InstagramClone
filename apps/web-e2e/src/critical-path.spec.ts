@@ -144,6 +144,15 @@ test.describe('critical path: one continuous journey across every feature', () =
 
     // ---- comment, from the post detail page ----
     await followerPage.goto(postUrl);
+    // A fresh hard navigation lands server-rendered HTML immediately, but
+    // WebKit's client-side hydration (React attaching the textarea's
+    // `onChange` handler) can lag behind Playwright's own `fill()` call —
+    // the fill dispatches its input event before React has claimed the
+    // node, so the controlled `body` state never updates and the Post
+    // button (disabled while `!body.trim()`) stays disabled forever.
+    // Chromium/Firefox didn't show this (hydrates fast enough in
+    // practice); a short settle avoids depending on that margin.
+    await followerPage.waitForTimeout(500);
     await followerPage.getByLabel('Add a comment').fill('Nice post!');
     await followerPage
       .getByRole('button', { name: 'Post', exact: true })
@@ -165,6 +174,12 @@ test.describe('critical path: one continuous journey across every feature', () =
     await registerThroughUi(strangerPage);
 
     await strangerPage.goto('/search');
+    // Same WebKit hydration-lag-after-fresh-navigation race as the comment
+    // step above — `SearchBox`'s `onChange` isn't attached yet when
+    // `fill()`'s input event fires, so its debounced search never kicks
+    // off. First reached under WebKit only after the comment-step fix
+    // above stopped masking it.
+    await strangerPage.waitForTimeout(500);
     await strangerPage
       .getByPlaceholder('Search by username or name')
       .fill(author.username);

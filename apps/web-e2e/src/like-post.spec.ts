@@ -60,6 +60,12 @@ test.describe('likes: like a post from the feed', () => {
     await registerThroughUi(viewerPage);
     await viewerPage.goto(`/${author.username}`);
     await viewerPage.getByRole('button', { name: /follow/i }).click();
+    // `FollowButton` fires `router.refresh()` as a fire-and-forget
+    // background fetch after a successful toggle — navigating away
+    // immediately can collide with that still-in-flight request. Firefox/
+    // WebKit abort the collision; Chromium tolerates it (see
+    // critical-path.spec.ts for the full explanation). Settle first.
+    await viewerPage.waitForTimeout(500);
 
     await viewerPage.goto('/home');
     await expect(viewerPage.getByText('like me please')).toBeVisible();

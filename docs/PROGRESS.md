@@ -5540,6 +5540,94 @@ frame was detached?` immediately after a `FollowButton` click. Root
     touch `FollowButton`) remains genuinely unexplained; this fix narrows
     that class, it doesn't close it.
 
+### Milestone 21 (continued — the previous fix's own CI push surfaced two more real bugs)
+
+75. **The previous entry's own fix, once pushed, broke the _gating_ job
+    outright and revealed a second, previously-missed instance of the
+    `FollowButton` race — both found via the user re-reporting real CI
+    results rather than assuming the local verification was sufficient.**
+    Two distinct bugs:
+    - **`nx affected -t e2e -p api-e2e`/`-p web-e2e` never actually scoped
+      anything, in either CI step, since this Nx version's `affected`
+      command has no `-p`/`--projects` flag at all** (confirmed directly:
+      `nx affected --help` lists no such option). `-p <value>` was silently
+      absorbed as an unrecognized flag and forwarded to whatever project
+      the _real_ git diff actually affected, with zero scoping — meaning
+      each step could run the _other_ project's `e2e` target under the
+      wrong tool's CLI flags any time a commit touched only one side.
+      Confirmed by reproducing the exact failing commit range locally:
+      `NX_BASE=eb88016 NX_HEAD=918534d nx affected -t e2e -p api-e2e
+--graph=stdout` planned `web-e2e:e2e`, not `api-e2e:e2e` — exactly
+      matching the CI log's "API E2E (affected)" step running a `next
+dev`/`web-e2e` harness instead of Jest, and failing because that job
+      only installs the Chromium Playwright browser, not Firefox/WebKit.
+      This bug has been latent in `.github/workflows/ci.yml` since
+      Milestone 20; it simply never got exercised before because every
+      earlier commit's diff happened to not create the ambiguity (either
+      genuinely affecting only the "right" project, or affecting neither).
+      Fixed with `--exclude=<the other project>` instead — confirmed via
+      `nx show projects --with-target=e2e` that exactly two projects
+      (`api-e2e`, `web-e2e`) have an `e2e` target, so excluding one always
+      leaves the other as the only possible match. Re-verified against the
+      same commit range: the `api-e2e` step now correctly resolves to zero
+      tasks (genuinely unaffected), the `web-e2e` step correctly resolves
+      to `web-e2e:e2e --project=chromium`.
+    - **A fourth, still-unfixed instance of the previous entry's own
+      `FollowButton`/`router.refresh()` race, in `follows.spec.ts`** —
+      missed in that pass despite an explicit file-wide check, because a
+      _second_ follow-toggle click in the same test (setting up a
+      followers-list fixture) was followed by a `page.goto()` with no
+      settling wait, the identical pattern already fixed twice earlier in
+      the same file. Surfaced as WebKit's own error text for the same
+      underlying collision — "Navigation to .../followers is interrupted by
+      another navigation" — rather than Firefox's `NS_BINDING_ABORTED`,
+      different browsers, same race. Fixed identically (a 500ms settle
+      before the navigation); confirmed 4/4 clean on repeated local WebKit
+      runs.
+76. **Fixing bug #75's `FollowButton` instance let `critical-path.spec.ts`
+    progress further under WebKit than it ever had before, which unmasked
+    a second, previously-invisible class of WebKit-specific flakiness: a
+    hydration-lag race on fresh hard navigations, unrelated to
+    `FollowButton`.** Symptom: immediately after `page.goto()`, calling
+    `.fill()` on a React-controlled input (the comment textarea, then
+    separately the search box) had no effect — the input's `onChange`
+    handler apparently wasn't attached yet when Playwright's `fill()`
+    dispatched its input event, so the controlled state never updated,
+    leaving a submit button permanently disabled (`CommentSection`'s "Post"
+    button) or a debounced search never firing (`SearchBox`). Chromium and
+    Firefox didn't exhibit this (hydrate fast enough in practice); WebKit
+    did, consistently (3/3 deterministic failures both before and — at a
+    _different_ step each time — after each successive fix, confirming
+    this is a real, reproducible timing margin, not random flakiness).
+    Fixed with the same short explicit settle (`waitForTimeout(500)`) used
+    throughout this bug-fixing pass, applied at both points in
+    `critical-path.spec.ts` (the comment step, then the search step,
+    discovered one after the other as each fix unmasked the next) and at
+    the identical pattern independently present in the standalone
+    `search.spec.ts` and `like-post.spec.ts` (the latter _also_ carrying
+    its own separate, previously-missed `FollowButton` race — found via a
+    `/follow/i` regex-locator click that an earlier grep sweep for the
+    literal string `'Follow'` didn't match; the sweep methodology itself
+    had a gap, not just the code). A same-family fix was also applied to
+    `comment-post.spec.ts`'s `page.reload()`-then-content-visibility
+    check, on lower confidence — unlike the other fixes, re-verification
+    showed it did **not** reliably resolve that specific test (it still
+    failed on a subsequent Firefox run); left in place since it's
+    plausible, harmless, and consistent with the broader pattern, but this
+    specific instance should be considered genuinely still open, not
+    fixed. `profile.spec.ts`'s "pre-fills the form" flake (bug #46's
+    original class) was deliberately left untouched — its symptom (a
+    pre-fill value arriving empty) doesn't cleanly match the fill()-racing-
+    hydration pattern the other fixes addressed, and guessing at a fix
+    here risked masking a genuinely different, real bug. Full validation
+    after all of the above: `api-e2e` 150/150, Chromium 26/26 (twice),
+    WebKit's `critical-path`/`follows` suites clean on repeated runs,
+    full-suite WebKit/Firefox runs showing only the already-documented,
+    unrelated flaky tests (`profile.spec.ts` pre-fill, `save-post.spec.ts`,
+    `comment-post.spec.ts`) — confirming no new regressions, while being
+    explicit that this pass narrows the known-flaky set further without
+    fully closing it.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -5882,18 +5970,23 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   database could trigger (bug #73). All three are fixed and verified locally as of
   this milestone; **not yet reconfirmed by an actual passing GitHub Actions run** —
   the next push is the real test of these three fixes together.
-- **Firefox/WebKit's higher measured flake rate (Milestone 18 bug #58, reconfirmed
-  Milestones 20 and 21 — including on the first real GitHub Actions run of Milestone
-  21's push, `comment-post`/`like-post`/`profile`/`save-post` failing, a different
-  subset on each of two consecutive local re-runs, the clear signature of flakiness
-  rather than a real regression) is now structurally contained (CI's cross-browser job
-  is `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
-  underlying per-browser timing sensitivity hasn't been root-caused — isolation only
-  removed the register/login-throttle collision that made running all three browsers
-  together _locally_ unreliable, a different (also real) problem. If a future
-  milestone wants Firefox/WebKit to actually gate merges, start by reproducing a single
-  scattered failure in true isolation (`--project=firefox --grep "<name>"`, repeated
-  many times) rather than assuming CI's per-job isolation alone closes the gap.
+- **Firefox/WebKit's higher measured flake rate (Milestone 18 bug #58) is now
+  _partially_ root-caused, not just structurally contained.** Two concrete, fixed
+  mechanisms (Milestone 21 bugs #74–#76): a `FollowButton`/`router.refresh()`-vs-
+  navigation race (four instances found and fixed across `critical-path.spec.ts`,
+  `follows.spec.ts`, `like-post.spec.ts`) and a WebKit-specific hydration-lag-after-
+  fresh-navigation race on controlled form inputs (fixed in `critical-path.spec.ts`
+  twice and `search.spec.ts`). What remains genuinely unexplained: `profile.spec.ts`'s
+  "pre-fills the form" flake (symptom doesn't match either diagnosed pattern) and
+  `comment-post.spec.ts`'s `reload()`-then-content-visibility flake (a same-family fix
+  was tried and did _not_ reliably resolve it on re-verification). CI's cross-browser
+  job remains `continue-on-error: true`, isolated per matrix entry, for this remaining
+  set. If a future milestone wants Firefox/WebKit to actually gate merges, the two
+  fixed classes are a template: reproduce a single scattered failure in true isolation
+  (`--project=firefox --grep "<name>"`, repeated many times until a _deterministic_
+  failure point emerges, not just "sometimes it fails somewhere") before guessing at
+  a fix — both root-caused classes this milestone found were deterministic once
+  isolated, not actually random.
 - **The `comment-section.spec.tsx` `mobile:test` flake (bugs #47/#49/#54/#58/#61) now
   recurs on standalone (not just `run-many`) runs with enough frequency that bug #61's
   "seemingly one-off" framing undersold it** — it recurred again in this milestone's

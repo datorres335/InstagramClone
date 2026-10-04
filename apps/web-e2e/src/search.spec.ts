@@ -35,6 +35,12 @@ test.describe('search: find and navigate to a user via search', () => {
     await registerThroughUi(viewerPage);
 
     await viewerPage.goto('/search');
+    // WebKit's client-side hydration (React attaching `SearchBox`'s
+    // `onChange`) can lag behind Playwright's `fill()` call right after a
+    // fresh hard navigation — the fill dispatches its input event before
+    // React has claimed the node, so the debounced search never fires
+    // (see critical-path.spec.ts for the full explanation). Settle first.
+    await viewerPage.waitForTimeout(500);
     await viewerPage
       .getByPlaceholder('Search by username or name')
       .fill(target.username);
