@@ -71,8 +71,25 @@ jobs:
       # MinIO's service needs a custom `command`/console-address flag that
       # GitHub Actions' own `services:` key can't express, so this is the
       # lower-risk, single-source-of-truth choice, not a shortcut.
+      # Split into two steps: `--wait` only covers the four long-running
+      # services (all have healthchecks and are expected to stay up).
+      # `minio-init` is a deliberate one-shot container with no healthcheck
+      # (docker-compose.yml's own comment) — `--wait` requires every
+      # *included* service to reach and stay in a ready state, so a
+      # one-shot container exiting, even successfully (exit 0), makes the
+      # whole `up --wait` command return exit 1 regardless of what actually
+      # happened inside the container. Confirmed directly against a real
+      # GitHub Actions run (docs/PROGRESS.md bug log): every job failed
+      # here with `minio-init exited (0)` immediately followed by
+      # `Process completed with exit code 1`. Running it as its own
+      # foreground `docker compose up minio-init` (no `-d`, no `--wait`)
+      # instead attaches to that one container and exits with *its own*
+      # exit code once it stops — the correct signal for a one-shot job.
       - name: Start infrastructure (Postgres, Redis, MinIO)
-        run: docker compose up -d --wait
+        run: docker compose up -d --wait postgres redis minio maildev
+
+      - name: Initialize MinIO bucket
+        run: docker compose up minio-init
 
       - name: Apply database migrations
         run: pnpm exec nx run prisma:migrate-deploy
@@ -144,8 +161,13 @@ jobs:
       - name: Configure environment
         run: cp .env.example .env
 
+      # See the `main` job's identical step for why this is split in two —
+      # `--wait` and a one-shot init container (`minio-init`) don't mix.
       - name: Start infrastructure (Postgres, Redis, MinIO)
-        run: docker compose up -d --wait
+        run: docker compose up -d --wait postgres redis minio maildev
+
+      - name: Initialize MinIO bucket
+        run: docker compose up minio-init
 
       - name: Apply database migrations
         run: pnpm exec nx run prisma:migrate-deploy

@@ -1356,7 +1356,7 @@ ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
       (`changePassword`, `changeEmail`, `deleteAccount`), each verifying
       `currentPassword` first; `changePassword` bumps `tokenVersion`,
       revokes every refresh-token family via `TokensService
-  .revokeAllForUser`, and issues a fresh token pair for the calling
+.revokeAllForUser`, and issues a fresh token pair for the calling
       session via a new private `issueSessionTokens` helper (extracted from
       the existing `issueSession`, now its second real caller);
       `deleteAccount` sets `deletedAt` and revokes every refresh-token
@@ -1368,7 +1368,7 @@ ALTER DATABASE %I SET pg_trgm.similarity_threshold = 0.1 ... $$`
 - [x] `apps/api/src/modules/users/me.controller.ts` — three new routes:
       `POST /me/change-password` (sets the rotated refresh cookie on
       success, same as `AuthController`'s own routes), `POST
-  /me/change-email`, `DELETE /me` (clears the refresh cookie on
+/me/change-email`, `DELETE /me` (clears the refresh cookie on
       success) — all delegate to the newly-exported `AuthService`, not
       `UsersService`
 - [x] `packages/validation`'s new `account-settings.ts`
@@ -5440,6 +5440,68 @@ down && up -d --wait` cycles afterward, all clean.
     expectation updated to `'200'` in the same pass (it failed for exactly this
     reason on the next full run, fixed immediately).
 
+### Milestone 21 (continued — a real GitHub Actions run of this milestone's push)
+
+72. **Confirmed via a real GitHub Actions run (not a local hypothesis): `docker
+compose up -d --wait` fails with exit 1 in every CI job, even though every
+    service — including the one-shot `minio-init` — reaches a successful end
+    state.** All three jobs (`main`, both `cross-browser-e2e` matrix entries)
+    failed at the identical point: `Container ... maildev-1 Healthy`, then
+    `container instagram-clone-minio-init-1 exited (0)`, then immediately
+    `Process completed with exit code 1`. Root cause: Compose's `--wait`
+    requires every _included_ service without a healthcheck to reach and
+    _stay_ in a running state; `minio-init` has no healthcheck (it's a
+    deliberate one-shot job) and exits by design once its work is done —
+    `--wait` treats that exit, even a clean one, as the service never
+    reaching readiness, and fails the whole command regardless of the
+    container's own exit code. This is a different bug from Milestone 20's
+    bug #68 (the MinIO registry lockdown) — that fix is confirmed working in
+    these same logs (images pull cleanly, `minio-init` completes its real
+    work: "Bucket created successfully"). Not reproducible through casual
+    local testing: a local `docker compose up -d --wait` was tried earlier
+    this session piped through `tail`, which silently swallows the command's
+    own exit code (bash's `pipefail` is off by default) — re-tested with an
+    explicit, unpiped `$?` check and the true failure reproduced locally too.
+    Fixed by splitting `.github/workflows/ci.yml`'s "Start infrastructure"
+    step in both jobs: `docker compose up -d --wait postgres redis minio
+maildev` (the four long-running services, all with healthchecks) followed
+    by a separate `docker compose up minio-init` (no `-d`, no `--wait` —
+    attaches to the one container in the foreground and exits with _its own_
+    exit code once it stops, the correct signal for a one-shot job).
+    Verified via an unpiped, explicit `$?` check after each step locally,
+    repeated twice.
+73. **A truly fresh database (exactly what CI always starts with) hit the
+    _same_ migration-ordering defect bug #69 described — except `prisma
+migrate deploy` hits it too, not only `migrate dev`'s shadow database as
+    bug #69 characterized it, and this had never been exercised for real
+    until this milestone's CI run got past the infrastructure step for the
+    first time ever.** While rehearsing the fix for bug #72 against a fully
+    fresh `docker compose down -v && up`, `prisma migrate deploy` failed with
+    the identical `relation "posts" does not exist` error bug #69 found —
+    `migrate deploy` also applies pending migrations in filename/timestamp
+    order, and on a database with _everything_ pending (CI's exact
+    situation), that's the same wrong order bug #69 found, not a shadow-
+    database-only quirk. This had been latent since Milestone 13 and
+    invisible until now because every local `migrate deploy` before this was
+    always incremental against an already-migrated database, and CI's own
+    first two real runs both failed at the infrastructure step (bugs #68 and
+    #72) before ever reaching migrations. **Actually fixed this time, not
+    just worked around**: renamed the migration folder
+    `20260929213739_0005_like` → `20260929225739_0005_like` (one second after
+    `0004_post`'s own `20260929225738` timestamp, still safely before
+    `0006_comment`'s `20260930000001`) via `git mv`, so filename-order
+    replay now matches real dependency order. Safe to rename in this
+    specific case: this session's own local Postgres volume had just been
+    wiped (`docker compose down -v`) rehearsing bug #72's fix, so there was
+    no already-migrated local `_prisma_migrations` table left to desync from
+    — bug #69's stated risk for renaming (desyncing existing environments)
+    didn't apply at the moment this fix landed. Verified by wiping the
+    volume fully, running `prisma migrate deploy` fresh (all 10 migrations
+    applied cleanly, in-order, confirmed via the command's own listing), then
+    running the complete `api-e2e` suite against that freshly-migrated
+    database (150/150) and the full `web-e2e` Chromium suite (26/26, stable
+    across two runs) to confirm nothing else depended on the old ordering.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -5773,16 +5835,15 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   has UI-polish scope — track the upstream Next.js discussions
   (vercel/next.js #73199/#82080, issue #72842) for a framework-level fix first, since
   one may land before this codebase needs to work around it more invasively itself.
-- **`.github/workflows/ci.yml` (Milestone 20) has never run on an actual GitHub
-  Actions runner** — validated only as syntactically-correct YAML with the expected
-  job structure (`node -e` + `js-yaml`) in this local environment, which has no way to
-  trigger a real Actions run without pushing a commit or opening a PR. The `docker
-compose up -d --wait` step in particular (MinIO's healthcheck interacting with its
-  one-shot `minio-init` sidecar) is the step most worth watching on the very first real
-  run — if it hangs or fails, start there. Not a reason to withhold the workflow (it's
-  a reasonable-effort, carefully-reasoned-through implementation, not a guess), but an
-  honest gap between "written and YAML-valid" and "proven to work in the real CI
-  environment" that a future session should close on the first real PR.
+- **RESOLVED (Milestone 21):** `.github/workflows/ci.yml` (Milestone 20) has now run
+  on real GitHub Actions runners three times — confirming the original honest gap
+  noted here was real: the first run failed on the MinIO registry lockdown (bug
+  #68), the second on the `docker compose up -d --wait` / one-shot-`minio-init`
+  interaction this entry specifically flagged as worth watching (bug #72), which
+  also exposed a previously-latent migration-ordering defect only a truly fresh CI
+  database could trigger (bug #73). All three are fixed and verified locally as of
+  this milestone; **not yet reconfirmed by an actual passing GitHub Actions run** —
+  the next push is the real test of these three fixes together.
 - **Firefox/WebKit's higher measured flake rate (Milestone 18 bug #58, reconfirmed
   Milestone 20) is now structurally contained (CI's cross-browser job is
   `continue-on-error: true`, isolated per matrix entry) rather than resolved.** The
@@ -6020,6 +6081,9 @@ processes not reliably killing the forked child have recurred repeatedly across
 Milestones 18–21 (bugs #37/#43/#60/#67/#70) and are now a routine, expected check,
 not an occasional one — this is doubly true for Milestone 22, since a WebSocket
 server holds its listening socket open differently from a plain HTTP server and may
-need its own explicit shutdown verification. `.github/workflows/ci.yml` (Milestone 20) still has not been confirmed clean on an actual GitHub Actions runner as of this
-writing — watch the `docker compose up -d --wait` step in particular if a real CI
-run for this milestone fails or hangs there.
+need its own explicit shutdown verification. `.github/workflows/ci.yml` has now run
+on real GitHub Actions runners three times and failed three different ways (bugs
+#68, #72, #73, all fixed as of Milestone 21) before this milestone even starts —
+still not yet reconfirmed by an actual passing run as of this writing, so treat the
+infrastructure-startup steps as genuinely unproven until the next push comes back
+green, not as a solved problem to build on top of without watching.

@@ -444,6 +444,21 @@ diff --from-config-datasource --to-schema=prisma/schema.prisma --script`, hand-
   convention, and applied with `prisma migrate deploy` (which is designed for
   non-interactive use and never hits the guard) — `0010_direct_messages`
   (Milestone 21) follows the identical workaround.
+- **Timestamp-prefix ordering is load-bearing, not cosmetic — both `migrate dev`'s
+  shadow-database replay and `migrate deploy` against a fully fresh database apply
+  every migration in filename order, not `000N`-name order.** `0005_like`'s folder
+  was originally timestamped _before_ `0004_post`'s (a Milestone 13 hand-placement
+  mistake), which went undetected for seven milestones since every real
+  `migrate deploy` before Milestone 21 ran incrementally against an
+  already-migrated database — only a truly fresh database (a new clone, or CI's own
+  first real run) replays the full history and hits a dependency-order violation
+  (`likes` referencing `posts` before `posts` exists). Confirmed via a real GitHub
+  Actions failure (Milestone 21 bug #73) and corrected by renaming the folder to
+  `20260929225739_0005_like` (one second after `0004_post`'s own timestamp). When
+  hand-placing a migration folder per the workaround above, double-check its
+  timestamp prefix sorts after every migration it depends on, not just after the
+  previous milestone's — the `000N` name alone guarantees nothing to either Prisma
+  command.
 - Destructive changes (column drops/renames) get an explicit expand/contract note in the
   migration's PR description once the project is past its very first schema.
 
