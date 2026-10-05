@@ -191,6 +191,49 @@ describe('HttpClient', () => {
     });
   });
 
+  describe('getAccessToken', () => {
+    it('returns the stored access token when it is still valid, without refreshing', async () => {
+      const storage = createFakeTokenStorage({
+        accessToken: 'valid-token',
+        accessTokenExpiresAt: futureIso,
+        refreshToken: 'refresh-token',
+      });
+      const client = new HttpClient({ baseUrl: 'http://api.test', storage });
+
+      await expect(client.getAccessToken()).resolves.toBe('valid-token');
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('refreshes and returns the fresh token when the stored one is expired', async () => {
+      const storage = createFakeTokenStorage({
+        accessToken: 'stale-token',
+        accessTokenExpiresAt: pastIso,
+        refreshToken: 'refresh-token',
+      });
+      const client = new HttpClient({ baseUrl: 'http://api.test', storage });
+      vi.mocked(fetch).mockResolvedValue(
+        fakeResponse(200, {
+          accessToken: 'fresh-token',
+          accessTokenExpiresAt: futureIso,
+          refreshToken: 'rotated-refresh-token',
+        }),
+      );
+
+      await expect(client.getAccessToken()).resolves.toBe('fresh-token');
+    });
+
+    it('throws NotAuthenticatedError when there is no stored session', async () => {
+      const client = new HttpClient({
+        baseUrl: 'http://api.test',
+        storage: createFakeTokenStorage(null),
+      });
+
+      await expect(client.getAccessToken()).rejects.toBeInstanceOf(
+        NotAuthenticatedError,
+      );
+    });
+  });
+
   describe('refresh', () => {
     it('falls back to the existing refresh token if the response omits one', async () => {
       const storage = createFakeTokenStorage({

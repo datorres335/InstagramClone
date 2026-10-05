@@ -13,6 +13,7 @@ import { HealthModule } from '../health/health.module';
 import { AuthModule } from '../modules/auth/auth.module';
 import { CommentsModule } from '../modules/comments/comments.module';
 import { ConversationsModule } from '../modules/conversations/conversations.module';
+import { EventsModule } from '../modules/events/events.module';
 import { FollowsModule } from '../modules/follows/follows.module';
 import { LikesModule } from '../modules/likes/likes.module';
 import { MediaModule } from '../modules/media/media.module';
@@ -41,6 +42,7 @@ import { StorageModule } from '../storage/storage.module';
     NotificationsModule,
     SearchModule,
     ConversationsModule,
+    EventsModule,
     // A modest workspace-wide default (docs/API.md §1); AuthController
     // overrides this with stricter per-route limits via @Throttle().
     // In-memory storage (the default) — not the Redis-backed storage

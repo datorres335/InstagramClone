@@ -10,6 +10,7 @@ import { ApiError } from '@instagram-clone/api-client';
 
 import { apiClient } from '../lib/api-client';
 import { useAuth } from '../lib/auth-context';
+import { useRealtimeEvents } from '../lib/realtime';
 import ConversationScreen from '../app/conversation/[id]';
 
 jest.mock('../lib/api-client', () => ({
@@ -24,6 +25,7 @@ jest.mock('../lib/api-client', () => ({
 jest.mock('../lib/auth-context', () => ({
   useAuth: jest.fn(),
 }));
+jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
 jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(() => ({ id: 'conv-1' })),
 }));
@@ -131,5 +133,49 @@ describe('ConversationScreen', () => {
     await waitFor(() =>
       expect(screen.getByText('Conversation not found')).toBeTruthy(),
     );
+  });
+
+  it('appends a pushed message event for this conversation without re-fetching', async () => {
+    jest
+      .mocked(apiClient.conversations.get)
+      .mockResolvedValue(fakeConversation);
+    jest
+      .mocked(apiClient.conversations.listMessages)
+      .mockResolvedValue({ data: [], meta: { nextCursor: null } });
+
+    render(<ConversationScreen />);
+    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+
+    const [onEvent] = jest.mocked(useRealtimeEvents).mock.calls[0];
+    onEvent({
+      type: 'message',
+      message: fakeMessage('msg-pushed', { body: 'pushed live' }),
+    });
+
+    await waitFor(() => expect(screen.getByText('pushed live')).toBeTruthy());
+    expect(apiClient.conversations.listMessages).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a pushed message event for a different conversation', async () => {
+    jest
+      .mocked(apiClient.conversations.get)
+      .mockResolvedValue(fakeConversation);
+    jest
+      .mocked(apiClient.conversations.listMessages)
+      .mockResolvedValue({ data: [], meta: { nextCursor: null } });
+
+    render(<ConversationScreen />);
+    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+
+    const [onEvent] = jest.mocked(useRealtimeEvents).mock.calls[0];
+    onEvent({
+      type: 'message',
+      message: {
+        ...fakeMessage('msg-other', { body: 'not for this thread' }),
+        conversationId: 'conv-other',
+      },
+    });
+
+    expect(screen.queryByText('not for this thread')).toBeNull();
   });
 });

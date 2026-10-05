@@ -63,4 +63,37 @@ test.describe('notifications: see a notification after another user follows you'
     await expect(page.getByText('Notifications')).toBeVisible();
     await expect(page.getByText(/Notifications \(\d+\)/)).toHaveCount(0);
   });
+
+  /**
+   * Milestone 22's realtime push, specifically: the viewer never reloads or
+   * navigates here — the badge must update from the pushed `notification`
+   * event alone, over the one `GET /api/events` connection `NotificationBadge`
+   * opens on mount, not from a fresh server render re-seeding `initialCount`
+   * (which is what the test above actually exercises).
+   */
+  test('updates the badge live from a pushed event, with no reload', async ({
+    page,
+    request,
+  }) => {
+    const owner = await registerThroughUi(page);
+    await page.goto('/home');
+    await expect(page.getByText('Notifications')).toBeVisible();
+
+    const actorCredentials = randomRegisterInput();
+    const actorRegisterRes = await request.post(
+      `${API_BASE_URL}/auth/register`,
+      { data: actorCredentials },
+    );
+    expect(actorRegisterRes.ok()).toBe(true);
+    const actorAccessToken = (await actorRegisterRes.json())
+      .accessToken as string;
+
+    const followRes = await request.put(
+      `${API_BASE_URL}/users/${owner.username}/follow`,
+      { headers: { Authorization: `Bearer ${actorAccessToken}` } },
+    );
+    expect(followRes.ok()).toBe(true);
+
+    await expect(page.getByText('Notifications (1)')).toBeVisible();
+  });
 });

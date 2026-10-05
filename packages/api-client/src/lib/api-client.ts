@@ -21,6 +21,8 @@ import { createSearchClient, type SearchClient } from './search-client';
 import { createUsersClient, type UsersClient } from './users-client';
 
 export interface ApiClient {
+  /** Shared transport — exposed so callers can pull a raw access token (e.g. for SSE). */
+  http: HttpClient;
   auth: AuthClient;
   users: UsersClient;
   media: MediaClient;
@@ -47,6 +49,7 @@ export interface ApiClient {
 export function createApiClient(config: HttpClientConfig): ApiClient {
   const http = new HttpClient(config);
   return {
+    http,
     auth: createAuthClient(http),
     users: createUsersClient(http),
     media: createMediaClient(http),

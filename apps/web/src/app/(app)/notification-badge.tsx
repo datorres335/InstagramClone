@@ -1,37 +1,38 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
+import { useRealtimeEvents } from '../../lib/use-realtime-events';
 import { getUnreadNotificationCountAction } from './notification-badge-actions';
-
-const POLL_INTERVAL_MS = 30_000;
 
 interface NotificationBadgeProps {
   initialCount: number;
 }
 
 /**
- * Poll-based unread badge (docs/API.md §12, docs/FEATURES.md #16,
- * docs/ARCHITECTURE.md non-goals — no WebSocket/SSE transport). Seeded with
- * a server-fetched `initialCount` so the badge is correct on first paint,
- * then refreshed on an interval. A failed poll is silently ignored and
- * just keeps the last known count until the next successful one — this is
- * a non-critical convenience number, not worth surfacing an error for.
+ * The unread badge (docs/API.md §12/§18, docs/FEATURES.md #16). Retrofits
+ * Milestone 16's poll-based count with Milestone 22's realtime push:
+ * increments optimistically the instant a `notification` event arrives,
+ * and re-fetches the real count over REST on every (re)connect to stay
+ * correct even if a push was missed while disconnected.
  */
 export function NotificationBadge({ initialCount }: NotificationBadgeProps) {
   const [count, setCount] = useState(initialCount);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        setCount(await getUnreadNotificationCountAction());
-      } catch {
-        // Silently ignored — see the doc comment above.
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, []);
+  useRealtimeEvents(
+    (event) => {
+      if (event.type === 'notification') setCount((prev) => prev + 1);
+    },
+    () => {
+      getUnreadNotificationCountAction()
+        .then(setCount)
+        .catch(() => {
+          // Silently ignored — this is a non-critical convenience number,
+          // not worth surfacing an error for.
+        });
+    },
+  );
 
   return (
     <Link href="/notifications">

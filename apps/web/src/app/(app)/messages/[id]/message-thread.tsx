@@ -1,12 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState, useTransition } from 'react';
+import { useCallback, useRef, useState, useTransition } from 'react';
 
 import type { MessageResponse } from '@instagram-clone/validation';
 
+import { useRealtimeEvents } from '../../../../lib/use-realtime-events';
 import { getMessagesPageAction, sendMessageAction } from '../actions';
-
-const POLL_INTERVAL_MS = 5_000;
 
 interface MessageThreadProps {
   conversationId: string;
@@ -16,19 +15,20 @@ interface MessageThreadProps {
 }
 
 /**
- * The conversation thread view (docs/API.md §17, docs/IMPLEMENTATION_PLAN.md
- * M21). `GET .../messages` opens on the *newest* page (chronologically
+ * The conversation thread view (docs/API.md §17/§18, docs/IMPLEMENTATION_PLAN.md
+ * M21/M22). `GET .../messages` opens on the *newest* page (chronologically
  * ordered within it) and its `nextCursor` walks further into the past — the
  * same `lt`-keyset direction `FeedList`/`NotificationsList` already use, so
  * "load older" here prepends a page exactly the way their "load more"
- * appends one, just at the opposite end of the list. Also polls for new
- * incoming messages (the "poll-based new-message detection" M21 explicitly
- * calls for, no WebSocket/SSE until M22) by re-fetching the newest page and
- * appending anything not already known by id — correct as long as fewer
- * than a page's worth of messages (`limit`, default 20) arrive between
- * polls, a safe assumption at this MVP's expected chat volume. Polls more
- * frequently than the inbox list (5s vs. 10s) — an open thread is the one
- * place in this codebase latency is most noticeable.
+ * appends one, just at the opposite end of the list.
+ *
+ * Retrofits M21's poll-based "new message" detection with M22's realtime
+ * push: a `message` event for this conversation is appended directly
+ * (it's already a full `MessageResponse`, the same shape this endpoint
+ * returns), while a stream (re)connect re-fetches the newest page and
+ * appends anything not already known by id — covering both "I was
+ * connected the whole time" and "I missed some while disconnected"
+ * without assuming either one.
  */
 export function MessageThread({
   conversationId,
@@ -43,21 +43,32 @@ export function MessageThread({
   const [pending, startTransition] = useTransition();
   const knownIds = useRef(new Set(initialMessages.map((m) => m.id)));
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const page = await getMessagesPageAction(conversationId, undefined);
+  const refreshNewest = useCallback(() => {
+    getMessagesPageAction(conversationId, undefined)
+      .then((page) => {
         const fresh = page.data.filter((m) => !knownIds.current.has(m.id));
         if (fresh.length > 0) {
           fresh.forEach((m) => knownIds.current.add(m.id));
           setMessages((prev) => [...prev, ...fresh]);
         }
-      } catch {
+      })
+      .catch(() => {
         // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+      });
   }, [conversationId]);
+
+  useRealtimeEvents(
+    (event) => {
+      if (event.type !== 'message' || event.message.conversationId !== conversationId) {
+        return;
+      }
+      if (!knownIds.current.has(event.message.id)) {
+        knownIds.current.add(event.message.id);
+        setMessages((prev) => [...prev, event.message]);
+      }
+    },
+    refreshNewest,
+  );
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();

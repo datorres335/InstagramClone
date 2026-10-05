@@ -20,7 +20,10 @@ and `IMPLEMENTATION_PLAN.md` all assume the decisions recorded here.
 
 - No implementation yet — this pass is architecture + docs only.
 - No video/Reels/Stories pipeline (listed as future work only).
-- No real-time transport (WebSockets/SSE) in the MVP — notifications are poll-based.
+- No real-time transport beyond Server-Sent Events (§5.4, implemented Milestone 22) —
+  no bidirectional WebSocket channel, since nothing in this MVP's feature set has the
+  client send anything over the realtime connection itself (every mutation already goes
+  through the existing REST endpoints); SSE's one-directional push is the complete fit.
 - No multi-region / multi-tenant design — single-region deployment is assumed.
 
 ## 2. Technology Summary
@@ -295,6 +298,58 @@ large-file proxy.
   to the presigned S3 URL obtained from the API, same flow as web.
 - Env vars follow Expo's `EXPO_PUBLIC_` prefix convention for anything bundled into the
   client, validated at startup through `packages/config`.
+
+### 5.4 Realtime Transport — Server-Sent Events (implemented Milestone 22)
+
+Retrofits Milestone 16's poll-based notification badge and Milestone 21's poll-based
+"new message" detection with a real push transport, once there were genuinely **two**
+real consumers needing it — not built speculatively ahead of either.
+
+- **SSE over WebSocket.** Both existing consumers are purely server→client pushes; the
+  client always mutates over the existing REST endpoints, never over the realtime
+  channel itself. SSE's one-directional model is an exact fit, and NestJS has it built
+  in (`@Sse()`, `@nestjs/common`) — zero new backend dependencies, versus
+  `@nestjs/websockets` + `@nestjs/platform-socket.io` + `socket.io` (three new
+  dependencies) for bidirectional capability nothing here uses. If a future feature
+  genuinely needs the client to push over the realtime channel (typing indicators, for
+  example), that's the point to revisit this decision, not before.
+- **`GET /events`** (`apps/api/src/modules/events`, docs/API.md §18): one long-lived
+  stream per connected client, guarded by the same `JwtAuthGuard` every other
+  authenticated route uses. A 20s heartbeat comment keeps intermediary proxies from
+  treating an idle-but-healthy connection as dead; the server closes the connection
+  itself after ~10 minutes to force a periodic reconnect (re-running the guard), well
+  inside the access token's 15-minute TTL — this is what closes the gap a revoked
+  `tokenVersion` (§7) would otherwise leave on an indefinitely-long-lived stream.
+- **Fan-out**: an in-process RxJS `Subject` (`EventsService`), filtered per-subscriber
+  by recipient id — the same "in-process is fine for MVP single-instance scale"
+  trade-off `NotificationsProcessor`/`ThrottlerModule` already make (not Redis pub/sub).
+  `NotificationsProcessor` emits after writing a `Notification` row; `ConversationsService
+  .sendMessage` emits to the other participant(s) after writing a `Message` row — both
+  reuse their existing REST response shape verbatim as the pushed payload
+  (`RealtimeEvent`, `packages/validation/src/lib/realtime.ts`), not a parallel "live"
+  type.
+- **Auth is the one place web and mobile genuinely diverge**, because neither a
+  browser's native `EventSource` nor `react-native-sse`'s drop-in can attach a header
+  the way `fetch` does — except `react-native-sse` actually can, which is why mobile
+  uses it instead of the platform-native `EventSource`:
+  - **Mobile** connects directly to `apps/api`'s `GET /events` with a genuine
+    `Authorization: Bearer` header (`apps/mobile/src/lib/realtime.ts`) — the same
+    direct-to-API shape every other mobile request already uses.
+  - **Web** cannot do this: this app's access token is never exposed to browser JS in
+    the first place (§7 — only an httpOnly refresh cookie), so a browser-native
+    `EventSource` pointed at the API would have no credential to send even if it could
+    set headers. `apps/web/src/app/api/events/route.ts` is a Route Handler that does
+    what the Next server already does for every other request — acts as the one
+    trusted caller holding a real Bearer token — except here it forwards a live stream
+    instead of a single JSON response, and the browser's `EventSource` connects to
+    this same-origin proxy route instead of the API directly.
+- **REST stays authoritative.** This channel is a push *optimization*, not a
+  guaranteed-delivery replacement for REST: a client reconnects (initial mount, or
+  after any drop) and re-fetches the relevant REST endpoint to catch up on whatever it
+  missed while disconnected, rather than assuming zero missed events or trying to
+  replay by SSE event id. `NotificationBadge`/`ConversationsList`/`MessageThread`
+  (and their mobile equivalents) all follow this shape: apply a pushed event
+  immediately when connected, and re-fetch on every (re)connect.
 
 ## 6. Shared Packages
 
@@ -596,6 +651,8 @@ Risks are ordered roughly by how early they need a decision, not by severity.
 | 9   | **Framework version drift between design time and implementation time** (Next 16, NestJS 11, current Expo SDK, Prisma 7, Zod 4 all move fast).                                                                                                                                                                                                                                                                                                                                                           | This document may be read months after being written.                                                                                                                                    | Each milestone that first installs a given framework begins by checking that framework's current official docs rather than trusting this document's version numbers verbatim.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 10  | **Notification volume** for a popular account (many likes/comments/follows in a burst) could generate a write storm if notifications are created synchronously in the request path.                                                                                                                                                                                                                                                                                                                      | Latency spikes on `like`/`comment`/`follow` endpoints.                                                                                                                                   | Notification creation is enqueued via BullMQ on its own dedicated `notifications` queue (Milestone 16) — not reusing `media`'s — rather than written synchronously in the triggering request.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | 11  | **`redirect()` called inside a Server Action bound to `useActionState`, on a form resubmitted after that same action previously returned a normal (non-redirecting) state, doesn't reliably navigate the browser** — a confirmed, open upstream Next.js App Router limitation (vercel/next.js discussions #73199/#82080, issue #72842), reproduced independently of this codebase's own code, dev vs. production builds, and `redirect()` vs. a client-side `router.push`/`window.location` alternative. | Affects `login`/`register`/profile-edit/delete-account — any user who corrects a mistake and resubmits the same page would be stuck, not redirected, after the retry genuinely succeeds. | **Found, not fixed (Milestone 20)** — see `docs/PROGRESS.md`'s Milestone 20 Bugs Found/Known Issues for the full repro history. `apps/web-e2e/src/critical-path.spec.ts` works around it with a `page.reload()` between a failed and a corrected submission (both a reliable workaround and a realistic thing a stuck real user would do). A real client-side fix (e.g., abandoning `useActionState` for these four forms in favor of a plain client-submit-then-`router.push` pattern) is a reasonable follow-up once a future milestone has UI-polish scope, not pursued now since it touches four forms for a framework-level issue outside this milestone's own scope. |     |
+| 12  | **`EventsService`'s realtime fan-out (§5.4, Milestone 22) is in-process RxJS, not Redis pub/sub** — a client connected to one `apps/api` instance never sees an event emitted on another.                                                                                                                                                                                                                                                                                                                 | Breaks the moment `apps/api` runs as more than one instance (the same ceiling risk #4 already names for BullMQ processors, just for push instead of jobs).                              | Accepted for MVP single-instance scale. Not a silent correctness gap: REST stays authoritative (§5.4's "reconnect → re-fetch" contract), so a missed push on the wrong instance is recovered on the client's next reconnect, not lost. Revisit (Redis pub/sub, or a dedicated realtime-gateway process) only once `apps/api` is actually scaled past one instance.                                                                                                                                                                                                                                                                                                       |
+| 13  | **Mobile's SSE client (`react-native-sse`) reconnects with the `Authorization` header it was constructed with**, not a freshly-read token — unlike the browser-native `EventSource` web uses via its proxy route, which re-authenticates through the Route Handler on every reconnect.                                                                                                                                                                                                                  | A connection that outlives its access token's validity (15 min) without anything else refreshing it will 401 on reconnect and keep retrying with the same stale token indefinitely.     | Accepted for MVP: the server's own forced ~10-minute disconnect (§5.4) is comfortably inside the 15-minute token TTL for a connection that was valid when opened, and ordinary app usage (any other REST call) independently refreshes the stored token. Documented, not solved, here — see `docs/PROGRESS.md`'s Milestone 22 Known Issues.                                                                                                                                                                                                                                                                                                                              |
 
 ## 13. Open Questions (deferred, not blocking design)
 

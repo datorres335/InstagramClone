@@ -14,14 +14,14 @@ import type { ConversationResponse } from '@instagram-clone/validation';
 
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
-
-const POLL_INTERVAL_MS = 10_000;
+import { useRealtimeEvents } from '../../lib/realtime';
 
 /**
- * The inbox (docs/API.md §17, docs/IMPLEMENTATION_PLAN.md M21) — mirrors
- * `(tabs)/notifications.tsx`'s infinite-scroll pagination, plus a poll on
- * the first page for the "new message" detection M21 calls for (matching
- * `NotificationBadge`'s precedent — no WebSocket/SSE until M22). The "new
+ * The inbox (docs/API.md §17/§18, docs/IMPLEMENTATION_PLAN.md M21/M22) —
+ * mirrors `(tabs)/notifications.tsx`'s infinite-scroll pagination. Retrofits
+ * M21's poll-based "new message" detection with M22's realtime push: a
+ * `message` event or a stream (re)connect both re-fetch just the first
+ * page, the same trade-off `apps/web`'s `ConversationsList` makes. The "new
  * message" input mirrors `apps/web`'s `StartConversationForm`.
  */
 export default function MessagesScreen() {
@@ -53,22 +53,26 @@ export default function MessagesScreen() {
     loadFirstPage();
   }, [loadFirstPage]);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const page = await apiClient.conversations.list();
-        setConversations((prev) => {
-          const rest = prev.filter(
-            (c) => !page.data.some((fresh) => fresh.id === c.id),
-          );
-          return [...page.data, ...rest];
-        });
-      } catch {
-        // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+  const refreshFirstPage = useCallback(async () => {
+    try {
+      const page = await apiClient.conversations.list();
+      setConversations((prev) => {
+        const rest = prev.filter(
+          (c) => !page.data.some((fresh) => fresh.id === c.id),
+        );
+        return [...page.data, ...rest];
+      });
+    } catch {
+      // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
+    }
   }, []);
+
+  useRealtimeEvents(
+    (event) => {
+      if (event.type === 'message') refreshFirstPage();
+    },
+    refreshFirstPage,
+  );
 
   async function handleLoadMore() {
     if (!nextCursor || loadingMore) return;

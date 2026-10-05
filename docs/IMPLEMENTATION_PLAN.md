@@ -369,7 +369,7 @@ reasoning.
   pagination; a non-participant rejected from reading/posting to a conversation they're
   not in (`403`, the first test of this specific authorization shape).
 
-### M22 — Realtime Transport (WebSocket/SSE)
+### M22 — Realtime Transport (SSE, decided below)
 
 - Retrofits `Notification`'s poll-based unread count (Milestone 16) and M21's
   poll-based new-message detection with a real push transport — explicitly deferred
@@ -381,6 +381,22 @@ reasoning.
   (plain HTTP, no new protocol) but one-directional (fine for "new message/notification
   arrived" pushes, not for anything needing the client to send over the same channel);
   re-derive which this codebase actually needs rather than assuming either.
+
+**Decision (made in Milestone 22 itself, per this section's own instruction): SSE,
+not WebSocket.** Both real consumers (`Notification`'s unread count, `Message`'s
+new-message detection) are purely server→client pushes; the client already mutates
+everything over the existing REST endpoints and never needs to send over the realtime
+channel itself, so SSE's one-directional model is a complete fit, not a compromise.
+NestJS ships `@Sse()` in `@nestjs/common` already — zero new backend dependencies —
+versus `@nestjs/websockets` + `@nestjs/platform-socket.io` + `socket.io` (three new
+dependencies) for bidirectional capability nothing in this MVP uses. Implemented as
+`GET /events` (`docs/API.md` §18), with an in-process RxJS `Subject` for fan-out
+(the same single-instance MVP trade-off `NotificationsProcessor`/`ThrottlerModule`
+already make) and a Route-Handler proxy for web's auth specifically, since neither a
+browser-native `EventSource` nor this app's httpOnly-cookie-only token model lets the
+browser attach a real `Authorization` header the way mobile's `react-native-sse`
+client can. Full reasoning in `docs/ARCHITECTURE.md` §5.4; see `docs/PROGRESS.md`'s
+Milestone 22 entry for what's next.
 
 ## Summary Table
 
@@ -408,4 +424,4 @@ reasoning.
 | 19  | Account settings             | —                                                    | —                               |
 | 20  | E2E coverage + hardening     | —                                                    | —                               |
 | 21  | Direct messages (foundation) | `Conversation`, `ConversationParticipant`, `Message` | —                               |
-| 22  | Realtime transport           | —                                                    | —                               |
+| 22  | Realtime transport (SSE)     | —                                                    | —                               |

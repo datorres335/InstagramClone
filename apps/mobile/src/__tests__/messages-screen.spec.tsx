@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react-native';
 
 import { apiClient } from '../lib/api-client';
+import { useRealtimeEvents } from '../lib/realtime';
 import MessagesScreen from '../app/(tabs)/messages';
 
 jest.mock('../lib/api-client', () => ({
@@ -14,6 +15,7 @@ jest.mock('../lib/api-client', () => ({
     conversations: { list: jest.fn(), start: jest.fn() },
   },
 }));
+jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {
@@ -146,5 +148,36 @@ describe('MessagesScreen', () => {
         params: { id: 'conv-new' },
       });
     });
+  });
+
+  it('re-fetches the first page when a message event arrives', async () => {
+    jest
+      .mocked(apiClient.conversations.list)
+      .mockResolvedValueOnce({ data: [], meta: { nextCursor: null } })
+      .mockResolvedValueOnce({
+        data: [fakeConversation('conv-1')],
+        meta: { nextCursor: null },
+      });
+
+    render(<MessagesScreen />);
+    await waitFor(() =>
+      expect(screen.getByText('No conversations yet.')).toBeTruthy(),
+    );
+
+    const [onEvent] = jest.mocked(useRealtimeEvents).mock.calls[0];
+    onEvent({
+      type: 'message',
+      message: {
+        id: 'msg-1',
+        conversationId: 'conv-1',
+        sender: fakeOther,
+        body: 'hi',
+        readAt: null,
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    expect(apiClient.conversations.list).toHaveBeenCalledTimes(2);
   });
 });

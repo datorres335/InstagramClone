@@ -37,6 +37,11 @@ test.describe('direct messages: start a conversation, send a message, see a repl
     const bobAccessToken = (await bobRegisterRes.json()).accessToken as string;
 
     await page.goto('/messages');
+    // WebKit/Firefox hydration-lag race (docs/PROGRESS.md Known Issues):
+    // `.fill()`'s input event can fire before React attaches `onChange`
+    // right after a hard navigation, leaving the controlled input (and so
+    // the submit button) stuck in its initial disabled state.
+    await page.waitForTimeout(500);
     await page.getByLabel('New message to').fill(bobCredentials.username);
     await page.getByRole('button', { name: 'Chat' }).click();
     await page.waitForURL(/\/messages\/.+/);
@@ -76,9 +81,8 @@ test.describe('direct messages: start a conversation, send a message, see a repl
     );
     expect(replyRes.ok()).toBe(true);
 
-    // Reload rather than waiting for the client poll — same reasoning
-    // `notifications.spec.ts` documents for its own badge check.
-    await page.reload();
+    // Milestone 22 retrofit: the thread is pushed bob's reply over SSE, so
+    // this no longer needs a reload to see it.
     await expect(page.getByText('Thanks Alice!')).toBeVisible();
 
     await page.goto('/messages');
@@ -87,10 +91,55 @@ test.describe('direct messages: start a conversation, send a message, see a repl
     ).toBeVisible();
   });
 
+  /**
+   * Milestone 22's realtime push for the inbox specifically (`ConversationsList`,
+   * distinct from the thread view the test above covers): alice stays on
+   * `/messages` the whole time — bob starting a brand new conversation and
+   * messaging her must surface it there from the pushed `message` event
+   * alone, with no reload/navigation.
+   */
+  test('a new conversation and message from someone else appears live in the inbox', async ({
+    page,
+    request,
+  }) => {
+    const alice = await registerThroughUi(page);
+    await page.goto('/messages');
+    await expect(page.getByText('No conversations yet.')).toBeVisible();
+
+    const bobCredentials = randomRegisterInput();
+    const bobRegisterRes = await request.post(`${API_BASE_URL}/auth/register`, {
+      data: bobCredentials,
+    });
+    expect(bobRegisterRes.ok()).toBe(true);
+    const bobAccessToken = (await bobRegisterRes.json()).accessToken as string;
+
+    const startRes = await request.post(`${API_BASE_URL}/conversations`, {
+      data: { username: alice.username },
+      headers: { Authorization: `Bearer ${bobAccessToken}` },
+    });
+    expect(startRes.ok()).toBe(true);
+    const conversationId = (await startRes.json()).id as string;
+
+    const messageRes = await request.post(
+      `${API_BASE_URL}/conversations/${conversationId}/messages`,
+      {
+        data: { body: 'hi alice, out of the blue' },
+        headers: { Authorization: `Bearer ${bobAccessToken}` },
+      },
+    );
+    expect(messageRes.ok()).toBe(true);
+
+    await expect(
+      page.getByText(`@${bobCredentials.username}: hi alice, out of the blue`),
+    ).toBeVisible();
+  });
+
   test('messaging yourself is rejected', async ({ page }) => {
     const alice = await registerThroughUi(page);
 
     await page.goto('/messages');
+    // Same WebKit/Firefox hydration-lag race as the test above.
+    await page.waitForTimeout(500);
     await page.getByLabel('New message to').fill(alice.username);
     await page.getByRole('button', { name: 'Chat' }).click();
 

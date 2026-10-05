@@ -2,12 +2,17 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 
 import { AuthModule } from '../auth/auth.module';
+import { EventsModule } from '../events/events.module';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsProcessor } from './notifications.processor';
 import { NotificationsService } from './notifications.service';
 
 @Module({
-  imports: [AuthModule, BullModule.registerQueue({ name: 'notifications' })],
+  imports: [
+    AuthModule,
+    EventsModule,
+    BullModule.registerQueue({ name: 'notifications' }),
+  ],
   controllers: [NotificationsController],
   providers: [NotificationsService, NotificationsProcessor],
   // LikesModule/CommentsModule/FollowsModule each need enqueueNotification

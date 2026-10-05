@@ -1,13 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState, useTransition } from 'react';
+import { useCallback, useState, useTransition } from 'react';
 
 import type { ConversationResponse } from '@instagram-clone/validation';
 
+import { useRealtimeEvents } from '../../../lib/use-realtime-events';
 import { getConversationsPageAction } from './actions';
-
-const POLL_INTERVAL_MS = 10_000;
 
 interface ConversationsListProps {
   initialConversations: ConversationResponse[];
@@ -15,17 +14,16 @@ interface ConversationsListProps {
 }
 
 /**
- * The inbox (docs/API.md §17, docs/IMPLEMENTATION_PLAN.md M21) — "load more"
- * pagination mirrors `FeedList`/`NotificationsList`. Also polls the first
- * page on an interval, the poll-based "new message" detection M21 calls
- * for (matching `NotificationBadge`'s precedent, docs/ARCHITECTURE.md
- * non-goals — no WebSocket/SSE). A shorter interval than the 30s
- * notification badge uses: a chat inbox benefits more from low latency than
- * a generic badge count does. Only the first page is refreshed on poll —
- * any conversations the viewer has already paged into stay as they were,
- * the same trade-off every other "poll for freshness, don't disturb
- * pagination state" affordance in this codebase makes implicitly by not
- * polling at all; this one explicitly re-fetches just page one.
+ * The inbox (docs/API.md §17/§18, docs/IMPLEMENTATION_PLAN.md M21/M22) —
+ * "load more" pagination mirrors `FeedList`/`NotificationsList`. Retrofits
+ * M21's poll-based "new message" detection with M22's realtime push: a
+ * `message` event (for any conversation — it only ever arrives for ones
+ * the viewer participates in) or a stream (re)connect both re-fetch just
+ * the first page, the same "refresh page one, don't disturb pagination
+ * state further in" trade-off the original poll made. Re-fetching rather
+ * than merging the pushed message directly in keeps `lastMessageAt`
+ * reordering and `unreadCount` correct without duplicating that logic
+ * here.
  */
 export function ConversationsList({
   initialConversations,
@@ -36,22 +34,27 @@ export function ConversationsList({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const page = await getConversationsPageAction(undefined);
+  const refreshFirstPage = useCallback(() => {
+    getConversationsPageAction(undefined)
+      .then((page) => {
         setConversations((prev) => {
           const rest = prev.filter(
             (c) => !page.data.some((fresh) => fresh.id === c.id),
           );
           return [...page.data, ...rest];
         });
-      } catch {
+      })
+      .catch(() => {
         // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+      });
   }, []);
+
+  useRealtimeEvents(
+    (event) => {
+      if (event.type === 'message') refreshFirstPage();
+    },
+    refreshFirstPage,
+  );
 
   function handleLoadMore() {
     setError(null);

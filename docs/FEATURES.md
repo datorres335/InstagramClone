@@ -222,9 +222,11 @@ referenced to `DATABASE.md` / `API.md`).
 
 - In-app notification list for follows, likes, and comments received, with an unread
   badge count.
-- Poll-based: clients refetch the unread-count endpoint periodically (no realtime
-  transport, per `ARCHITECTURE.md` non-goals); marking as read happens on opening the
-  notifications screen.
+- Realtime-pushed over SSE (`ARCHITECTURE.md` §5.4, implemented Milestone 22 — this
+  was poll-based at this feature's own original Milestone 16 implementation): a
+  pushed event increments the badge immediately, with a REST re-fetch on every
+  (re)connect so a client that was briefly disconnected is never silently wrong.
+  Marking as read happens on opening the notifications screen.
 - Generated asynchronously via a background job (`ARCHITECTURE.md` §8/§12 risk #10),
   not written synchronously on the triggering request, so a burst of engagement on one
   post can't slow down the like/comment/follow endpoints themselves.
@@ -293,9 +295,9 @@ original 17.
   and mobile — a `Conversation`/`ConversationParticipant`/`Message` schema designed
   to support group chat later without a breaking migration, even though nothing in
   the MVP ever creates a group.
-- Poll-based new-message detection (matching `Notification`'s own MVP choice) — no
-  WebSocket/SSE transport in this milestone; see Future Features below (Milestone
-  22's explicit job once DMs and notifications together justify building it).
+- New-message detection is realtime-pushed over SSE (implemented Milestone 22 — see
+  Feature 19 below; this was poll-based at this feature's own original Milestone 21
+  implementation, matching `Notification`'s then-current MVP choice).
 - Read receipts: a message's `readAt` is set once the other participant views the
   thread; the inbox surfaces this as a per-conversation unread count.
 - **Out of scope**: group chat (schema allows it, nothing implements it), message
@@ -306,6 +308,26 @@ original 17.
   (`DATABASE.md` §3.11), `POST /conversations`, `GET /conversations`, `GET
 /conversations/:id`, `GET /conversations/:id/messages`, `POST
 /conversations/:id/messages` (`API.md` §17).
+
+### 19. Realtime Transport (implemented Milestone 22)
+
+- Retrofits Feature 16's unread badge and Feature 18's new-message detection with a
+  real push transport: a connected client sees a new notification or message the
+  instant it happens, with no polling.
+- Server-Sent Events, not WebSocket — both consumers are purely server→client
+  pushes, nothing sends over the realtime channel itself (every mutation already
+  goes through the existing REST endpoints), so a one-directional transport is a
+  complete fit, not a compromise. Full reasoning: `ARCHITECTURE.md` §5.4.
+- REST stays authoritative: a client re-fetches the relevant REST endpoint on every
+  connect/reconnect to catch up on anything missed while disconnected, rather than
+  treating the stream as a guaranteed-delivery channel.
+- **Out of scope**: typing indicators, presence/online status, read-receipt push
+  (a message's `readAt` is still only visible on the next REST fetch of that
+  thread) — none of this milestone's two consumers need them, and adding them
+  would be the point to revisit SSE vs. WebSocket, not before.
+- Entities/endpoints: `GET /events` (`API.md` §18); no new database entities — the
+  pushed payload reuses `NotificationResponse`/`MessageResponse` verbatim
+  (`packages/validation/src/lib/realtime.ts`).
 
 ## Future Features (explicitly out of MVP)
 
@@ -327,11 +349,11 @@ For each, a note on how the current design avoids foreclosing it:
   captures "what happened" independent of delivery mechanism; adding push is adding a
   delivery channel (device token registration + a push provider) that consumes the same
   notification-creation events, not a redesign of notifications themselves.
-- **Real-time events** (live like/comment counts, live feed updates, instant DM
-  delivery): the API is REST-only by explicit non-goal; DMs (Milestone 21) and
-  notifications (Milestone 16) both ship poll-based for now. A future WebSocket/SSE
-  gateway (Milestone 22, once these two give it a second real consumer to justify
-  it) would sit alongside the REST API (Nest supports this natively via
-  `@nestjs/websockets`) and would primarily push the same domain events already
-  flowing through the background-job system/poll responses, rather than requiring a
-  new event model.
+- **Real-time events** (live like/comment counts, live feed updates): **notifications
+  and DM delivery are implemented in Milestone 22 — see "Post-MVP Features
+  (implemented)" Feature 19 above.** (This bullet originally described realtime as a
+  not-yet-designed future feature for those two; kept here, corrected, rather than
+  deleted.) Live like/comment counts on the feed/post-detail views remain out of
+  scope — nothing currently pushes those over the Milestone 22 SSE channel, and
+  extending it to them would be a new producer on the existing `EventsService`, not
+  a transport redesign.

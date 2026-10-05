@@ -24,6 +24,7 @@
     "react-native": "*",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.2",
+    "react-native-sse": "^1.2.1",
     "react-native-svg": "*",
     "react-native-svg-transformer": "*",
     "react-native-web": "*"

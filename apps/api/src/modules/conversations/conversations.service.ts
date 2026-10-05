@@ -17,6 +17,7 @@ import type {
 
 import { decodeCursor, encodeCursor } from '../../common/pagination/cursor';
 import { PrismaService } from '../../prisma/prisma.service';
+import { EventsService } from '../events/events.service';
 import { MediaService } from '../media/media.service';
 import {
   toConversationResponse,
@@ -36,6 +37,7 @@ export class ConversationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mediaService: MediaService,
+    private readonly eventsService: EventsService,
   ) {}
 
   /**
@@ -258,7 +260,14 @@ export class ConversationsService {
     return { data, meta: { nextCursor } };
   }
 
-  /** `POST /conversations/:id/messages` (docs/API.md §17). */
+  /**
+   * `POST /conversations/:id/messages` (docs/API.md §17). Also the
+   * realtime push point for `message` events (Milestone 22): emitted to
+   * every other participant (never back to the sender, who already has
+   * the message from this call's own response) after the row is
+   * committed, reusing the same `MessageResponse` this endpoint returns
+   * rather than a parallel "live" shape.
+   */
   async sendMessage(
     userId: string,
     conversationId: string,
@@ -277,7 +286,20 @@ export class ConversationsService {
       }),
     ]);
 
-    return toMessageResponse(message, this.mediaService);
+    const response = toMessageResponse(message, this.mediaService);
+
+    const recipients = await this.prisma.conversationParticipant.findMany({
+      where: { conversationId, userId: { not: userId } },
+      select: { userId: true },
+    });
+    for (const recipient of recipients) {
+      this.eventsService.emit(recipient.userId, {
+        type: 'message',
+        message: response,
+      });
+    }
+
+    return response;
   }
 
   /**

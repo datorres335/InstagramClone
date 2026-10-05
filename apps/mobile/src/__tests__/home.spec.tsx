@@ -20,6 +20,7 @@ jest.mock('../lib/api-client', () => ({
 jest.mock('../lib/auth-context', () => ({
   useAuth: jest.fn(),
 }));
+jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {

@@ -38,7 +38,10 @@ function createDeps() {
       create: jest.fn(),
       update: jest.fn(),
     },
-    conversationParticipant: { findUnique: jest.fn() },
+    conversationParticipant: {
+      findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     message: {
       findMany: jest.fn(),
       updateMany: jest.fn(),
@@ -53,11 +56,13 @@ function createDeps() {
   const mediaService = {
     resolveAvatarUrl: jest.fn().mockReturnValue(null),
   };
+  const eventsService = { emit: jest.fn() };
   const service = new ConversationsService(
     prisma as never,
     mediaService as never,
+    eventsService as never,
   );
-  return { service, prisma, mediaService };
+  return { service, prisma, mediaService, eventsService };
 }
 
 describe('ConversationsService', () => {
@@ -308,6 +313,41 @@ describe('ConversationsService', () => {
         }),
       );
       expect(result.body).toBe('hi');
+    });
+
+    it('pushes a message event to every other participant, not the sender', async () => {
+      const { service, prisma, eventsService } = createDeps();
+      prisma.conversation.findUnique.mockResolvedValue({ id: 'conv-1' });
+      prisma.conversationParticipant.findUnique.mockResolvedValue({
+        userId: 'user-1',
+      });
+      prisma.message.create.mockResolvedValue({
+        id: 'msg-1',
+        conversationId: 'conv-1',
+        body: 'hi',
+        readAt: null,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        sender: fakeSelf,
+      });
+      prisma.conversation.update.mockResolvedValue({});
+      prisma.conversationParticipant.findMany.mockResolvedValue([
+        { userId: 'user-2' },
+      ]);
+
+      await service.sendMessage('user-1', 'conv-1', 'hi');
+
+      expect(prisma.conversationParticipant.findMany).toHaveBeenCalledWith({
+        where: { conversationId: 'conv-1', userId: { not: 'user-1' } },
+        select: { userId: true },
+      });
+      expect(eventsService.emit).toHaveBeenCalledTimes(1);
+      expect(eventsService.emit).toHaveBeenCalledWith(
+        'user-2',
+        expect.objectContaining({
+          type: 'message',
+          message: expect.objectContaining({ body: 'hi' }),
+        }),
+      );
     });
   });
 

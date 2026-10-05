@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Post-MVP Features
-**Current Milestone:** Milestone 21 — Direct Messages (Foundation)
+**Current Milestone:** Milestone 22 — Realtime Transport (SSE)
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -252,6 +252,28 @@ relative order, confirmed by inspecting `messages` directly, not a logic bug in
 on the global default this time (`apps/web-e2e`'s parallel-worker Playwright run
 against one shared dev server/IP, with this milestone's own new requests added on
 top, tipped it over).
+
+Milestone 22 retrofits the two poll-based features above (`Notification`'s unread
+badge, M21's new-message detection) with a real push transport, decided — not
+assumed — to be Server-Sent Events over WebSocket: both consumers are purely
+server→client pushes, the client already mutates everything over existing REST
+endpoints, and SSE needed zero new backend dependencies (`@Sse()` ships in
+`@nestjs/common` already) versus three new ones for bidirectional capability
+nothing here uses. A new `GET /events` endpoint (`apps/api/src/modules/events`,
+`docs/API.md` §18) streams `RealtimeEvent`s — reusing `NotificationResponse`/
+`MessageResponse` verbatim rather than a parallel "live" shape — fanned out via an
+in-process RxJS `Subject`, the same single-instance MVP trade-off
+`NotificationsProcessor`/`ThrottlerModule` already make. Auth is the one place web
+and mobile genuinely diverge: mobile's `react-native-sse` client attaches a real
+`Authorization` header directly, the same as every other mobile request, while web
+— whose access token is never exposed to browser JS at all — proxies through a new
+`GET /api/events` Route Handler that holds the real Bearer token server-side and
+streams the response through, the same "Next server as the one trusted caller"
+shape every other web request already uses. `NotificationBadge`/`ConversationsList`/
+`MessageThread` (and their mobile equivalents) all apply a pushed event immediately
+when connected and re-fetch their own REST endpoint on every (re)connect, so REST
+stays authoritative and a client that was briefly disconnected is never silently
+wrong about what it missed.
 
 ---
 
@@ -1583,6 +1605,94 @@ IMPLEMENTATION_PLAN.md` M21/M22
       passed clean on standalone re-run, the same flake class already
       documented) + `api:test` (232/232) + `api-e2e:e2e` (150/150) +
       `web-e2e:e2e` --project=chromium (26/26, two consecutive clean runs) + `mobile:build` (Expo export, web/ios/android bundles)
+
+### Milestone 22 — Realtime Transport (SSE)
+
+- [x] **Decided SSE over WebSocket** (`docs/IMPLEMENTATION_PLAN.md` M22's explicit
+      instruction to decide, not assume): both real consumers (`Notification`'s
+      unread count, DM new-message detection) are purely server→client pushes, the
+      client already mutates everything over existing REST endpoints, and
+      `@Sse()` ships in `@nestjs/common` already — zero new backend dependencies,
+      versus `@nestjs/websockets` + `@nestjs/platform-socket.io` + `socket.io`
+      (three new ones) for bidirectional capability nothing here uses
+- [x] `packages/validation/src/lib/realtime.ts` — `realtimeEventSchema`, a
+      discriminated union on `type` (`notification` | `message`) reusing
+      `notificationResponseSchema`/`messageResponseSchema` verbatim rather than a
+      parallel "live" shape
+- [x] `apps/api/src/modules/events/` — new `EventsModule`: `EventsService` (an
+      in-process RxJS `Subject`, filtered per-subscriber by recipient id — the
+      same single-instance MVP fan-out trade-off `NotificationsProcessor`/
+      `ThrottlerModule` already make, not Redis pub/sub) and `EventsController`
+      (`GET /events`, `@Sse()`, guarded by the existing `JwtAuthGuard` — no new
+      auth mechanism needed, since both real callers can attach a genuine
+      `Authorization` header). A 20s heartbeat comment plus a forced ~10-minute
+      disconnect (comfortably inside the access token's 15-minute TTL) so a
+      revoked `tokenVersion` can't outlive an indefinitely-long-lived stream
+- [x] Wired `EventsService.emit()` into `NotificationsProcessor` (after writing a
+      `Notification` row — the same relations `GET /notifications` already
+      includes) and `ConversationsService.sendMessage` (to every other
+      participant, never the sender, after writing a `Message` row)
+- [x] `packages/api-client`: added a public `HttpClient.getAccessToken()` (a thin
+      wrapper over the existing private `ensureAccessToken()`) and exposed
+      `http: HttpClient` on `ApiClient`, so a caller needing a raw Bearer token
+      for a non-`fetch`-wrapper connection (web's proxy, mobile's SSE client) has
+      a real way to get one
+- [x] `apps/web/src/app/api/events/route.ts` — a Route Handler proxying the SSE
+      stream: reads the session cookie, mints/refreshes a real access token
+      server-side, and streams `apps/api`'s response body straight through. This
+      is the piece that exists specifically because this app's access token is
+      never exposed to browser JS at all — a browser-native `EventSource`
+      couldn't attach a credential to a direct-to-API connection even if it could
+      set headers
+- [x] `apps/web/src/lib/use-realtime-events.ts` — a small shared hook (one
+      `EventSource('/api/events')` per mounted caller, not a context provider:
+      this app never has two of `NotificationBadge`/`ConversationsList`/
+      `MessageThread` mounted on the same page at once, so a shared-connection
+      provider would be speculative infrastructure for a case that doesn't
+      exist). `NotificationBadge`/`ConversationsList`/`MessageThread` all
+      retrofitted: apply a pushed event immediately, re-fetch over REST on every
+      (re)connect
+- [x] `apps/mobile/src/lib/realtime.ts` — the mobile equivalent, connecting
+      directly to `apps/api`'s `GET /events` with a genuine `Authorization`
+      header via `react-native-sse` (`pnpm add`, not `expo install` — it's pure
+      JS/XMLHttpRequest-based, no native code, so no Expo SDK-version
+      compatibility concern applies). `NotificationBadge`/`MessagesScreen`/
+      `ConversationScreen` retrofitted the same way as web
+- [x] Tests: `EventsService` unit tests (recipient-filtered fan-out), an
+      `apps/api-e2e/src/events/events.spec.ts` integration test against the real
+      server (a connected client receives a pushed `message` event without
+      polling; never receives one back as the sender; a disconnected client
+      still catches up via REST), `HttpClient.getAccessToken()` unit tests,
+      `apps/web-e2e` live-push tests for both the notification badge and the
+      inbox/thread (no reload), and mobile unit tests for the realtime hook
+      itself plus all three retrofitted screens
+- [x] Raised `/auth/register`'s throttle 60 → 90 req/min/IP (`apps/api/src/modules/
+      auth/auth.controller.ts`) — the same "suite outgrew the shared budget"
+      pattern every earlier register-throttle increase followed; this milestone's
+      own `events.spec.ts` (6 registrations) pushed a real `429` on a full
+      `api-e2e` run
+- [x] Fixed a pre-existing WebKit/Firefox hydration-lag race in
+      `apps/web-e2e/src/direct-messages.spec.ts` (two `page.goto('/messages')` →
+      `.fill()` sequences, the same already-documented bug class as
+      `critical-path.spec.ts`/`follows.spec.ts`/`like-post.spec.ts`/
+      `search.spec.ts`) — found while running this milestone's own new tests on
+      WebKit, confirmed to reproduce identically on `main` before this
+      milestone's changes, fixed with the same established `waitForTimeout(500)`
+      remedy
+- [x] Updated `docs/ARCHITECTURE.md` (§1 non-goals, new §5.4, risk register
+      entries #12/#13), `docs/API.md` (new §18, §12/§17 poll→push corrections,
+      §1's register-throttle number), `docs/FEATURES.md` (new Feature 19,
+      Feature 16/18/Future-Features poll→push corrections), and
+      `docs/IMPLEMENTATION_PLAN.md` (M22's SSE-vs-WebSocket decision recorded)
+- [x] Full validation passing: `nx run-many -t lint test build` (26/28 tasks;
+      `mobile:test`'s pre-existing `comment-section.spec.tsx` flake and
+      `mobile:build`'s pre-existing Windows path-doubling bundler error both
+      confirmed, via a clean `git stash` re-run, to reproduce identically on
+      `main` before this milestone's changes — see Known Issues) + `api:test`
+      (236/236) + `api-e2e:e2e` (154/154, full suite including the new
+      `events.spec.ts`) + `web-e2e:e2e` --project=chromium (28/28) +
+      `web-e2e:e2e` --project=firefox/webkit (both 5/5 on the files this
+      milestone touched, including the WebKit fix above)
 
 ---
 
@@ -3242,6 +3352,95 @@ pnpm exec nx run-many -t lint test build --skip-nx-cache
 #   standalone re-run (112/112).
 ```
 
+### Milestone 22
+
+```bash
+pnpm nx test validation --skip-nx-cache
+pnpm nx test api-client --skip-nx-cache
+# ^ both clean (3 new realtime.spec.ts cases, 3 new getAccessToken cases)
+
+pnpm nx test api --skip-nx-cache   # 236/236 (new events.service.spec.ts +
+# notifications.processor.spec.ts/conversations.service.spec.ts emit
+# assertions)
+pnpm nx lint api --skip-nx-cache   # clean
+pnpm nx build api --skip-nx-cache
+# ^ first attempt failed: TS2322, the heartbeat MessageEvent's `data: null`
+#   isn't assignable to `string | object | undefined` (MessageEvent's own
+#   type, not something this codebase controls) — changed to `data: ''`.
+#   Clean on retry.
+
+docker compose up -d --wait postgres redis minio maildev && docker compose up minio-init
+pnpm exec nx run api-e2e:e2e --testPathPatterns=events.spec --skip-nx-cache
+# ^ 4/4 first pass: a connected client receives a pushed `message` event
+#   without polling, never receives one back as the sender, a disconnected
+#   client still catches up via REST, and an unauthenticated request 401s.
+pnpm exec nx run api-e2e:e2e --skip-nx-cache
+# ^ first full-suite run: 3 failed, all `AxiosError: 429` on
+#   `/auth/register` — this milestone's new `events.spec.ts` (6
+#   registrations) pushed real total usage past the existing 60/min
+#   shared budget, the identical "suite outgrew the limit" pattern every
+#   earlier register-throttle increase in this project's history has
+#   followed. Raised 60 -> 90 req/min/IP. Clean re-run: 21/21 suites,
+#   154/154 tests.
+
+pnpm exec tsc -p apps/mobile/tsconfig.app.json --noEmit   # clean
+pnpm nx lint mobile --skip-nx-cache   # clean
+pnpm nx test mobile --skip-nx-cache
+# ^ first pass: 5 failed (notification-badge/conversation-screen/home/
+#   messages-screen.spec.tsx) — all the same cause, each file's
+#   `jest.mock('../lib/api-client', ...)` predates this milestone and
+#   never mocked the new `.http.getAccessToken()` the realtime hook now
+#   calls on mount, so every test crashed with "Cannot read properties of
+#   undefined." Added `jest.mock('../lib/realtime', ...)` to each
+#   (plus a direct jest.mock('react-native-sse', ...) + a new
+#   realtime.spec.ts for the hook itself) and rewrote notification-badge's
+#   two polling-interval tests into event/reconnect-driven ones. Clean
+#   re-run: only the pre-existing comment-section.spec.tsx flake remained
+#   (confirmed via `git stash` against `main`: identical 1-failure result
+#   with none of this milestone's changes present — not a regression).
+
+pnpm exec nx run web:build --skip-nx-cache
+# ^ confirmed /api/events registered as a dynamic (ƒ) route
+pnpm nx lint web --skip-nx-cache   # clean
+pnpm nx test web --skip-nx-cache   # clean (no change — no component-level
+# unit tests exist for apps/web; the realtime retrofit is covered by the
+# web-e2e specs below instead)
+
+pnpm exec nx run web-e2e:e2e -- --grep "notifications|direct messages" --project=chromium
+# ^ 5/5 first pass, including both new live-push (no-reload) tests
+pnpm exec nx run web-e2e:e2e -- --grep "notifications|direct messages" --project=firefox
+# ^ 5/5 first pass
+pnpm exec nx run web-e2e:e2e -- --grep "notifications|direct messages" --project=webkit
+# ^ first run: 1 failed — direct-messages.spec.ts's "alice messages bob"
+#   test timed out on `.getByRole('button', { name: 'Chat' }).click()`,
+#   the button staying disabled forever. Confirmed via `git stash` against
+#   `main` that this is the already-documented WebKit/Firefox
+#   hydration-lag race (critical-path.spec.ts/follows.spec.ts/
+#   like-post.spec.ts/search.spec.ts already carry the same fix) —
+#   `main` fails this exact file on WebKit too (2/2), just never caught
+#   before since no prior milestone's WebKit run exercised this specific
+#   `goto('/messages')` -> `.fill('New message to')` sequence. Added the
+#   same established `page.waitForTimeout(500)` remedy at both goto/fill
+#   sites in the file. Clean re-run: 5/5.
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium
+# ^ 28/28, full suite
+pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=chromium --project=firefox
+# ^ 49 passed, 7 failed on firefox — all pre-existing flakes (comment-
+#   post/critical-path/follows x2/profile pre-fill/save-post/search),
+#   confirmed via `git stash` against `main` run under the identical
+#   full-suite parallel load (6 failed there, an overlapping but not
+#   identical set) — real, already-documented Turbopack-dev-server/
+#   parallel-worker contention flakiness, not a regression this milestone
+#   introduced.
+
+pnpm exec nx run-many -t lint test build --skip-nx-cache
+# ^ two failures: mobile:test (comment-section.spec.tsx, the same
+#   pre-existing flake above) and mobile:build (`expo export`, a Windows
+#   path-doubling bundler error: "Cannot resolve c:\C:\Users\...\_layout.
+#   tsx"). Both confirmed via `git stash` to reproduce byte-for-byte
+#   identically on `main` — neither is caused by this milestone's changes.
+```
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -4449,6 +4648,54 @@ corrections to the plan's own endpoint/schema sketch above, in `docs/API.md` §1
 and `docs/DATABASE.md` §3.11, not left as silent drift between the docs and the
 code.
 
+### Milestone 22
+
+- **A 20s heartbeat + forced ~10-minute disconnect on `GET /events`, beyond what
+  `docs/IMPLEMENTATION_PLAN.md` M22 specified** — found while designing the
+  controller, not in the original plan: without a heartbeat, an idle-but-healthy
+  connection looks dead to intermediary proxies; without a forced disconnect, a
+  revoked `tokenVersion` (`ARCHITECTURE.md` §7) would never actually close an
+  already-open stream, since `JwtAuthGuard` only runs once, at connect time. The
+  ~10-minute figure is deliberately well inside the access token's 15-minute TTL,
+  not an arbitrary round number.
+- **An in-process RxJS `Subject`, not Redis pub/sub, for fan-out** — the plan didn't
+  specify a mechanism; chosen to match this codebase's established "in-process is
+  fine for MVP single-instance scale" precedent (`NotificationsProcessor`,
+  `ThrottlerModule`'s in-memory storage) rather than introducing a new
+  infrastructure dependency for this milestone alone. Recorded as risk #12 in
+  `docs/ARCHITECTURE.md` §12.
+- **Web's auth uses a same-origin Route Handler proxy; mobile connects directly
+  with a real header** — the plan called for "its own equivalent to Bearer-header
+  auth" without specifying the shape per platform. Discovered, not assumed: a
+  browser's native `EventSource` can't set custom headers at all, and this app's
+  access token is never exposed to browser JS in the first place (only an httpOnly
+  refresh cookie), so web categorically needs a server-side intermediary; mobile's
+  `react-native-sse`, by contrast, genuinely supports custom headers, so the
+  simpler direct-connection shape was correct there instead of applying the proxy
+  pattern uniformly.
+- **`react-native-sse` added via `pnpm add`, not `pnpm exec expo install`** — it's
+  pure JS (XMLHttpRequest-based), no native module and so no Expo SDK-version
+  compatibility to resolve, unlike every other `apps/mobile` dependency added so
+  far; `expo install` would have been the wrong tool for a package with nothing
+  Expo-specific to pin.
+- **The seventh rate-limit increase in this project's history** — this milestone's
+  own `api-e2e` integration test (`events.spec.ts`, 6 registrations) pushed real
+  total `/auth/register` usage past the existing 60/min budget on a full-suite run,
+  the identical "suite outgrew the shared limit" pattern every earlier increase in
+  this history has followed. Raised 60 → 90 req/min/IP.
+- **Fixed a pre-existing WebKit/Firefox hydration-lag race in
+  `apps/web-e2e/src/direct-messages.spec.ts`, a file this milestone didn't
+  otherwise need to touch** — found running this milestone's own new tests on
+  WebKit (see Bugs Found below), not something this milestone set out to fix;
+  included because the established remedy was a one-line, already-proven fix
+  blocking a real WebKit run, not because this milestone's scope called for a
+  Direct Messages test sweep.
+
+None of Milestone 22's deviations contradict `docs/ARCHITECTURE.md`'s §5.4 design as
+now written or `docs/IMPLEMENTATION_PLAN.md`'s M22 scope — the heartbeat/disconnect
+details and fan-out mechanism are additions the plan left unspecified, not
+corrections to something it got wrong.
+
 ---
 
 ## Bugs Found and Fixed
@@ -5628,6 +5875,30 @@ dev`/`web-e2e` harness instead of Jest, and failing because that job
     explicit that this pass narrows the known-flaky set further without
     fully closing it.
 
+### Milestone 22
+
+77. **`/auth/register`'s 60/min/IP throttle ran out again, the seventh instance of
+    this exact pattern** — this milestone's own new `apps/api-e2e/src/events/
+    events.spec.ts` (6 registrations across 3 tests) pushed real total usage on a
+    full-suite run past the limit, producing a genuine `429` on `posts.spec.ts`'s
+    and `events.spec.ts`'s own `registerUser()` calls (confirmed via the actual
+    `AxiosError`, not a projection). Fixed by raising it to 90/min/IP — the same
+    "generous relative to what's measured today, not the bare minimum" reasoning
+    every earlier increase in this history recorded.
+78. **The same WebKit/Firefox hydration-lag race bugs #75/#76 already
+    root-caused, present in `apps/web-e2e/src/direct-messages.spec.ts` the whole
+    time, just never caught before this milestone's own WebKit run exercised that
+    exact file.** Symptom identical to bug #76's: `page.goto('/messages')`
+    immediately followed by `.getByLabel('New message to').fill(...)` left the
+    "Chat" submit button permanently disabled on WebKit, because `.fill()`'s input
+    event fired before React's `onChange` handler was attached post-navigation.
+    Confirmed via `git stash` that `main` fails this exact file on WebKit too
+    (2/2 of its tests that use this input), independent of any of this
+    milestone's changes — this bug predates Milestone 22 and simply had no prior
+    WebKit run against `direct-messages.spec.ts` to surface it. Fixed with the
+    same established `waitForTimeout(500)` remedy at both `goto`/`fill` sites in
+    the file; confirmed 5/5 clean on repeated WebKit runs afterward.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -5993,6 +6264,30 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   own validation sweep. Still not root-caused, still always clean on an immediate
   retry; worth treating as "expect to retry this specific test occasionally, on any
   invocation shape" going forward, not just inside `run-many` batches specifically.
+- **`mobile:build` (`expo export`) fails locally with a Windows path-doubling bundler
+  error** (`Cannot resolve c:\C:\Users\...\_layout.tsx`) — confirmed via `git stash`
+  to reproduce identically on `main`, independent of Milestone 22's changes, so this
+  predates this milestone and isn't something it introduced or should chase down.
+  Not root-caused; worth a real investigation (likely an `EXPO_PUBLIC_*`/Metro config
+  env-var or path-separator quirk specific to this dev machine) before relying on
+  `mobile:build` as a trustworthy CI gate on Windows runners.
+- **`EventsService`'s realtime fan-out is in-process RxJS, single-instance only**
+  (Milestone 22; `docs/ARCHITECTURE.md` §12 risk #12) — a client connected to one
+  `apps/api` process never sees an event emitted on another. Not a silent
+  correctness gap (REST re-fetch-on-reconnect covers it), but worth remembering
+  before `apps/api` is ever horizontally scaled; revisit with Redis pub/sub then.
+- **Mobile's SSE client reconnects with the `Authorization` header it was
+  constructed with, not a freshly-read token** (Milestone 22; `docs/ARCHITECTURE.md`
+  §12 risk #13) — `react-native-sse` auto-reconnects after the server's forced
+  ~10-minute disconnect using the same header object, unlike web's proxy route
+  (which re-authenticates on every reconnect). Accepted for MVP since the
+  disconnect window is comfortably inside the access token's 15-minute TTL and
+  ordinary app usage independently refreshes the stored token; a connection that
+  somehow outlives both will 401-loop on reconnect until the app makes any other
+  REST call or restarts. Not reproduced or tested against a real device this
+  milestone (no on-device SSE run happened, same limitation Milestone 7's mobile
+  auth entry already notes for this environment) — worth a real device/simulator
+  pass alongside that existing follow-up.
 
 ---
 
@@ -6123,7 +6418,13 @@ nullable `Message.readAt` rather than a per-participant read-receipt table
 (not per-route) throttle increase, and widening a Playwright test's synthetic
 delay to 1s to clear measured Docker Desktop clock jitter rather than relying on
 sub-tick DB timestamp ordering) are equally each decided and recorded above with
-rationale, not left open. Everything else recorded in
+rationale, not left open. Milestone 22's five deviations (the heartbeat/forced-
+disconnect design on `GET /events`, in-process RxJS over Redis for fan-out, the
+web-proxy-vs-mobile-direct auth split, adding `react-native-sse` via `pnpm add`
+rather than `expo install`, and the seventh register-throttle increase) are equally
+each decided and recorded above with rationale, not left open — including the
+WebSocket-vs-SSE choice itself, explicitly decided (not deferred) in
+`docs/IMPLEMENTATION_PLAN.md`'s M22 section. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -6134,90 +6435,102 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 22 — Realtime Transport (WebSocket/SSE)**: per
-`docs/IMPLEMENTATION_PLAN.md` M22, deliberately deferred until there were _two_ real
-poll-based consumers needing it — `Notification` (Milestone 16) and now `Message`
-(Milestone 21) both qualify, so this is the first milestone where building shared
-realtime infrastructure is justified by actual consumers rather than a single
-hypothetical one (the same "don't build it for one" discipline this codebase
-followed for `pg_trgm` until Milestone 17 actually needed it).
+**Milestone 22 — Realtime Transport (SSE) is now complete** (see Completed/
+Validation Performed/Deviations/Bugs Found above); the recommendation below is for
+Milestone 23, decided here per this project's own "the milestone that finishes is
+the point to decide what's next" convention (`docs/IMPLEMENTATION_PLAN.md` M20 set
+this precedent for M21; M22 doesn't have a pre-written successor in
+`docs/IMPLEMENTATION_PLAN.md` the way M21/M22 themselves did, so this decision is
+recorded here rather than as a correction to an existing plan entry).
 
-1. **Decide WebSocket vs. SSE before implementing** (`docs/IMPLEMENTATION_PLAN.md`
-   M22 flags this as a real decision, not a formality): SSE is plain HTTP, simpler to
-   add alongside the existing REST API, but one-directional — fine for "a new
-   message/notification arrived" pushes, not for anything needing the client to send
-   over the same channel. WebSocket (`@nestjs/websockets`, Nest's native support)
-   is bidirectional but a materially bigger surface (connection lifecycle,
-   reconnection, auth-on-upgrade). Re-derive which this codebase actually needs from
-   what Milestones 16/21 actually do (both are currently receive-only pushes from
-   the client's perspective — the client always sends via the existing REST
-   endpoints, never over the realtime channel itself) rather than assuming either.
-2. **Retrofit, don't replace**: `NotificationBadge`'s poll and `MessagesScreen`'s/
-   `ConversationsList`'s/`MessageThread`'s polls (`apps/web`'s 10s/5s intervals,
-   `apps/mobile`'s equivalents) should become push-driven, but the underlying data
-   shapes (`NotificationResponse`, `ConversationResponse`, `MessageResponse`) don't
-   need to change — this is a transport swap under already-correct response types,
-   not a new feature surface.
-3. **Auth on the realtime channel**: every existing endpoint uses `Authorization:
-Bearer <accessToken>` (docs/API.md §1); a WebSocket upgrade request or an SSE
-   connection needs its own equivalent (a short-lived token in the connection URL,
-   or the upgrade request's own headers if the transport allows it) — don't assume
-   the browser's existing httpOnly refresh cookie is usable here, since neither
-   WebSocket nor `EventSource` (the browser SSE client) lets JS attach custom
-   headers to the initial handshake the way `fetch` does.
-4. **Tests**: a client receiving a pushed event without needing to poll (the new
-   test shape this milestone introduces); a disconnected/reconnecting client still
-   catching up correctly (falling back to a REST fetch on reconnect, not assuming
-   zero missed events) — the first test of this specific "don't lose events across
-   a connection gap" property in this codebase.
+**Milestone 23 — Push Notifications.** Of `docs/FEATURES.md`'s remaining Future
+Features (Stories, Reels/video, push notifications), push is the one that builds
+most directly on what Milestone 22 just shipped rather than starting a new,
+unrelated subsystem: `NotificationsProcessor` already has the exact trigger point
+(the moment a `Notification` row is written) that a push-delivery side effect would
+hang off, the same way `EventsService.emit()` does today — this is "add a second
+consumer to an existing event" work, not a new producer. Stories/Reels are both
+real, standalone content-pipeline features (a new entity + expiry job, or video
+transcoding — a materially bigger background-job workload `ARCHITECTURE.md` risk #4
+already flags as excluded from this MVP's in-process job runner) with no dependency
+on anything Milestone 22 built; either is a reasonable milestone eventually, but
+push is the smaller, more natural next step given what's freshest in this codebase
+right now.
 
-Before starting it: re-read `docs/IMPLEMENTATION_PLAN.md`'s M22 section and
-`docs/ARCHITECTURE.md`'s non-goals note (REST-only "in the MVP") before assuming the
-whole API needs to change — this is additive, a new channel alongside the existing
-REST surface, not a REST-to-WebSocket migration. The workspace's global default
-throttle was just raised 100→200/min/IP this milestone (Milestone 21) specifically
-because `apps/web-e2e`'s parallel-worker run outgrew the previous limit — a
-WebSocket/SSE connection test file adds yet more concurrent load to that same shared
-budget; count real call sites before assuming headroom, the same discipline every
-throttle increase in this project's history has followed (six increases so far:
-`/auth/register` four times, `/auth/login`/`/auth/refresh` once, the global default
-once). For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"`
+1. **Decide the push provider and transport before implementing, the same
+   "don't assume, re-derive" discipline M22 followed for SSE vs. WebSocket**: web
+   push (the W3C Push API + a VAPID-keyed service worker) covers `apps/web`;
+   mobile needs Expo's push service (`expo-notifications` + Expo's push token/
+   delivery API, which itself proxies to FCM/APNs) rather than talking to FCM/APNs
+   directly, consistent with this codebase's "use the Expo-blessed path" precedent
+   for `expo-image-picker`/`expo-secure-store`. Both are genuinely different
+   integrations per platform — don't assume one shared push abstraction exists, the
+   way `TokenStorage` could be shared for auth; push delivery is platform-specific
+   by nature.
+2. **Device/subscription registration is new state, not a transport swap** (unlike
+   Milestone 22, which changed delivery mechanism under already-correct response
+   shapes): a new table is needed to store each user's push subscription(s) per
+   device (a web push subscription object, or an Expo push token) — decide the real
+   schema (`docs/DATABASE.md`'s own "decide the real schema before implementing"
+   discipline) before writing any migration, including whether one user can have
+   multiple registered devices (almost certainly yes — a phone and a laptop are
+   both plausible for the same account) and how a stale/revoked subscription gets
+   cleaned up (a failed push delivery is the natural signal to deregister it).
+3. **Retrofit the existing trigger point, don't duplicate notification logic**:
+   `NotificationsProcessor`'s `process()` (`apps/api/src/modules/notifications/
+notifications.processor.ts`) already runs once per real `Notification` row,
+   right where `EventsService.emit()` was added this milestone — a push-delivery
+   call belongs in the same place, as a second side effect of the same event, not
+   a parallel notification-detection path.
+4. **Respect the user being offline/backgrounded vs. actively connected**: a client
+   with an open SSE connection (Milestone 22) arguably doesn't need a push
+   notification for the same event — decide explicitly whether push fires
+   unconditionally (simpler, some redundant notifications for active users) or only
+   when no SSE connection is currently open for that user (correct UX, more
+   complex: `EventsService` would need to expose "is this user currently
+   connected," which it doesn't today). Don't assume either without deciding.
+5. **Tests**: a push payload actually gets sent/queued when a notification is
+   created (likely mocked at the provider boundary — this environment can't
+   receive a real push on a device any more than it could run mobile's SSE client
+   on real hardware this milestone, see Known Issues); a user with multiple
+   registered devices gets delivery attempted on all of them; a failed delivery to
+   a stale subscription deregisters it rather than retrying indefinitely.
+
+Before starting it: re-read `docs/FEATURES.md`'s Future Features push-notifications
+bullet and `docs/ARCHITECTURE.md` §12 risk register in full — nothing currently
+recorded there blocks this, but confirm that's still true once the actual schema
+decision (point 2 above) is made, the same "re-check the risk register against what
+was actually built" discipline Milestone 20's hardening pass established. The
+workspace's `/auth/register` throttle was just raised 60→90/min/IP this milestone
+specifically because `apps/api-e2e`'s shared per-run budget kept growing — count
+real new registration call sites before assuming headroom (seven increases so far:
+`/auth/register` five times, `/auth/login`/`/auth/refresh` once, the global default
+once), the same discipline every throttle increase in this project's history has
+followed. For any single-file `apps/web-e2e` Playwright run, use `--grep "<name>"`
 placed **after** the trailing `--` together with `--project=chromium` (e.g. `nx run
 web-e2e:e2e -- --grep "name" --project=chromium`), **never** `--testPathPatterns` and
 **never** `--grep=X` before a separate trailing `--` block — both of those silently
 either run the whole suite or drop the filter, confirmed four times now (Milestones
-14, 15, 16, and 17); the `-- --grep ... --project=...` combined form is the only one
-confirmed reliable. For `apps/api-e2e`, `--testPathPatterns=<name>` (Jest) works
+14, 15, 16, and 17). For `apps/api-e2e`, `--testPathPatterns=<name>` (Jest) works
 directly; vitest-based packages (`api-client`, `validation`) don't support that flag
-at all — run their full suite or use vitest's own `-t`/file-path filtering instead,
-confirmed this milestone. `apps/web-e2e`'s `webServer` starts `api:serve`
-automatically (Milestone 20) — the long-standing "start it manually first" step is
-gone; don't reintroduce it out of habit. Firefox/WebKit have a measured higher flake
-rate than Chromium (Milestone 18 bug #58, reconfirmed Milestones 20/21) and CI's own
+at all — run their full suite or use vitest's own `-t`/file-path filtering instead.
+`apps/web-e2e`'s `webServer` starts `api:serve` automatically (Milestone 20) — the
+long-standing "start it manually first" step is gone; don't reintroduce it out of
+habit. Firefox/WebKit have a measured higher flake rate than Chromium (Milestone 18
+bug #58, reconfirmed every milestone since, most recently #78 this one) and CI's own
 cross-browser job is explicitly non-blocking for exactly that reason — keep
-validating new `web-e2e` work with `--project=chromium` as the real gate, treating
-Firefox/WebKit runs as informational. Watch for the confirmed, open upstream Next.js
-`useActionState`/`redirect()` issue (`docs/ARCHITECTURE.md` §12 risk #11) if this
-milestone's own forms resubmit on the same page after a prior non-redirecting
-result — the known workaround is a `page.reload()` between attempts in tests, a real
-production fix is still unresolved upstream. If a Playwright test sends two
-timestamp-ordered writes from different request paths within less than ~1s of real
-wall-clock time, add an explicit gap between them rather than asserting on DB
-`createdAt` ordering directly — this dev box's Postgres container measured ~390ms of
-clock drift from the host (Milestone 21 bug #70), consistent with Docker Desktop's
-documented WSL2 clock-jitter on Windows. If `apps/api-e2e` needs to run while port
-3000 is occupied by something unrelated to this repo, both `global-setup.ts` and
-`test-setup.ts` already read `PORT`/`HOST` from the environment — prefix the command
-with `PORT=3100` (or any free port) rather than touching whatever else is bound to
-3000, and always confirm a process's identity (`Get-NetTCPConnection`/
-`Get-CimInstance`) before ever killing anything on that port — orphaned `api:serve`
-processes not reliably killing the forked child have recurred repeatedly across
-Milestones 18–21 (bugs #37/#43/#60/#67/#70) and are now a routine, expected check,
-not an occasional one — this is doubly true for Milestone 22, since a WebSocket
-server holds its listening socket open differently from a plain HTTP server and may
-need its own explicit shutdown verification. `.github/workflows/ci.yml` has now run
-on real GitHub Actions runners three times and failed three different ways (bugs
-#68, #72, #73, all fixed as of Milestone 21) before this milestone even starts —
-still not yet reconfirmed by an actual passing run as of this writing, so treat the
-infrastructure-startup steps as genuinely unproven until the next push comes back
-green, not as a solved problem to build on top of without watching.
+validating new `web-e2e` work with `--project=chromium` as the real gate, but this
+milestone's own bug #78 is a reminder that a file nobody has yet run on WebKit/
+Firefox can still be hiding the same already-known hydration-lag race; a quick
+`--project=webkit --grep "<new spec name>"` pass on any new Playwright file is cheap
+insurance before assuming Chromium-only coverage is sufficient. Watch for the
+confirmed, open upstream Next.js `useActionState`/`redirect()` issue
+(`docs/ARCHITECTURE.md` §12 risk #11) if this milestone's own forms resubmit on the
+same page after a prior non-redirecting result. `EventsService`'s realtime fan-out
+is single-instance/in-process (risk #12) and mobile's SSE client reconnects with a
+potentially-stale token (risk #13) — neither blocks push notifications, but worth
+knowing they exist if this milestone's own work touches either file. Always confirm
+a process's identity (`Get-NetTCPConnection`/`Get-CimInstance`) before ever killing
+anything on port 3000 — orphaned `api:serve` processes not reliably killing the
+forked child have recurred repeatedly (bugs #37/#43/#60/#67/#70) and are a routine,
+expected check by now, not an occasional one.

@@ -104,6 +104,17 @@ export class HttpClient {
     return this.send<TResponse, TBody>(method, path, { body, accessToken });
   }
 
+  /**
+   * A valid access token for callers that need to attach it themselves
+   * rather than go through `authorizedRequest` — e.g. opening an
+   * `EventSource`/SSE connection (Milestone 22), which needs a real
+   * `Authorization` header that neither `EventSource` nor the browser's
+   * httpOnly refresh cookie can provide on their own.
+   */
+  getAccessToken(): Promise<string> {
+    return this.ensureAccessToken();
+  }
+
   /** Mints a fresh access token from the stored refresh token and persists the result. */
   async refresh(): Promise<string> {
     const stored = await this.storage.read();

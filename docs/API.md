@@ -54,8 +54,9 @@ generated/written against (see `ARCHITECTURE.md` §6.2).
   signals under real traffic; see `docs/PROGRESS.md`'s Milestone 20 deviations) with
   stricter per-route limits on
   `/auth/login`, `/auth/refresh` (20 req/min/IP — raised from 10 in Milestone 20) and
-  `/auth/register` (60 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
-  in Milestone 12, then to 60 in Milestone 18) to slow credential-stuffing/
+  `/auth/register` (90 req/min/IP — raised from 10 to 20 in Milestone 9, then to 40
+  in Milestone 12, then to 60 in Milestone 18, then to 90 in Milestone 22) to slow
+  credential-stuffing/
   enumeration — implemented Milestone 5. Every one of these increases happened for
   the same reason: `apps/api-e2e`'s calls to these routes are a shared, per-run
   budget across every spec file against one long-lived server process, and the
@@ -88,6 +89,7 @@ Credentials: true`) enabled since the refresh cookie requires it.
 | Notifications    | `/api/v1/notifications`                                                                                     |
 | Account settings | `/api/v1/me`                                                                                                |
 | Conversations    | `/api/v1/conversations`, `/api/v1/conversations/:id`, `/api/v1/conversations/:id/messages`                  |
+| Realtime (SSE)   | `/api/v1/events`                                                                                            |
 | Health           | `/api/v1/health`                                                                                            |
 
 ## 3. Auth
@@ -366,8 +368,12 @@ utility (`explore-cursor.ts`) alongside the existing `cursor.ts`.
 | `GET /notifications/unread-count` | required | Cheap badge-count endpoint                                                                            |
 | `POST /notifications/mark-read`   | required | Body `{ notificationIds?: string[] }` — omit to mark all as read; `204`                               |
 
-MVP is poll-based (clients refetch `/notifications/unread-count` every 30s); no
-WebSocket/SSE transport (`ARCHITECTURE.md` non-goals). Every route is required-auth
+The unread badge is now realtime-pushed over §18's SSE channel (retrofitted in
+Milestone 22 — this was originally poll-based, per `ARCHITECTURE.md`'s now-revised
+non-goals): a pushed `notification` event increments it immediately, and the client
+still re-fetches the real count from `/notifications/unread-count` on every
+(re)connect so a missed push while disconnected is never silently wrong. Every route
+in this section is required-auth
 only — the same "no anonymous or other-viewer case exists" reasoning `GET /me/saved`
 already established (§10): a notification list only ever means "my own," so there's no
 optional-auth variant to support. `NotificationResponse` is `{ id, type, actor, post,
@@ -524,7 +530,57 @@ has its own visible badge via `unreadCount`, so there's no gap being silently
 deferred here the way likes/comments' notification side effect was in Milestones
 13/14.
 
-Poll-based new-message detection on both web and mobile (re-fetching the newest
-page and merging anything not already known by id) — matching `NotificationBadge`'s
-own MVP choice (`docs/ARCHITECTURE.md` non-goals); no WebSocket/SSE until Milestone
-22 gives that transport a second real consumer.
+New-message detection on both web and mobile is now realtime-pushed over §18's SSE
+channel rather than polled — retrofitted in Milestone 22, which gave that transport
+its second real consumer (alongside `NotificationBadge`'s unread count). Each
+client still re-fetches the newest page on every (re)connect, so a client that was
+briefly disconnected still catches up over REST rather than assuming zero missed
+messages.
+
+## 18. Realtime (SSE) (implemented Milestone 22)
+
+| Method & path | Auth     | Notes                                                                                                                        |
+| -------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `GET /events`  | required | `text/event-stream`, long-lived. Server closes it after ~10 minutes to force a reconnect; a 20s heartbeat comment keeps it from looking idle/dead to intermediary proxies in the meantime. |
+
+A retrofit, not a new feature surface: notifications (§12) and direct messages (§17)
+were the first two real consumers that both needed a server→client push, which is
+what made choosing a transport worth doing now rather than speculatively
+(`docs/ARCHITECTURE.md` §5.4 has the full WebSocket-vs-SSE reasoning). REST stays
+authoritative for everything — this channel never carries a client→server mutation,
+and every consumer re-fetches its own REST endpoint on connect/reconnect rather than
+trusting the stream for a complete history.
+
+Each `data:` line is one JSON-encoded `RealtimeEvent`
+(`packages/validation/src/lib/realtime.ts`), a discriminated union on `type`:
+
+```json
+{ "type": "notification", "notification": { /* NotificationResponse, §12 */ } }
+```
+
+```json
+{ "type": "message", "message": { /* MessageResponse, §17 */ } }
+```
+
+Both reuse their existing REST response shape verbatim rather than a parallel "live"
+type — every notification/message this MVP ever creates already has one real shape,
+so there's nothing to keep in sync between two representations of the same thing.
+
+Auth is the one place web and mobile genuinely diverge, because neither a browser's
+native `EventSource` nor mobile's `react-native-sse` drop-in can attach a header the
+way `fetch` can — except `react-native-sse` actually can:
+
+- **Mobile** connects to this endpoint directly with a real `Authorization: Bearer`
+  header, the same way every other mobile request already does.
+- **Web** cannot: the access token is never exposed to browser JS at all (§3 — only
+  an httpOnly refresh cookie). `apps/web`'s `GET /api/events` Route Handler proxies
+  this endpoint instead — it holds a real Bearer token server-side (the same "Next
+  server as a trusted caller" shape every other web request already uses) and
+  streams the response body straight through; the browser's `EventSource` connects
+  to that same-origin proxy route, never to `apps/api` directly.
+
+A connected client never needs to poll to learn about a new notification or message;
+a disconnected one (tab backgrounded past the ~10-minute server timeout, a dropped
+mobile connection, or simply the first page load before any stream exists) is still
+fully correct via the ordinary REST endpoints in §12/§17 — this is a latency
+optimization layered on top of REST, not a second source of truth.

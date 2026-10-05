@@ -16,16 +16,17 @@ import type { MessageResponse } from '@instagram-clone/validation';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
-
-const POLL_INTERVAL_MS = 5_000;
+import { useRealtimeEvents } from '../../lib/realtime';
 
 /**
- * The conversation thread (docs/API.md §17, docs/IMPLEMENTATION_PLAN.md
- * M21) — see `apps/web`'s `/messages/[id]` equivalent for the full
- * newest-first-query/chronological-render/poll-for-new-messages reasoning;
- * this screen mirrors it exactly, just as a `FlatList` (inverted, the
- * standard RN chat-list idiom: index 0 renders at the bottom) instead of a
- * plain `<ul>`.
+ * The conversation thread (docs/API.md §17/§18, docs/IMPLEMENTATION_PLAN.md
+ * M21/M22) — see `apps/web`'s `/messages/[id]` equivalent for the full
+ * newest-first-query/chronological-render reasoning; this screen mirrors it
+ * exactly, just as a `FlatList` (inverted, the standard RN chat-list idiom:
+ * index 0 renders at the bottom) instead of a plain `<ul>`. Also mirrors its
+ * realtime retrofit: a `message` event for this conversation is appended
+ * directly, while a stream (re)connect re-fetches the newest page to catch
+ * up on anything missed while disconnected.
  */
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -71,21 +72,31 @@ export default function ConversationScreen() {
     loadThread();
   }, [loadThread]);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const page = await apiClient.conversations.listMessages(id);
-        const fresh = page.data.filter((m) => !knownIds.current.has(m.id));
-        if (fresh.length > 0) {
-          fresh.forEach((m) => knownIds.current.add(m.id));
-          setMessages((prev) => [...prev, ...fresh]);
-        }
-      } catch {
-        // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
+  const refreshNewest = useCallback(async () => {
+    try {
+      const page = await apiClient.conversations.listMessages(id);
+      const fresh = page.data.filter((m) => !knownIds.current.has(m.id));
+      if (fresh.length > 0) {
+        fresh.forEach((m) => knownIds.current.add(m.id));
+        setMessages((prev) => [...prev, ...fresh]);
       }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    } catch {
+      // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
+    }
   }, [id]);
+
+  useRealtimeEvents(
+    (event) => {
+      if (event.type !== 'message' || event.message.conversationId !== id) {
+        return;
+      }
+      if (!knownIds.current.has(event.message.id)) {
+        knownIds.current.add(event.message.id);
+        setMessages((prev) => [...prev, event.message]);
+      }
+    },
+    refreshNewest,
+  );
 
   async function handleSend() {
     const trimmed = body.trim();
