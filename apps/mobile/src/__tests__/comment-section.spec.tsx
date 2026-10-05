@@ -133,13 +133,19 @@ describe('CommentSection', () => {
 
     fireEvent.press(screen.getByText('Delete'));
 
-    await waitFor(() => {
-      expect(apiClient.comments.remove).toHaveBeenCalledWith(
-        'post-1',
-        'comment-1',
-      );
-      expect(screen.queryByText(/Nice!/)).toBeNull();
-    });
+    // Explicit timeout: under parallel jest-worker load (CI's full
+    // `mobile:test` run) the post-await state update can land after
+    // waitFor's default 1s window. The assertions themselves are unchanged.
+    await waitFor(
+      () => {
+        expect(apiClient.comments.remove).toHaveBeenCalledWith(
+          'post-1',
+          'comment-1',
+        );
+        expect(screen.queryByText(/Nice!/)).toBeNull();
+      },
+      { timeout: 5_000 },
+    );
   });
 
   it('hides the comment form for an anonymous viewer', () => {
