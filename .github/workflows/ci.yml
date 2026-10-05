@@ -24,6 +24,11 @@ permissions:
 env:
   NODE_VERSION: '22'
   PNPM_VERSION: '12.6.0'
+  # nx's daemon and watch-mode `serve` tasks outlive the step that started
+  # them; in CI that leaves processes behind that can stall the job's
+  # post-run cleanup (see the cancelled Milestone 22 run). Run nx without
+  # the daemon, and stop any leftover servers explicitly below.
+  NX_DAEMON: 'false'
 
 jobs:
   main:
@@ -51,6 +56,7 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: pnpm install --frozen-lockfile
 
       - name: Derive Nx base/head for affected commands
@@ -86,12 +92,15 @@ jobs:
       # instead attaches to that one container and exits with *its own*
       # exit code once it stops — the correct signal for a one-shot job.
       - name: Start infrastructure (Postgres, Redis, MinIO)
+        timeout-minutes: 10
         run: docker compose up -d --wait postgres redis minio maildev
 
       - name: Initialize MinIO bucket
+        timeout-minutes: 5
         run: docker compose up minio-init
 
       - name: Apply database migrations
+        timeout-minutes: 5
         run: pnpm exec nx run prisma:migrate-deploy
 
       - name: Cache Playwright browsers
@@ -105,15 +114,19 @@ jobs:
       # real, measured higher flake rate in this environment). Real
       # cross-browser coverage runs as its own non-blocking job below.
       - name: Install Playwright (Chromium)
+        timeout-minutes: 10
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Lint affected
+        timeout-minutes: 10
         run: pnpm exec nx affected -t lint
 
       - name: Test affected
+        timeout-minutes: 10
         run: pnpm exec nx affected -t test
 
       - name: Build affected
+        timeout-minutes: 15
         run: pnpm exec nx affected -t build
 
       # Split into two steps, not one `nx affected -t e2e`, because
@@ -137,19 +150,31 @@ jobs:
       # (`nx show projects --with-target=e2e` → `api-e2e`, `web-e2e`),
       # excluding one always leaves the other as the only possible match.
       - name: API E2E (affected)
+        timeout-minutes: 12
         run: pnpm exec nx affected -t e2e --exclude=web-e2e
 
       - name: Web E2E — Chromium (affected)
+        timeout-minutes: 15
         run: pnpm exec nx affected -t e2e --exclude=api-e2e -- --project=chromium
+
+      - name: Stop app servers
+        if: always()
+        timeout-minutes: 2
+        run: |
+          pkill -f "nx run (api|web):" || true
+          pkill -f "next dev" || true
+          pkill -f "api:serve" || true
+          sudo fuser -k 3000/tcp 4200/tcp || true
 
       - name: Stop infrastructure
         if: always()
+        timeout-minutes: 5
         run: docker compose down -v
 
   cross-browser-e2e:
     name: Web E2E — ${{ matrix.project }} (non-blocking)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     continue-on-error: true
     strategy:
       fail-fast: false
@@ -203,8 +228,19 @@ jobs:
       # shared one long-lived local server (docs/PROGRESS.md's own Known
       # Issues entry) — no `--workers` tuning or sequencing trick needed.
       - name: Web E2E — ${{ matrix.project }}
+        timeout-minutes: 25
         run: pnpm exec nx run web-e2e:e2e --skip-nx-cache -- --project=${{ matrix.project }}
+
+      - name: Stop app servers
+        if: always()
+        timeout-minutes: 2
+        run: |
+          pkill -f "nx run (api|web):" || true
+          pkill -f "next dev" || true
+          pkill -f "api:serve" || true
+          sudo fuser -k 3000/tcp 4200/tcp || true
 
       - name: Stop infrastructure
         if: always()
+        timeout-minutes: 5
         run: docker compose down -v

@@ -18,7 +18,7 @@ export const dynamic = 'force-dynamic';
  * the one trusted caller holding a real Bearer token, just forwarding a
  * live stream instead of a single JSON response.
  */
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
   let accessToken: string;
   try {
     accessToken = await getApiClient().http.getAccessToken();
@@ -29,8 +29,12 @@ export async function GET(): Promise<Response> {
     throw error;
   }
 
+  // Tie the upstream connection to the browser's: without this, a closed
+  // EventSource leaves its API stream open until the server's own ~10-minute
+  // forced disconnect, one lingering connection per page navigation.
   const upstream = await fetch(`${env.NEXT_PUBLIC_API_URL}/events`, {
     headers: { Authorization: `Bearer ${accessToken}` },
+    signal: request.signal,
   });
 
   return new Response(upstream.body, {
