@@ -58,6 +58,21 @@ pnpm exec nx affected -t lint test build               # run a target across onl
 pnpm exec nx run <project>:<target>                    # run one target on one project
 ```
 
+## Pre-push Checks
+
+`pnpm install` enables a git `pre-push` hook (`.githooks/pre-push`) that runs CI's
+lint, test and build steps on the projects your push affects, and cancels the push
+if any of them fail. On Windows it skips `mobile:build` (known Nx path bug, see
+`docs/PROGRESS.md`); CI still builds mobile on Linux.
+
+```bash
+git push                    # lint + test + build (affected)
+PREPUSH_E2E=1 git push      # also run API and web (Chromium) e2e; needs docker compose up -d
+```
+
+In PowerShell, set the variable first: `$env:PREPUSH_E2E=1; git push`. The
+Firefox/WebKit e2e jobs are non-blocking in CI and aren't run by the hook.
+
 ## Repository Layout
 
 ```

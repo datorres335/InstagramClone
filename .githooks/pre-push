@@ -1,0 +1,48 @@
+#!/bin/sh
+# Runs the same checks as CI's "Lint, test, build" steps on the projects this
+# push affects, and aborts the push if any fail. Set PREPUSH_E2E=1 to also run
+# the e2e suites (needs `docker compose up -d` and a migrated database).
+
+export NX_TUI=false
+export NX_DAEMON=false
+
+zero=0000000000000000000000000000000000000000
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue # branch deletion, nothing to check
+
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "$remote_sha" 2>/dev/null; then
+    base=$remote_sha
+  else
+    base=$(git merge-base origin/main "$local_sha" 2>/dev/null)
+  fi
+
+  if [ -z "$base" ]; then
+    echo "pre-push: no base commit found, checking all projects"
+    affected="run-many"
+    range=""
+  else
+    affected="affected"
+    range="--base=$base --head=$local_sha"
+  fi
+
+  if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+    echo "pre-push: warning, checks run on your working tree, so uncommitted changes can change the result"
+  fi
+
+  # `nx run mobile:build` fails on Windows from a known Nx path bug
+  # (docs/PROGRESS.md Known Issues); CI still builds mobile on Linux.
+  build_exclude=""
+  case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) build_exclude="--exclude=mobile" ;; esac
+
+  echo "pre-push: checking $local_ref"
+  pnpm exec nx $affected -t lint test $range || exit 1
+  pnpm exec nx $affected -t build $range $build_exclude || exit 1
+
+  if [ "$PREPUSH_E2E" = "1" ]; then
+    pnpm exec nx $affected -t e2e $range --exclude=web-e2e || exit 1
+    pnpm exec nx $affected -t e2e $range --exclude=api-e2e -- --project=chromium || exit 1
+  fi
+done
+
+exit 0

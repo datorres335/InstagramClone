@@ -8,6 +8,9 @@
     "pnpm": ">=9.0.0"
   },
   "packageManager": "pnpm@12.6.0",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || exit 0"
+  },
   "devDependencies": {
     "@babel/runtime": "~7.27.6",
     "@eslint/js": "^9.8.0",

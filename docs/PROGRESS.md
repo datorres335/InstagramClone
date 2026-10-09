@@ -6559,7 +6559,38 @@ this precedent for M21; M22 doesn't have a pre-written successor in
 `docs/IMPLEMENTATION_PLAN.md` the way M21/M22 themselves did, so this decision is
 recorded here rather than as a correction to an existing plan entry).
 
-**Milestone 23 — Push Notifications.** Of `docs/FEATURES.md`'s remaining Future
+**Update (2026-10-09, project owner's request): the styling track comes next.**
+Milestones 23–26 style every web page and mobile screen consistently
+(`docs/IMPLEMENTATION_PLAN.md`'s "Styling Track", `docs/FEATURES.md` Feature 20).
+Push notifications, originally recommended as M23 below, moves to **Milestone 27**;
+its scoping notes are unchanged.
+
+**Milestone 23 — Design System Foundation, App Shells + Auth Screens.** Full scope in
+`docs/IMPLEMENTATION_PLAN.md` M23; decisions, component parity map and verified
+library versions in `docs/ARCHITECTURE.md` §5.5. Before writing code:
+
+1. **Reconfirm every version** in §5.5's library table against npm and each project's
+   docs (risk #9). In particular, check each new package's React peer range against
+   the workspace's forced `react@19.2.3` (`pnpm-workspace.yaml` `overrides`, see Known
+   Issues) and that every mobile addition runs in Expo Go for SDK 56 (risk #16).
+   Install mobile packages from `apps/mobile` with `pnpm exec expo install`.
+2. **Tailwind v3 (mobile) and v4 (web) must coexist** (risk #15). Pin v3 in
+   `apps/mobile/package.json`, keep v4 in the root `package.json`, and verify with
+   `pnpm --filter mobile why tailwindcss`, which is how the react 19.2.3/19.3.0 split
+   was caught.
+3. **Don't change any accessible name.** `apps/web-e2e` finds elements by label, role
+   and text (`getByLabel('Email')`, `getByRole('button', { name: 'Create account' })`,
+   `getByText(/Notifications \(\d+\)/)`, ...), and mobile tests use `getByLabelText`.
+   Restyle around those names rather than editing the tests.
+4. **Merge, don't replace**, `apps/mobile/metro.config.js`: it already configures the
+   SVG transformer, and NativeWind's `withNativeWind` wraps that config.
+5. Test at a phone-width web viewport and in Expo Go on the Android emulator side by
+   side, since visual parity is the point of this track. The emulator needs
+   `apps/mobile/.env`'s `10.0.2.2` API URL and the API bound to `127.0.0.1` (Known
+   Issues).
+
+**Milestone 27 — Push Notifications** (originally recommended as Milestone 23; moved
+behind the styling track, otherwise unchanged). Of `docs/FEATURES.md`'s remaining Future
 Features (Stories, Reels/video, push notifications), push is the one that builds
 most directly on what Milestone 22 just shipped rather than starting a new,
 unrelated subsystem: `NotificationsProcessor` already has the exact trigger point

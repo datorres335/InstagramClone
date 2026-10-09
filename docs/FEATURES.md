@@ -1,8 +1,9 @@
 # Features
 
-Functional specification for the 17 MVP features, one implemented post-MVP feature
-(Direct Messages, Milestone 21), plus explicit notes on how the architecture
-anticipates the remaining 4 post-MVP features. Each feature lists: summary, core
+Functional specification for the 17 MVP features, two implemented post-MVP features
+(Direct Messages, Milestone 21; Realtime Transport, Milestone 22), one planned
+post-MVP feature (Consistent Visual Design, Milestones 23–26), plus explicit notes on
+how the architecture anticipates the remaining future features. Each feature lists: summary, core
 requirements, explicit out-of-scope items (so scope creep during implementation has a
 written line to check against), and the primary entities/endpoints it touches (cross-
 referenced to `DATABASE.md` / `API.md`).
@@ -329,6 +330,37 @@ original 17.
   pushed payload reuses `NotificationResponse`/`MessageResponse` verbatim
   (`packages/validation/src/lib/realtime.ts`).
 
+## Post-MVP Features (planned)
+
+### 20. Consistent Visual Design (planned, Milestones 23–26)
+
+- Every web page and mobile screen gets a finished, Instagram-like visual design,
+  replacing today's unstyled HTML (web) and ad-hoc `StyleSheet`s (mobile).
+- **Web**: Material UI v9 components plus Tailwind CSS v4 for layout. **Mobile**: the
+  closest equivalents, React Native Paper v5 components plus NativeWind v4 (Tailwind
+  for React Native) for layout. The same Material icon set and the same font (Inter)
+  are used on both.
+- **As similar as possible across apps**: one `packages/design-tokens` package defines
+  every color, font size, spacing step and corner radius. Both apps build their themes
+  from it, and a fixed component parity map (`ARCHITECTURE.md` §5.5) pairs each UI
+  element with its MUI and Paper counterpart. Navigation still follows each platform's
+  convention: a left rail / bottom bar on web, a tab bar on mobile.
+- Requirements:
+  - An app shell with primary navigation (Home, Search, Explore, Messages,
+    Notifications with an unread badge, Create, Profile, Settings).
+  - Styled auth, feed, post, profile, explore, search, notification, saved, messages
+    and settings screens.
+  - Consistent loading, empty and error states.
+  - Visible focus states on web, touch targets of at least 48 dp on mobile, and WCAG
+    AA text contrast.
+- Behavior doesn't change. Every action, label and accessible name stays the same, so
+  existing end-to-end tests keep passing.
+- **Out of scope**: dark mode (the tokens are structured so it can be added later),
+  animations beyond the libraries' built-in ones, a shared web/mobile component
+  library (`ARCHITECTURE.md` §6), i18n/RTL layouts, and any new feature behavior.
+- Entities/endpoints: none. This is presentation only, with no database or API
+  changes.
+
 ## Future Features (explicitly out of MVP)
 
 For each, a note on how the current design avoids foreclosing it:
@@ -349,6 +381,7 @@ For each, a note on how the current design avoids foreclosing it:
   captures "what happened" independent of delivery mechanism; adding push is adding a
   delivery channel (device token registration + a push provider) that consumes the same
   notification-creation events, not a redesign of notifications themselves.
+  **Scheduled as Milestone 27**, after the styling track (Feature 20).
 - **Real-time events** (live like/comment counts, live feed updates): **notifications
   and DM delivery are implemented in Milestone 22 — see "Post-MVP Features
   (implemented)" Feature 19 above.** (This bullet originally described realtime as a
