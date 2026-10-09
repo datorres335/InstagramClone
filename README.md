@@ -22,6 +22,7 @@ pnpm install
 
 # 2. Copy env vars and adjust if needed
 cp .env.example .env
+cp apps/mobile/.env.example apps/mobile/.env   # Expo only reads .env from its own project root
 
 # 3. Start local infrastructure (Postgres, Redis, MinIO, Maildev)
 docker compose up -d
@@ -32,7 +33,7 @@ pnpm exec nx run prisma:generate
 # 5. Run apps
 pnpm exec nx run web:dev        # Next.js dev server
 pnpm exec nx run api:serve      # NestJS dev server
-cd apps/mobile && pnpm exec expo start   # Expo dev server
+pnpm --filter mobile exec expo start    # Expo dev server (works from any cwd)
 ```
 
 > **Why not `pnpm exec nx run mobile:start`?** On Windows, Nx cannot show Expo's
@@ -40,6 +41,13 @@ cd apps/mobile && pnpm exec expo start   # Expo dev server
 > limitation (pseudo-terminal support is disabled by default on Windows), not
 > something fixable in this repo's config. Run Expo directly instead, as shown
 > above. See `docs/PROGRESS.md`'s Known Issues for the full investigation.
+>
+> **Why `pnpm --filter mobile exec` instead of `cd apps/mobile &&`?** It runs
+> correctly no matter which directory you're already in (`cd apps/mobile` fails
+> if you're already there). It also only works because `apps/mobile/.env` exists
+> (step 2 above) — Expo loads `.env` from its own project root, not the repo
+> root's `.env`, which is also why running Expo this way (bypassing Nx) requires
+> its own copy of `EXPO_PUBLIC_API_URL`.
 
 ## Common Commands
 

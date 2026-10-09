@@ -6328,6 +6328,70 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   `apps/api` process never sees an event emitted on another. Not a silent
   correctness gap (REST re-fetch-on-reconnect covers it), but worth remembering
   before `apps/api` is ever horizontally scaled; revisit with Redis pub/sub then.
+- **Running Expo directly (`pnpm --filter mobile exec expo start`, the workaround
+  above) requires its own `apps/mobile/.env`** — Expo's native env loading only
+  reads `.env`/`.env.local` from its own project root, never the monorepo root's
+  `.env`. When `mobile:start` ran through Nx, Nx itself injected the root `.env`
+  into every task's environment, which masked this; bypassing Nx for the pty
+  workaround above silently lost that injection and surfaced as
+  `EnvValidationError: EXPO_PUBLIC_API_URL must be a valid URL` the first time
+  someone actually ran the documented workaround end to end. Fixed by adding
+  `apps/mobile/.env.example` (committed) and `apps/mobile/.env` (gitignored, same
+  convention as the root) with `EXPO_PUBLIC_API_URL`. `apps/web` has the identical
+  structural gap (no local `.env`, relies on Nx's injection) but hasn't hit this in
+  practice since nothing bypasses Nx for `web:dev` — worth remembering if that ever
+  changes. Also replaced the README's `cd apps/mobile && pnpm exec expo start` with
+  `pnpm --filter mobile exec expo start`, since the former fails with a confusing
+  path error (`Cannot find path '...\apps\mobile\apps\mobile'`) if run from a shell
+  already inside `apps/mobile`; the `pnpm --filter` form works from any cwd.
+  The mobile default is `http://10.0.2.2:3000/api/v1`, not `localhost`: inside the
+  Android emulator `localhost` is the emulator itself, so signup failed with the
+  generic "Something went wrong" (a network error, not an `ApiError`).
+  `10.0.2.2` is the emulator's alias for the host's IPv4 loopback only. With
+  `HOST=localhost`, Node on this machine bound the API to IPv6 `::1` alone
+  (`Get-NetTCPConnection` showed `::1:3000`, and `127.0.0.1:3000` refused), so the
+  emulator's requests hung on "Creating account…" forever. `.env.example` now
+  uses `HOST=127.0.0.1`; clients that call `localhost` (browsers, Next.js, Node
+  22's `fetch`, the e2e suites) try both address families, so they still connect.
+  `packages/api-client` has no request timeout, which is why this showed up as an
+  endless spinner instead of an error; worth adding one separately. A physical
+  phone needs the PC's LAN IP plus the API bound to `0.0.0.0`;
+  `apps/mobile/.env.example` lists every target.
+- **Running the mobile app via Expo Go threw `Incompatible React versions: react
+  19.3.0 vs react-native-renderer 19.2.3` on Android, plus a follow-on `TypeError:
+  Cannot read property 'default' of undefined`** — `react-native@0.85.3` bundles a
+  renderer compiled against an exact React minor (`peerDependencies.react:
+  "^19.2.3"`); the workspace root's loose `"react": "^19.0.0"` had floated up to
+  19.3.0 (a real, published point release), which is semver-compatible on paper but
+  not binary-compatible with react-native's vendored renderer in practice. Fixed by
+  pinning `react`/`react-dom` to the exact `19.2.3` in the root `package.json`
+  (`apps/mobile`'s own `package.json` deliberately uses `"react": "*"` — the
+  Nx-generated convention of treating the root version as the single source of
+  truth), plus the same exact pin for `react-test-renderer` (devDependency; has the
+  identical must-match-react-exactly constraint). That alone wasn't enough, though:
+  `apps/mobile`'s `"*"` wildcard let pnpm resolve a *different* react peer group to
+  19.3.0 for its own tree regardless of the root pin (confirmed via `pnpm --filter
+  mobile why react`), so a workspace-wide `overrides` block was added to
+  `pnpm-workspace.yaml` (pnpm 10+ moved `overrides` out of `package.json`'s `pnpm`
+  key, which is silently ignored now — the `pnpm` field warns `"no longer read"` on
+  install) forcing every consumer to the same exact `react`/`react-dom`/
+  `react-test-renderer`. Verified via `pnpm --filter mobile why react` (single
+  19.2.3 resolution), 121 mobile + 9 web unit tests passing, and a successful
+  `expo export --platform android` bundle; not verified on-device (no physical
+  Android reachable from this environment) — worth a real Expo Go re-test to
+  confirm the runtime error is actually gone, not just the version resolution.
+- **Expo Go (the consumer app on a physical device) only ever supports the single
+  latest Expo SDK, and auto-updates itself independently of this repo** — this
+  project is pinned to Expo SDK 56 (`expo@56.0.22`), so a phone whose Expo Go has
+  auto-updated to SDK 57 gets `Project is incompatible with this version of Expo
+  Go` and refuses to load the bundle. This is a real version mismatch, not a bug in
+  this repo's config, and isn't fixed by anything above. Two standard remedies:
+  install an older, SDK-56-pinned Expo Go build on the device (the quick, zero-risk
+  option — Expo publishes per-SDK download links, e.g. `expo.dev/go?sdkVersion=56`;
+  this is the option in use here), or upgrade the whole project to SDK 57 (bumps
+  `expo` and every `expo-*` dependency, likely touches native config, needs a full
+  re-test — a real undertaking, not attempted this pass since the quick remedy was
+  chosen instead).
 - **Mobile's SSE client reconnects with the `Authorization` header it was
   constructed with, not a freshly-read token** (Milestone 22; `docs/ARCHITECTURE.md`
   §12 risk #13) — `react-native-sse` auto-reconnects after the server's forced

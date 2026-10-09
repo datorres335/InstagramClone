@@ -22,3 +22,12 @@ allowBuilds:
 minimumReleaseAgeExclude:
   - '@aws-sdk/client-s3@3.1142.0'
   - '@aws-sdk/s3-request-presigner@3.1142.0'
+# react-native@0.85.3's bundled renderer is version-locked to react@19.2.3
+# (peerDependencies pins ^19.2.3, but newer 19.x minors still throw
+# "Incompatible React versions" at runtime) — force every consumer in the
+# workspace to resolve the exact same react/react-dom/react-test-renderer,
+# overriding any individual package's looser semver range.
+overrides:
+  react: 19.2.3
+  react-dom: 19.2.3
+  react-test-renderer: 19.2.3
