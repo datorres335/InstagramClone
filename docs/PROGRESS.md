@@ -6264,13 +6264,65 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   own validation sweep. Still not root-caused, still always clean on an immediate
   retry; worth treating as "expect to retry this specific test occasionally, on any
   invocation shape" going forward, not just inside `run-many` batches specifically.
-- **`mobile:build` (`expo export`) fails locally with a Windows path-doubling bundler
-  error** (`Cannot resolve c:\C:\Users\...\_layout.tsx`) — confirmed via `git stash`
-  to reproduce identically on `main`, independent of Milestone 22's changes, so this
-  predates this milestone and isn't something it introduced or should chase down.
-  Not root-caused; worth a real investigation (likely an `EXPO_PUBLIC_*`/Metro config
-  env-var or path-separator quirk specific to this dev machine) before relying on
-  `mobile:build` as a trustworthy CI gate on Windows runners.
+- **`mobile:build` (`expo export`, run via `nx run mobile:build`) fails on this
+  Windows dev machine with a path-doubling bundler error** (`Cannot resolve
+  c:\C:\Users\...\_layout.tsx` — a literal `c:\` prepended onto an already-absolute
+  `C:\...` path). Confirmed via `git stash` to reproduce identically on `main`,
+  independent of Milestone 22's changes — predates that milestone, not something it
+  introduced.
+
+  **Narrowed down (not fully root-caused) after a real investigation**: the bug is
+  specific to invoking `expo export` *through Nx's `nx:run-commands` executor* —
+  running the identical command directly (`cd apps/mobile; pnpm exec expo export
+  --clear`) succeeds cleanly every time, for every platform (iOS/Android/web, tested
+  individually and together). The `--platform` flags themselves are **not** the fix —
+  an earlier belief that they were turned out to be a false positive from testing
+  that accidentally bypassed Nx's wrapper entirely; this was caught and reverted
+  before being treated as a real fix.
+
+  The likely trigger: Nx's `run-commands` executor rewrites the child process's
+  `PATH` before spawning (via the `npm-run-path` package, so a bare `expo` resolves
+  without needing `pnpm exec` — see `processEnv` in `nx/dist/src/executors/
+  run-commands/running-tasks.js`), which calls `path.resolve(cwd, process.execPath,
+  '..')` to locate the Node binary's own folder. On this machine, Node is managed by
+  `nvm4w` (`process.execPath` → `C:\nvm4w\nodejs\node.exe`), a version-switching tool
+  with its own path indirection. Something in that specific combination — Nx's PATH
+  rewrite plus an `nvm4w`-managed Node install — appears to feed Metro's
+  `require.context` resolver (the mechanism `expo-router`'s file-based routing uses
+  to enumerate `src/app/**`) a path it then double-prefixes. Not traced further than
+  this without instrumenting Metro's own internals, which isn't worth it given the
+  impact below.
+
+  **Confirmed non-blocking for real app builds**: `nx run mobile:build-eas`
+  (`@nx/expo:build`, i.e. EAS Build) runs on Expo's own cloud infrastructure, which
+  does its own bundling independent of this machine's local Node/PATH setup — this
+  bug cannot follow it there. `nx run mobile:build` itself is a local, offline
+  static-bundle export (mainly useful for OTA updates), not something App
+  Store/Play Store shipping depends on. If a local export is ever needed, run it
+  directly rather than through Nx: `cd apps/mobile; pnpm exec expo export --clear`.
+  Worth a real fix only if `mobile:build` is ever relied on as a CI gate on a
+  Windows runner specifically (unlikely, since CI runs on Ubuntu — see
+  `.github/workflows/ci.yml`).
+- **`nx run mobile:start` cannot show Expo's interactive CLI menu (the `i`/`a`/`w`
+  keyboard shortcuts) on Windows — this is a confirmed upstream Nx limitation, not a
+  config problem in this repo.** Investigated exhaustively: neither `pnpm exec` vs.
+  invoking `nx.cmd`/`nx.js` directly, the Nx daemon on/off (`NX_DAEMON`), nor Nx's
+  Terminal UI on/off (`NX_TUI`) changed anything — every variant produced the same
+  signature (`stdin.isTTY: true`, `stdout.isTTY: undefined` on the spawned task,
+  confirmed via a file-based diagnostic to rule out terminal-rendering red herrings
+  like Nx's TUI using an alternate screen buffer that discards console output on
+  exit). Root-caused to `supportedPtyPlatform()` in `nx/dist/src/tasks-runner/
+  pseudo-terminal.js`, which **unconditionally disables pseudo-terminal support on
+  Windows** unless the undocumented `NX_WINDOWS_PTY_SUPPORT=true` environment
+  variable is set, citing an open upstream issue with control-character handling
+  (nrwl/nx#22358). **Do not set that variable** — confirmed firsthand that it
+  reproduces exactly the bug the Nx maintainers warned about: the terminal session
+  stopped responding to Ctrl+C/Esc/`q` entirely and had to be killed via "Kill
+  Terminal" in VS Code. There is no working opt-in on this platform/Nx version. The
+  practical workaround, and the one actually in use: run Expo directly, bypassing
+  Nx's process wrapper — `cd apps/mobile; pnpm exec expo start`. `apps/mobile/
+  project.json` intentionally has no custom `start` target (reverted back to the
+  inferred `@nx/expo:start` default) since no Nx-level configuration can fix this.
 - **`EventsService`'s realtime fan-out is in-process RxJS, single-instance only**
   (Milestone 22; `docs/ARCHITECTURE.md` §12 risk #12) — a client connected to one
   `apps/api` process never sees an event emitted on another. Not a silent

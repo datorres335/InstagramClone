@@ -32,8 +32,14 @@ pnpm exec nx run prisma:generate
 # 5. Run apps
 pnpm exec nx run web:dev        # Next.js dev server
 pnpm exec nx run api:serve      # NestJS dev server
-pnpm exec nx run mobile:start   # Expo dev server
+cd apps/mobile && pnpm exec expo start   # Expo dev server
 ```
+
+> **Why not `pnpm exec nx run mobile:start`?** On Windows, Nx cannot show Expo's
+> interactive CLI menu (the `i`/`a`/`w` shortcuts) — this is a confirmed upstream Nx
+> limitation (pseudo-terminal support is disabled by default on Windows), not
+> something fixable in this repo's config. Run Expo directly instead, as shown
+> above. See `docs/PROGRESS.md`'s Known Issues for the full investigation.
 
 ## Common Commands
 
