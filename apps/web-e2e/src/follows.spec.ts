@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -56,6 +57,8 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await expect(page.getByText('0 followers')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Follow' })).toBeVisible();
 
+    await waitForHydration(page.getByRole('button', { name: 'Follow' }));
+
     await page.getByRole('button', { name: 'Follow' }).click();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();
     await expect(page.getByText('1 followers')).toBeVisible();
@@ -72,6 +75,8 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await page.reload();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();
     await expect(page.getByText('1 followers')).toBeVisible();
+
+    await waitForHydration(page.getByRole('button', { name: 'Unfollow' }));
 
     await page.getByRole('button', { name: 'Unfollow' }).click();
     await expect(
@@ -112,6 +117,7 @@ test.describe('follows: follow/unfollow from a profile', () => {
     const otherPage = await otherContext.newPage();
     const otherFollower = await registerThroughUi(otherPage);
     await otherPage.goto(`/${target.username}`);
+    await waitForHydration(otherPage.getByRole('button', { name: 'Follow' }));
     await otherPage.getByRole('button', { name: 'Follow' }).click();
     await expect(
       otherPage.getByRole('button', { name: 'Unfollow' }),
@@ -120,11 +126,13 @@ test.describe('follows: follow/unfollow from a profile', () => {
 
     await loginThroughUi(page, viewer);
     await page.goto(`/${target.username}`);
+    await waitForHydration(page.getByRole('button', { name: 'Follow' }));
     await page.getByRole('button', { name: 'Follow' }).click();
     // Same `router.refresh()`-vs-navigation race as above — settle before
     // navigating away.
     await page.waitForTimeout(500);
     await page.goto(`/${otherFollower.username}`);
+    await waitForHydration(page.getByRole('button', { name: 'Follow' }));
     await page.getByRole('button', { name: 'Follow' }).click();
     await expect(page.getByRole('button', { name: 'Unfollow' })).toBeVisible();
     // Same `router.refresh()`-vs-navigation race as above — settle before

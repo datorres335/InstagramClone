@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 const API_BASE_URL = 'http://localhost:3000/api/v1';
@@ -41,7 +42,7 @@ test.describe('direct messages: start a conversation, send a message, see a repl
     // `.fill()`'s input event can fire before React attaches `onChange`
     // right after a hard navigation, leaving the controlled input (and so
     // the submit button) stuck in its initial disabled state.
-    await page.waitForTimeout(500);
+    await waitForHydration(page.getByLabel('New message to'));
     await page.getByLabel('New message to').fill(bobCredentials.username);
     await page.getByRole('button', { name: 'Chat' }).click();
     await page.waitForURL(/\/messages\/.+/);
@@ -144,7 +145,7 @@ test.describe('direct messages: start a conversation, send a message, see a repl
 
     await page.goto('/messages');
     // Same WebKit/Firefox hydration-lag race as the test above.
-    await page.waitForTimeout(500);
+    await waitForHydration(page.getByLabel('New message to'));
     await page.getByLabel('New message to').fill(alice.username);
     await page.getByRole('button', { name: 'Chat' }).click();
 

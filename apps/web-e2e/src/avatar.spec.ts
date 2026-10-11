@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -40,6 +41,7 @@ test.describe('profile: avatar upload', () => {
     const image = await fakePng();
 
     await page.goto('/profile/edit');
+    await waitForHydration(page.getByLabel('Change photo'));
     await page.getByLabel('Change photo').setInputFiles({
       name: 'avatar.png',
       mimeType: 'image/png',
@@ -67,6 +69,7 @@ test.describe('profile: avatar upload', () => {
     await registerThroughUi(page);
 
     await page.goto('/profile/edit');
+    await waitForHydration(page.getByLabel('Change photo'));
     await page.getByLabel('Change photo').setInputFiles({
       name: 'not-an-image.txt',
       mimeType: 'text/plain',

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -43,6 +44,7 @@ test.describe('likes: like a post from the feed', () => {
 
     const image = await fakePng();
     await authorPage.goto('/posts/new');
+    await waitForHydration(authorPage.getByLabel('Photos'));
     await authorPage.getByLabel('Photos').setInputFiles({
       name: 'like-test.png',
       mimeType: 'image/png',
@@ -71,6 +73,8 @@ test.describe('likes: like a post from the feed', () => {
     await expect(viewerPage.getByText('like me please')).toBeVisible();
     await expect(viewerPage.getByText('0 likes')).toBeVisible();
 
+    await waitForHydration(viewerPage.getByRole('button', { name: 'Like' }));
+
     await viewerPage.getByRole('button', { name: 'Like' }).click();
     await expect(
       viewerPage.getByRole('button', { name: 'Unlike' }),
@@ -84,10 +88,16 @@ test.describe('likes: like a post from the feed', () => {
     ).toBeVisible();
     await expect(viewerPage.getByText('1 likes')).toBeVisible();
 
+    await waitForHydration(viewerPage.getByRole('button', { name: 'Unlike' }));
+
     await viewerPage.getByRole('button', { name: 'Unlike' }).click();
     await expect(
       viewerPage.getByRole('button', { name: 'Like', exact: true }),
     ).toBeVisible();
     await expect(viewerPage.getByText('0 likes')).toBeVisible();
+
+    // Open signed-in pages each hold an `/api/events` stream; see
+    // critical-path.spec.ts for why leaving them open breaks later tests.
+    await Promise.all([authorContext.close(), viewerContext.close()]);
   });
 });

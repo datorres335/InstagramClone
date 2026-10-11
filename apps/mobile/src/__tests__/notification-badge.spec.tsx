@@ -76,4 +76,30 @@ describe('NotificationBadge', () => {
       expect(screen.getByText('Notifications (5)')).toBeTruthy(),
     );
   });
+
+  it('keeps a push that arrives while the re-fetch is still in flight', async () => {
+    let resolveFetch: (value: { count: number }) => void = () => undefined;
+    jest.mocked(apiClient.notifications.getUnreadCount).mockReturnValue(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    render(<NotificationBadge initialCount={0} />);
+
+    const [onEvent, onConnect] = jest.mocked(useRealtimeEvents).mock.calls[0];
+    // The re-fetch reads the count (0) just before the notification lands...
+    act(() => {
+      onConnect?.();
+    });
+    // ...then the push for that notification arrives first...
+    act(() => {
+      onEvent({ type: 'notification', notification: fakeNotification });
+    });
+    // ...and the stale re-fetch result must not erase it.
+    await act(async () => {
+      resolveFetch({ count: 0 });
+    });
+
+    expect(screen.getByText('Notifications (1)')).toBeTruthy();
+  });
 });

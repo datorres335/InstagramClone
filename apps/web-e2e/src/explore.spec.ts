@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -47,6 +48,7 @@ test.describe('explore: the explore page loads with content', () => {
 
     const image = await fakePng();
     await authorPage.goto('/posts/new');
+    await waitForHydration(authorPage.getByLabel('Photos'));
     await authorPage.getByLabel('Photos').setInputFiles({
       name: 'explore-test.png',
       mimeType: 'image/png',
@@ -68,5 +70,9 @@ test.describe('explore: the explore page loads with content', () => {
       viewerPage.getByRole('heading', { name: 'Explore' }),
     ).toBeVisible();
     await expect(viewerPage.locator('img').first()).toBeVisible();
+
+    // Open signed-in pages each hold an `/api/events` stream; see
+    // critical-path.spec.ts for why leaving them open breaks later tests.
+    await Promise.all([authorContext.close(), viewerContext.close()]);
   });
 });

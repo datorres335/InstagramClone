@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -29,6 +30,9 @@ test.describe('search: find and navigate to a user via search', () => {
     const targetContext = await browser.newContext();
     const targetPage = await targetContext.newPage();
     const target = await registerThroughUi(targetPage);
+    // Only needed to create the account. Open signed-in pages each hold an
+    // `/api/events` stream; see critical-path.spec.ts.
+    await targetContext.close();
 
     const viewerContext = await browser.newContext();
     const viewerPage = await viewerContext.newPage();
@@ -39,8 +43,10 @@ test.describe('search: find and navigate to a user via search', () => {
     // `onChange`) can lag behind Playwright's `fill()` call right after a
     // fresh hard navigation — the fill dispatches its input event before
     // React has claimed the node, so the debounced search never fires
-    // (see critical-path.spec.ts for the full explanation). Settle first.
-    await viewerPage.waitForTimeout(500);
+    // (see support/hydration.ts).
+    await waitForHydration(
+      viewerPage.getByPlaceholder('Search by username or name'),
+    );
     await viewerPage
       .getByPlaceholder('Search by username or name')
       .fill(target.username);
@@ -52,12 +58,18 @@ test.describe('search: find and navigate to a user via search', () => {
     await expect(
       viewerPage.getByRole('heading', { name: target.username }),
     ).toBeVisible();
+
+    await viewerContext.close();
   });
 
   test('shows no results for a query matching nobody', async ({ page }) => {
     await registerThroughUi(page);
 
     await page.goto('/search');
+    // Same hydration race as the test above (this one had no settle at all
+    // and started failing on WebKit once the M23 app shell made hydration
+    // slower).
+    await waitForHydration(page.getByPlaceholder('Search by username or name'));
     await page
       .getByPlaceholder('Search by username or name')
       .fill('zzznomatchzzznomatch');

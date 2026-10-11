@@ -4,7 +4,7 @@ import FavoriteIcon from '@mui/icons-material/Favorite';
 import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
 import Badge from '@mui/material/Badge';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useRealtimeEvents } from '../../lib/use-realtime-events';
 import { NavLink } from './nav-link';
@@ -14,9 +14,22 @@ interface NotificationBadgeProps {
   initialCount: number;
 }
 
-function refreshCount(setCount: (count: number) => void) {
+type SetCount = (update: (current: number) => number) => void;
+
+/**
+ * Re-fetches the real count. A push that lands while this request is in
+ * flight may not be in the result yet (the count can be read just before the
+ * notification row is written), so if any push arrived meanwhile, the larger
+ * value wins instead of the possibly stale result overwriting it.
+ */
+function refreshCount(setCount: SetCount, pushes: { current: number }) {
+  const pushesAtStart = pushes.current;
   getUnreadNotificationCountAction()
-    .then(setCount)
+    .then((fetched) =>
+      setCount((current) =>
+        pushes.current === pushesAtStart ? fetched : Math.max(fetched, current),
+      ),
+    )
     .catch(() => {
       // Silently ignored — this is a non-critical convenience number,
       // not worth surfacing an error for.
@@ -37,6 +50,7 @@ function refreshCount(setCount: (count: number) => void) {
  */
 export function NotificationBadge({ initialCount }: NotificationBadgeProps) {
   const [count, setCount] = useState(initialCount);
+  const pushes = useRef(0);
   const pathname = usePathname();
 
   useEffect(() => {
@@ -45,9 +59,11 @@ export function NotificationBadge({ initialCount }: NotificationBadgeProps) {
 
   useRealtimeEvents(
     (event) => {
-      if (event.type === 'notification') setCount((prev) => prev + 1);
+      if (event.type !== 'notification') return;
+      pushes.current += 1;
+      setCount((prev) => prev + 1);
     },
-    () => refreshCount(setCount),
+    () => refreshCount(setCount, pushes),
   );
 
   const withBadge = (icon: React.ReactNode) => (

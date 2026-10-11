@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -40,6 +41,7 @@ test.describe('comments: comment on a post', () => {
 
     const image = await fakePng();
     await page.goto('/posts/new');
+    await waitForHydration(page.getByLabel('Photos'));
     await page.getByLabel('Photos').setInputFiles({
       name: 'comment-test.png',
       mimeType: 'image/png',

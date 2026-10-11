@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -41,6 +42,7 @@ test.describe('saved posts: save a post and find it in the saved list', () => {
 
     const image = await fakePng();
     await page.goto('/posts/new');
+    await waitForHydration(page.getByLabel('Photos'));
     await page.getByLabel('Photos').setInputFiles({
       name: 'save-test.png',
       mimeType: 'image/png',
@@ -61,6 +63,8 @@ test.describe('saved posts: save a post and find it in the saved list', () => {
     // Reload to prove it's persisted server-side, not just local button state.
     await page.reload();
     await expect(page.getByText('save me for later')).toBeVisible();
+
+    await waitForHydration(page.getByRole('button', { name: 'Unsave' }));
 
     await page.getByRole('button', { name: 'Unsave' }).click();
     // `exact: true` — a plain 'Save' substring-matches the 'Unsave' button

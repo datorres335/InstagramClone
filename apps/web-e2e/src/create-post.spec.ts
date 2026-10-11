@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -44,6 +45,7 @@ test.describe('posts: create with multiple images', () => {
     ]);
 
     await page.goto('/posts/new');
+    await waitForHydration(page.getByLabel('Photos'));
     await page.getByLabel('Photos').setInputFiles([
       { name: 'photo-a.png', mimeType: 'image/png', buffer: imageA },
       { name: 'photo-b.png', mimeType: 'image/png', buffer: imageB },

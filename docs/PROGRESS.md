@@ -1781,8 +1781,13 @@ IMPLEMENTATION_PLAN.md` M21/M22
       #79/#80 below), which also resolves the documented `comment-post`
       reload flake (bug #46) and the `profile.spec.ts` "pre-fills" flake; plus
       bugs #81 (MUI labels after a form reset) and #82 (a second Reanimated)
+- [x] Follow-up after the first CI run (WebKit job failed): `waitForHydration`
+      e2e helper replacing fixed hydration sleeps, leaked browser contexts
+      closed, and the badge's refresh-vs-push race fixed on both platforms
+      (bugs #83–#85). Re-validated with CI's settings: `web-e2e` 30/30 on
+      WebKit ×2, Firefox, Chromium ×2 (one worker) and Chromium in parallel
 - [x] Updated `docs/ARCHITECTURE.md` (§2, §3, §3.2, §5.4, §5.5 now implemented,
-      §6, risks #11/#14–#16), `docs/IMPLEMENTATION_PLAN.md` (M23 record),
+      §6, risks #11/#14–#17), `docs/IMPLEMENTATION_PLAN.md` (M23 record),
       `docs/FEATURES.md` (Feature 20 progress), `README.md` (repository layout)
 
 ---
@@ -6133,6 +6138,36 @@ dev`/`web-e2e` harness instead of Jest, and failing because that job
     the 4.3.1 that Expo SDK 56 and Expo Go ship. Added `pnpm-workspace.yaml`
     overrides pinning `react-native-reanimated` 4.3.1 and `react-native-worklets`
     0.8.3, the same mechanism as the React pin; the lockfile no longer has 4.7.0.
+83. **CI's WebKit job failed after the M23 push (2/2 runs): `explore`, `like-post` and
+    `search` dropped input made before React hydrated the page.** Reproduced locally
+    with CI's settings (`--project=webkit --workers=1`): 3/30 failed. A probe
+    showed `/posts/new`'s file input still unhydrated when `goto()` returned, with
+    hydration landing ~200–350ms later. M23's shell (MUI, Emotion, the nav) made
+    every page's hydration slower, so `goto()` → `setInputFiles()`/`fill()`
+    sequences with no wait started losing the input, and the fixed
+    `waitForTimeout(500)` settles elsewhere were already marginal. Added
+    `apps/web-e2e/src/support/hydration.ts` (`waitForHydration(locator)`, which
+    polls for the `__reactProps$…` key React DOM sets on each hydrated element) and
+    used it before every file upload, the search fills, and the client-side
+    Follow/Unfollow/Like/Unlike/Unsave clicks. It also replaced the five 500ms
+    hydration settles in `critical-path`, `direct-messages` and `search`.
+84. **Leaked browser contexts starved WebKit's connection pool.** With the race above
+    fixed, `follows.spec.ts` still failed on WebKit in every full run but passed
+    alone; `critical-path` + `explore` + `follows` alone reproduced it.
+    `critical-path`, `explore`, `like-post` and `search` opened extra contexts with
+    `browser.newContext()` and never closed them. Since M23 every signed-in page
+    holds an `/api/events` stream, and WebKit shares its ~6-connections-per-host
+    HTTP/1.1 pool across contexts, so five leftover pages plus the current one left
+    no slot for `followAction`'s request. Those specs now close their contexts.
+    (Before M23 only `/home` and the messages pages opened a stream, so the same
+    leaks were harmless.)
+85. **The unread badge could drop a pushed notification.** The re-fetch that runs
+    when the stream (re)connects could read the count just before a notification
+    row was written, and if that row's push arrived first, the late, stale result
+    reset the badge to 0. Seen once as a Chromium failure of `notifications.spec.ts`'s
+    live-badge test. Both badges (web shell, mobile) now count pushes during the
+    re-fetch and keep the larger value if any arrived; a new mobile unit test fails
+    without the fix and passes with it. This predates M23 (Milestone 22 code).
 
 ---
 
@@ -6666,6 +6701,13 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   React Native's peers (the same split React Native itself has here). Both copies
   register the same font names with `expo-font`, so it's harmless; not worth an
   override.
+- **Each open tab holds one HTTP connection to `apps/web` for its `/api/events`
+  stream** (every signed-in page since M23). Browsers allow ~6 HTTP/1.1
+  connections per host, so with about six signed-in tabs open, further requests
+  from that browser queue behind the streams. `next dev` is HTTP/1.1, so this can
+  happen locally; a production deployment should serve `apps/web` over HTTP/2,
+  which multiplexes streams over one connection. In tests, close any extra
+  browser context when done with it (bug #84). See `docs/ARCHITECTURE.md` risk #17.
 - **`apps/mobile/tsconfig.spec.json` doesn't type-check cleanly**: an implicit-`any`
   in `src/test-setup.ts` and a tuple-destructuring error in
   `conversation-screen.spec.tsx`, both predating M23. Jest compiles through Babel,
@@ -6839,7 +6881,12 @@ so this is screen work:
    `Follow`/`Unfollow`) as `aria-label`/`accessibilityLabel`. When a test waits for
    an action, assert something only true once it has finished: a cleared field,
    `exact: true` on toggled names, an exact URL (bugs #79/#80). Remember that
-   `getByText` also matches `<textarea>` contents.
+   `getByText` also matches `<textarea>` contents. After any `goto()`/`reload()`,
+   call `waitForHydration(locator)` (`apps/web-e2e/src/support/hydration.ts`)
+   before typing into, uploading to or clicking a client-side control, never a
+   fixed `waitForTimeout` (bug #83). Close every extra `browser.newContext()` when
+   the test is done with it (bug #84). Validate new specs the way CI runs them:
+   `--project=webkit --workers=1` as well as Chromium.
 3. **Mobile home cleanup:** the home screen's header still carries its own "New
    post"/"Notifications" links, a notification badge and a Log out button (Known
    Issues). Decide where each belongs now that the tab bar exists: a tab badge for

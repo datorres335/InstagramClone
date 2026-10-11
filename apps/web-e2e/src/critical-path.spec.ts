@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import sharp from 'sharp';
 
+import { waitForHydration } from './support/hydration';
 import { randomRegisterInput } from './support/random-user';
 
 async function registerThroughUi(page: Page) {
@@ -87,6 +88,7 @@ test.describe('critical path: one continuous journey across every feature', () =
 
     // ---- upload avatar ----
     await authorPage.goto('/profile/edit');
+    await waitForHydration(authorPage.getByLabel('Change photo'));
     await authorPage.getByLabel('Change photo').setInputFiles({
       name: 'avatar.png',
       mimeType: 'image/png',
@@ -98,6 +100,7 @@ test.describe('critical path: one continuous journey across every feature', () =
 
     // ---- create a post ----
     await authorPage.goto('/posts/new');
+    await waitForHydration(authorPage.getByLabel('Photos'));
     await authorPage.getByLabel('Photos').setInputFiles({
       name: 'post.png',
       mimeType: 'image/png',
@@ -117,6 +120,9 @@ test.describe('critical path: one continuous journey across every feature', () =
     const follower = await registerThroughUi(followerPage);
 
     await followerPage.goto(`/${author.username}`);
+    await waitForHydration(
+      followerPage.getByRole('button', { name: 'Follow' }),
+    );
     await followerPage.getByRole('button', { name: 'Follow' }).click();
     await expect(
       followerPage.getByRole('button', { name: 'Unfollow' }),
@@ -137,6 +143,7 @@ test.describe('critical path: one continuous journey across every feature', () =
     await expect(followerPage.getByText('My critical-path post')).toBeVisible();
 
     // ---- like, from the feed ----
+    await waitForHydration(followerPage.getByRole('button', { name: 'Like' }));
     await followerPage.getByRole('button', { name: 'Like' }).click();
     await expect(
       followerPage.getByRole('button', { name: 'Unlike' }),
@@ -150,9 +157,7 @@ test.describe('critical path: one continuous journey across every feature', () =
     // the fill dispatches its input event before React has claimed the
     // node, so the controlled `body` state never updates and the Post
     // button (disabled while `!body.trim()`) stays disabled forever.
-    // Chromium/Firefox didn't show this (hydrates fast enough in
-    // practice); a short settle avoids depending on that margin.
-    await followerPage.waitForTimeout(500);
+    await waitForHydration(followerPage.getByLabel('Add a comment'));
     await followerPage.getByLabel('Add a comment').fill('Nice post!');
     await followerPage
       .getByRole('button', { name: 'Post', exact: true })
@@ -177,12 +182,12 @@ test.describe('critical path: one continuous journey across every feature', () =
     await registerThroughUi(strangerPage);
 
     await strangerPage.goto('/search');
-    // Same WebKit hydration-lag-after-fresh-navigation race as the comment
-    // step above — `SearchBox`'s `onChange` isn't attached yet when
-    // `fill()`'s input event fires, so its debounced search never kicks
-    // off. First reached under WebKit only after the comment-step fix
-    // above stopped masking it.
-    await strangerPage.waitForTimeout(500);
+    // Same hydration race as the comment step above — `SearchBox`'s
+    // `onChange` isn't attached yet when `fill()`'s input event fires, so
+    // its debounced search never kicks off.
+    await waitForHydration(
+      strangerPage.getByPlaceholder('Search by username or name'),
+    );
     await strangerPage
       .getByPlaceholder('Search by username or name')
       .fill(author.username);
@@ -251,5 +256,15 @@ test.describe('critical path: one continuous journey across every feature', () =
       password: 'NewPassword456!',
     });
     await authorPage.waitForURL('/home');
+
+    // Close every context this test opened. Each signed-in page holds an
+    // open `/api/events` stream, and WebKit shares its ~6-per-host HTTP/1.1
+    // connection pool across contexts, so pages left open here starve later
+    // tests' requests when the suite runs on one worker (CI).
+    await Promise.all([
+      authorContext.close(),
+      followerContext.close(),
+      strangerContext.close(),
+    ]);
   });
 });
