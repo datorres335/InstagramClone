@@ -1,5 +1,4 @@
-import Link from 'next/link';
-
+import { AuthCard } from '../auth-card';
 import { LoginForm } from './login-form';
 
 export const metadata = {
@@ -8,12 +7,13 @@ export const metadata = {
 
 export default function LoginPage() {
   return (
-    <main>
-      <h1>Log in</h1>
+    <AuthCard
+      title="Log in"
+      footerText="Don't have an account?"
+      footerLinkText="Create one"
+      footerHref="/register"
+    >
       <LoginForm />
-      <p>
-        Don&apos;t have an account? <Link href="/register">Create one</Link>
-      </p>
-    </main>
+    </AuthCard>
   );
 }

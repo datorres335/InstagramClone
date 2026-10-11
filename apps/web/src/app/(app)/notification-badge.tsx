@@ -1,42 +1,67 @@
 'use client';
 
-import Link from 'next/link';
-import { useState } from 'react';
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
+import Badge from '@mui/material/Badge';
+import { usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 
 import { useRealtimeEvents } from '../../lib/use-realtime-events';
+import { NavLink } from './nav-link';
 import { getUnreadNotificationCountAction } from './notification-badge-actions';
 
 interface NotificationBadgeProps {
   initialCount: number;
 }
 
+function refreshCount(setCount: (count: number) => void) {
+  getUnreadNotificationCountAction()
+    .then(setCount)
+    .catch(() => {
+      // Silently ignored — this is a non-critical convenience number,
+      // not worth surfacing an error for.
+    });
+}
+
 /**
- * The unread badge (docs/API.md §12/§18, docs/FEATURES.md #16). Retrofits
- * Milestone 16's poll-based count with Milestone 22's realtime push:
- * increments optimistically the instant a `notification` event arrives,
- * and re-fetches the real count over REST on every (re)connect to stay
- * correct even if a push was missed while disconnected.
+ * The Notifications nav entry with its unread badge (docs/API.md §12/§18,
+ * docs/FEATURES.md #16). Increments optimistically the instant a realtime
+ * `notification` event arrives and re-fetches the real count on every
+ * (re)connect. It lives in the persistent app shell (Milestone 23), which
+ * doesn't re-render on client-side navigation, so it resets itself when
+ * /notifications opens (that screen marks everything read).
+ *
+ * Deliberately no re-fetch on every navigation: Next runs a client's Server
+ * Actions one at a time, so a count refresh fired on each page change would
+ * sit in front of whatever the user does next on that page.
  */
 export function NotificationBadge({ initialCount }: NotificationBadgeProps) {
   const [count, setCount] = useState(initialCount);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    if (pathname === '/notifications') setCount(0);
+  }, [pathname]);
 
   useRealtimeEvents(
     (event) => {
       if (event.type === 'notification') setCount((prev) => prev + 1);
     },
-    () => {
-      getUnreadNotificationCountAction()
-        .then(setCount)
-        .catch(() => {
-          // Silently ignored — this is a non-critical convenience number,
-          // not worth surfacing an error for.
-        });
-    },
+    () => refreshCount(setCount),
+  );
+
+  const withBadge = (icon: React.ReactNode) => (
+    <Badge badgeContent={count} color="error" max={99}>
+      {icon}
+    </Badge>
   );
 
   return (
-    <Link href="/notifications">
-      Notifications{count > 0 ? ` (${count})` : ''}
-    </Link>
+    <NavLink
+      href="/notifications"
+      label={`Notifications${count > 0 ? ` (${count})` : ''}`}
+      icon={withBadge(<FavoriteBorderIcon />)}
+      activeIcon={withBadge(<FavoriteIcon />)}
+    />
   );
 }

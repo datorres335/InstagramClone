@@ -15,6 +15,8 @@ module.exports = {
     '^@instagram-clone/validation$': '<rootDir>/../../packages/validation/src/index.ts',
     '^@instagram-clone/config$': '<rootDir>/../../packages/config/src/index.ts',
     '^@instagram-clone/types$': '<rootDir>/../../packages/types/src/index.ts',
+    '^@instagram-clone/design-tokens$':
+      '<rootDir>/../../packages/design-tokens/src/index.ts',
   },
   transform: {
     '[.][jt]sx?$': [

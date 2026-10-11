@@ -29,6 +29,9 @@
       "@instagram-clone/types": ["./packages/types/src/index.ts"],
       "@instagram-clone/validation": ["./packages/validation/src/index.ts"],
       "@instagram-clone/config": ["./packages/config/src/index.ts"],
+      "@instagram-clone/design-tokens": [
+        "./packages/design-tokens/src/index.ts"
+      ],
       "@instagram-clone/api-client": ["./packages/api-client/src/index.ts"],
       // The generated Prisma Client (`prisma generate`, gitignored — see
       // prisma/schema.prisma's generator block) — Prisma 7's TypeScript

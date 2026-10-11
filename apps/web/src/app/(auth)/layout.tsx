@@ -10,5 +10,9 @@ export default async function AuthLayout({
 }) {
   const user = await getApiClient().auth.session();
   if (user) redirect('/home');
-  return <>{children}</>;
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-surface px-4 py-10">
+      {children}
+    </div>
+  );
 }

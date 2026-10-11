@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { ConversationsList } from './conversations-list';
@@ -20,7 +19,6 @@ export default async function MessagesPage() {
   return (
     <main>
       <h1>Messages</h1>
-      <Link href="/home">Back to home</Link>
       <StartConversationForm />
       <ConversationsList
         initialConversations={conversations.data}

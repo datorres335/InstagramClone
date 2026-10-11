@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Post-MVP Features
-**Current Milestone:** Milestone 22 — Realtime Transport (SSE)
+**Current Milestone:** Milestone 23 — Design System Foundation, App Shells + Auth Screens
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -274,6 +274,24 @@ shape every other web request already uses. `NotificationBadge`/`ConversationsLi
 when connected and re-fetch their own REST endpoint on every (re)connect, so REST
 stays authoritative and a client that was briefly disconnected is never silently
 wrong about what it missed.
+
+Milestone 23 starts the styling track (Milestones 23–26, `docs/IMPLEMENTATION_PLAN.md`).
+A new `packages/design-tokens` package is now the single source of every color, type
+size, spacing step, radius and layout width, with unit tests that check WCAG AA
+contrast for each text/background pair. `apps/web` builds an MUI v9 theme and Tailwind
+v4's `@theme` from it, with MUI's styles in a CSS layer below Tailwind's utilities;
+`apps/mobile` builds a React Native Paper v5 theme and a NativeWind v4 (Tailwind v3)
+config from the same values, and both apps use Inter and the same Material icon set.
+Web gained a real app shell, `(app)/layout.tsx`: one responsive navigation that is a
+left rail on desktop and an icon-only bottom bar on phones, matching mobile's newly
+styled tab bar, plus a simple Log in / Sign up bar for logged-out visitors on public
+pages. Login and register are restyled on both platforms. Moving the notification
+badge into the persistent shell led to two real changes: web's realtime hook now
+shares one `EventSource` through a `RealtimeProvider` (Milestone 22 opened one per
+caller), and four `web-e2e` specs had latent races where an assertion could pass
+before a Server Action finished. Fixing those also explained the long-standing
+"unexplained" `comment-post`/`profile` pre-fill flakes (bug #46 and the Milestone 20
+known issues). No API, database or validation changes.
 
 ---
 
@@ -1693,6 +1711,79 @@ IMPLEMENTATION_PLAN.md` M21/M22
       `events.spec.ts`) + `web-e2e:e2e` --project=chromium (28/28) +
       `web-e2e:e2e` --project=firefox/webkit (both 5/5 on the files this
       milestone touched, including the WebKit fix above)
+
+### Milestone 23 — Design System Foundation, App Shells + Auth Screens
+
+- [x] Confirmed versions before installing (`docs/IMPLEMENTATION_PLAN.md` Principle
+      5), checked against Next 16.3, Expo SDK 56 / React Native 0.85.3 and the
+      workspace's forced `react@19.2.3`: `@mui/material`/`@mui/material-nextjs`/
+      `@mui/icons-material` 9.5.0, `@emotion/react` 11.14.0, `@emotion/styled`
+      11.14.1, `@emotion/cache` 11.14.0, `tailwindcss` + `@tailwindcss/postcss`
+      4.3.3, `@fontsource-variable/inter` 5.3.0 (root, for web);
+      `react-native-paper` 5.15.3, `nativewind` 4.2.7, `react-native-css-interop`
+      0.2.7, `tailwindcss` 3.4.19, `react-native-reanimated` 4.3.1,
+      `react-native-worklets` 0.8.3, `expo-font` 56.0.7, `@expo-google-fonts/inter`
+      0.4.2 (`apps/mobile/package.json`, via `pnpm exec expo install` where Expo
+      pins a version)
+- [x] `packages/design-tokens` (new, `scope:shared`/`type:util`, no runtime
+      dependencies): semantic `colors` (light palette behind a `ColorTokens`
+      interface, so a dark palette can be added later), `fontFamily`,
+      `fontWeight`, `typography`, `spacingUnit`, `radii`, `iconSize`, `layout`.
+      18 unit tests, including WCAG AA checks (4.5:1 text, 3:1 controls/icons) for
+      every pair the palette defines
+- [x] Web theming: `src/theme/theme.ts` (MUI theme from tokens, breakpoints
+      aligned to Tailwind's `md`), `src/theme/token-css-variables.ts` (emits the
+      tokens as `--ig-*` custom properties in the root layout's `<head>`),
+      `global.css` replaced (the Nx placeholder styles are gone): `@layer theme,
+      base, mui, components, utilities`, `@import 'tailwindcss'`, and an `@theme
+      inline` block mapping Tailwind's names onto the `--ig-*` variables.
+      `AppRouterCacheProvider` with `enableCssLayer` + `ThemeProvider` in the root
+      layout; Inter self-hosted through `next/font/local`
+- [x] Web shell: `(app)/layout.tsx` (new), `app-nav.tsx`, `nav-link.tsx`,
+      `logout-action.ts` (moved out of `home/actions.ts`). One `<nav
+      aria-label="Primary">` that's a left rail at `md`+ and an icon-only bottom bar
+      below it, with Settings/Log out at the bottom of the rail or the top-right
+      of the phone top bar. Signed-out visitors on public pages (profiles, posts,
+      search, follower lists) get a Log in / Sign up bar instead. The notification
+      badge moved from `/home` into the shell, and the home page's ad-hoc links and
+      the "Back to home" links on four pages were removed
+- [x] Web realtime: `src/lib/use-realtime-events.tsx` now has a
+      `RealtimeProvider` (mounted in the signed-in shell) that owns the single
+      `EventSource('/api/events')`; `useRealtimeEvents` keeps its signature and
+      subscribes to it. A subscriber that joins an already-open stream gets
+      `onConnect` immediately, so it still re-fetches over REST on mount
+- [x] Web auth: `(auth)/auth-card.tsx` (brand, title, form, footer card),
+      `(auth)/layout.tsx` centers it on the surface color; login/register forms use
+      outlined MUI `TextField`s, a contained `Button`, and an inline
+      `FormHelperText` error with `role="alert"`
+- [x] Mobile theming: `src/theme/paper-theme.ts` (MD3 theme overridden from
+      tokens: colors, flat elevation levels, every type variant in Inter),
+      `src/theme/paper-icon.tsx` (Material Icons, falling back to Material
+      Community Icons for Paper's internal names), `src/theme/fonts.ts`,
+      `components/ui/button.tsx` (token radius and 48 dp height). NativeWind:
+      `tailwind.config.js` (built from the tokens, same utility names as web),
+      `src/global.css`, `withNativeWind` wrapping the existing Metro config, the
+      NativeWind Babel preset, `src/nativewind-env.d.ts`
+- [x] Mobile shell: root `_layout.tsx` loads Inter, provides the Paper theme, and
+      applies the top safe-area inset once for every screen (the auth group on the
+      surface color). The `(tabs)` bar is icon-only with the same glyphs, order and
+      tints as web; tab titles stay as accessibility labels.
+      `app.json` `userInterfaceStyle` is now `light`
+- [x] Mobile auth: `components/auth-card.tsx` mirrors web's card; login/register
+      use outlined Paper `TextInput`s, the token `Button`, and an error
+      `HelperText` with `accessibilityRole="alert"`
+- [x] Tests: `design-tokens` (18), `token-css-variables.spec.ts` (4, including a
+      check that every `--ig-*` name `global.css` references exists),
+      `paper-theme.spec.ts`, `paper-icon.spec.tsx`, `button.spec.tsx` (9 together),
+      and a new `apps/web-e2e/src/app-shell.spec.ts` (rail on desktop, bottom bar
+      on a phone viewport, `aria-current`, the signed-out bar)
+- [x] Fixed four `web-e2e` races and one wait that resolved too early (bugs
+      #79/#80 below), which also resolves the documented `comment-post`
+      reload flake (bug #46) and the `profile.spec.ts` "pre-fills" flake; plus
+      bugs #81 (MUI labels after a form reset) and #82 (a second Reanimated)
+- [x] Updated `docs/ARCHITECTURE.md` (§2, §3, §3.2, §5.4, §5.5 now implemented,
+      §6, risks #11/#14–#16), `docs/IMPLEMENTATION_PLAN.md` (M23 record),
+      `docs/FEATURES.md` (Feature 20 progress), `README.md` (repository layout)
 
 ---
 
@@ -3441,6 +3532,61 @@ pnpm exec nx run-many -t lint test build --skip-nx-cache
 #   identically on `main` — neither is caused by this milestone's changes.
 ```
 
+### Milestone 23
+
+```bash
+pnpm exec nx run-many -t test lint build -p design-tokens   # 18/18
+pnpm exec nx run-many -t lint test build -p web
+# ^ first build failed: Turbopack rejected packages/design-tokens because
+#   the Nx library generator wrote `"type": "commonjs"` into its
+#   package.json while the source is ESM; removed it (no other package
+#   declares a type). Clean on retry.
+
+pnpm exec nx run mobile:test              # 24 suites / 121 tests, unchanged selectors
+pnpm exec tsc -p apps/mobile/tsconfig.app.json --noEmit
+# ^ fixed three real errors: tab-icon color typed `string` instead of
+#   ColorValue, no declaration for the side-effect `global.css` import,
+#   and configureFonts' `default` variant needing a full type style.
+pnpm --filter mobile exec expo export --clear --platform android --source-maps
+# ^ first attempt: "Cannot resolve react-native-css-interop/jsx-runtime"
+#   (NativeWind's Babel plugin imports it from app code; pnpm doesn't let
+#   apps/mobile see nativewind's own dependency) — added it directly.
+#   NativeWind also rewrote apps/mobile/tsconfig.json on its own; reverted
+#   and set `disableTypeScriptGeneration`. Then clean: one copy each of
+#   react, react-native, reanimated, worklets, paper and css-interop in
+#   the bundle (checked from the source map).
+
+pnpm exec nx run web-e2e:e2e -- --project=chromium
+# ^ first run: next/font/google timed out fetching fonts.gstatic.com from
+#   `next dev`; switched to a self-hosted Inter (next/font/local).
+#   Then 3 full runs: comment-post failed every time, save-post twice.
+#   Database showed the comment saved, so the reload was racing the write.
+#   `git stash -u` baseline: 28/28 three times without M23, so M23 caused
+#   it. A debug spec showed getByText('Great shot!') matching the still-
+#   filled <textarea> — see bugs #79/#80. After the test fixes and dropping
+#   the badge's per-navigation refresh: 30/30 on four of five full runs;
+#   the fifth caught profile.spec.ts's "pre-fills" flake, root-caused
+#   (bug #80) and fixed, then 30/30 twice more, plus 8/8 on
+#   --repeat-each=8 of that test.
+pnpm exec nx run web-e2e:e2e -- --project=webkit  --grep "app shell|notifications|direct messages|comments: comment"   # 8/8
+pnpm exec nx run web-e2e:e2e -- --project=firefox --grep "app shell|notifications|direct messages|comments: comment"   # 8/8
+
+pnpm exec nx run-many -t lint test build --exclude=mobile --skip-nx-cache   # 11 projects, clean
+pnpm exec nx run-many -t lint test -p mobile --skip-nx-cache                 # 130/130
+pnpm exec nx run api-e2e:e2e --skip-nx-cache                                 # 154/154
+```
+
+Visual check (not automated): Playwright screenshots of `/login` (with and
+without an error), `/register`, `/home`, `/explore` and signed-out `/search` at
+1280 px and 390 px, and `adb screencap` of the same flows in Expo Go on the
+`Pixel_6a` emulator against the real API (log out, failed login, register,
+signed-in tabs). Fixes that came out of it: required-field asterisks hidden
+(Paper doesn't show them), floating labels left raised over empty fields after
+a failed submit (bug #81), tab labels truncated on mobile (now icon-only like
+web's phone bar), mobile content under the status bar (top inset applied in
+the root Stack), and light status-bar icons on a light app (`userInterfaceStyle:
+light`).
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -4696,6 +4842,56 @@ now written or `docs/IMPLEMENTATION_PLAN.md`'s M22 scope — the heartbeat/disco
 details and fan-out mechanism are additions the plan left unspecified, not
 corrections to something it got wrong.
 
+### Milestone 23
+
+- **Tokens reach Tailwind through `--ig-*` variables, not MUI's CSS variables.** The
+  plan (`docs/ARCHITECTURE.md` §5.5 as written) had MUI emit `--mui-*` variables with
+  `cssVariables: true` and Tailwind's `@theme` point at those. Instead the root layout
+  emits the tokens themselves as `--ig-*` custom properties
+  (`src/theme/token-css-variables.ts`) and both the MUI theme (which imports the
+  tokens directly) and Tailwind's `@theme inline` use them. This keeps Tailwind
+  independent of MUI's internal variable names, covers tokens MUI's palette has no
+  slot for (`like`, `outline`, radii, layout widths), and a unit test checks that
+  every `--ig-*` name `global.css` uses actually exists.
+- **Inter is self-hosted on web (`next/font/local` + `@fontsource-variable/inter`),
+  not `next/font/google`.** `next dev` timed out fetching from `fonts.gstatic.com`
+  on this machine, which broke every page. Self-hosting removes the network
+  dependency from builds and dev entirely. Mobile uses `@expo-google-fonts/inter`
+  (bundled font files, also no runtime fetch).
+- **Same Material glyphs on both platforms, so mostly filled icons.** The Material
+  Icons font that `@expo/vector-icons` ships has filled glyphs only for home,
+  explore, send and account (no outlined variants). Web uses the same filled glyphs
+  instead of MUI's outlined ones, and both platforms show the active tab by tint
+  (text vs. secondary text) and, on web, weight. Only the heart has an
+  outlined/filled pair.
+- **Mobile tabs are icon-only.** Six labelled tabs truncated "Messages" and
+  "Notifications"; web's phone-width bar is icon-only too, so both match. Titles
+  remain the accessibility labels. Create and Settings stay reachable from screens
+  rather than tabs on mobile, as before.
+- **Web form errors use MUI's inline `FormHelperText`, not `Alert`**, so they match
+  Paper's `HelperText` on mobile (the parity map in `docs/ARCHITECTURE.md` §5.5 is
+  updated). `role="alert"` is kept for assistive tech and the existing e2e tests.
+- **No shared Paper render helper for mobile tests.** Paper components fall back to
+  their default theme without a provider, and all 121 existing tests passed
+  unchanged, so a wrapper would have been unused code. Add one when a test needs
+  token-themed rendering.
+- **`react-native-css-interop` is a direct `apps/mobile` dependency.** NativeWind's
+  Babel plugin rewrites JSX imports to it inside app code, and pnpm's strict layout
+  hides `nativewind`'s own dependency from `apps/mobile`. Pinned to the exact
+  version `nativewind` 4.2.7 depends on (0.2.7).
+- **`apps/mobile/tailwind.config.js` requires the tokens by relative path, with an
+  `@nx/enforce-module-boundaries` suppression on that one line.** Tailwind loads its
+  config through jiti, which doesn't read the tsconfig path aliases every other
+  import uses.
+- **Web's realtime hook shares one connection** (`RealtimeProvider`). Milestone 22
+  chose one `EventSource` per caller because no two callers were ever on screen
+  together; the shell's badge changed that on `/messages` and `/messages/[id]`.
+- **The shell badge doesn't re-fetch the unread count on every navigation.** Next
+  runs a client's Server Actions one at a time, so a refresh on each page change sat
+  in front of the user's next action on that page (part of bug #79). It resets to
+  zero when `/notifications` opens and relies on realtime pushes plus the reconnect
+  re-fetch otherwise.
+
 ---
 
 ## Bugs Found and Fixed
@@ -5899,6 +6095,45 @@ dev`/`web-e2e` harness instead of Jest, and failing because that job
     same established `waitForTimeout(500)` remedy at both `goto`/`fill` sites in
     the file; confirmed 5/5 clean on repeated WebKit runs afterward.
 
+### Milestone 23
+
+79. **Four `web-e2e` assertions could pass before the Server Action they were
+    waiting for had finished, letting a following `reload()`/`goto()` race the
+    write.** `getByText('Great shot!')` (`comment-post.spec.ts`), `getByText('Nice
+    post!')` (`critical-path.spec.ts`) and `getByText('Hey Bob, welcome!')`
+    (`direct-messages.spec.ts`) also match the still-filled `<textarea>`, and
+    `getByRole('button', { name: 'Save' })` (`save-post.spec.ts`) substring-matches
+    the `Unsave` button that's still showing. Found because M23 made the race
+    deterministic: the shell badge fired a count-refresh Server Action on every
+    navigation, and since Next queues a client's Server Actions, the comment/unsave
+    action waited behind it while the test had already moved on. Confirmed with a
+    temporary debug spec (the reload's HTML lacked the comment; the database had
+    it) and a `git stash -u` baseline (28/28 three times without M23). Fixed the
+    tests to wait for the real completion signal (the field clearing,
+    `exact: true`), tightened the equivalent `Follow`/`Like` assertions in
+    `follows.spec.ts`/`like-post.spec.ts`, and dropped the badge's per-navigation
+    refresh. This is also the actual cause of bug #46's "unexplained"
+    `comment-post` reload flake.
+80. **`profile.spec.ts`'s "pre-fills the form" waited on a URL pattern the starting
+    page already matched.** `waitForURL(/\/[^/]+$/)` matches `/profile/edit`, so it
+    resolved immediately and the next `goto('/profile/edit')` could run before the
+    save finished. This is the long-standing "unexplained" pre-fill flake recorded
+    in the Milestone 20 known issues. Now waits for the exact `/${username}` URL;
+    8/8 under `--repeat-each=8`.
+81. **MUI labels stayed floated over empty fields after a failed login/register.**
+    React 19 resets uncontrolled form fields after every form action via
+    `form.reset()`, which MUI's floating label doesn't observe. Fixed by remounting
+    the fields on the form's native `reset` event. Making the fields controlled was
+    rejected because of the documented WebKit hydration race on controlled inputs
+    that are filled right after navigation, and these forms start almost every
+    e2e test.
+82. **A second, incompatible `react-native-reanimated` was in the workspace.**
+    Packages with an optional `react-native-reanimated: *` peer resolved it to the
+    newest release (4.7.0, built for React Native 0.86 and Worklets 0.13), alongside
+    the 4.3.1 that Expo SDK 56 and Expo Go ship. Added `pnpm-workspace.yaml`
+    overrides pinning `react-native-reanimated` 4.3.1 and `react-native-worklets`
+    0.8.3, the same mechanism as the React pin; the lockfile no longer has 4.7.0.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -6155,7 +6390,10 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   attributed to a cause that wasn't actually verified. Only occurred once; if
   it recurs with enough frequency to actually investigate mid-failure (rather
   than just retrying past it), that's the next concrete step.
-- **A single, low-frequency `web-e2e` flake tied to Next dev-server
+- **RESOLVED (Milestone 23, bug #79) — the cause was not compile latency.** The
+  assertion before the reload also matched the still-filled comment `<textarea>`,
+  so the reload could race the comment action. Original entry, kept for history:
+  **A single, low-frequency `web-e2e` flake tied to Next dev-server
   first-compile latency** (bug #46) — `comment-post.spec.ts`'s reload-based
   persistence check timed out once, confirmed via direct database/API
   inspection to be a timing artifact (the data was already correct
@@ -6247,10 +6485,11 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   navigation race (four instances found and fixed across `critical-path.spec.ts`,
   `follows.spec.ts`, `like-post.spec.ts`) and a WebKit-specific hydration-lag-after-
   fresh-navigation race on controlled form inputs (fixed in `critical-path.spec.ts`
-  twice and `search.spec.ts`). What remains genuinely unexplained: `profile.spec.ts`'s
-  "pre-fills the form" flake (symptom doesn't match either diagnosed pattern) and
-  `comment-post.spec.ts`'s `reload()`-then-content-visibility flake (a same-family fix
-  was tried and did _not_ reliably resolve it on re-verification). CI's cross-browser
+  twice and `search.spec.ts`). What remained unexplained here — `profile.spec.ts`'s
+  "pre-fills the form" flake and `comment-post.spec.ts`'s `reload()`-then-content-
+  visibility flake — was **root-caused and fixed in Milestone 23** (bugs #79/#80: an
+  assertion or `waitForURL` that was already satisfied before the Server Action
+  finished, a third mechanism worth checking first in any future flake). CI's cross-browser
   job remains `continue-on-error: true`, isolated per matrix entry, for this remaining
   set. If a future milestone wants Firefox/WebKit to actually gate merges, the two
   fixed classes are a template: reproduce a single scattered failure in true isolation
@@ -6404,6 +6643,33 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   milestone (no on-device SSE run happened, same limitation Milestone 7's mobile
   auth entry already notes for this environment) — worth a real device/simulator
   pass alongside that existing follow-up.
+- **Only the shell and auth screens are styled so far (Milestone 23).** Every other
+  screen still has its pre-M23 markup inside the new shell. On mobile the home screen
+  still shows its own "New post"/"Notifications" links, notification badge and a
+  dark Log out button in its header; those belong to Milestones 24–25, which restyle
+  each screen.
+- **Web and mobile run different Tailwind majors** (v4 and v3; `docs/ARCHITECTURE.md`
+  risk #15). Shared utility names come from the tokens, but Tailwind's own default
+  scales differ between the two (e.g. `shadow-sm`, `rounded`), so prefer token-backed
+  utilities in both apps. Revisit with NativeWind 5 once it's stable and this project
+  is on Expo SDK 57.
+- **`apps/mobile/app.json` is now `userInterfaceStyle: "light"`.** The app only has a
+  light theme, and with `"automatic"` an emulator or phone in dark mode drew
+  light-on-light status-bar icons. Set it back to `"automatic"` when a dark palette
+  lands.
+- **`expo-status-bar`'s `<StatusBar>` turned the Android status bar solid black in
+  Expo Go** when tried during M23 (the window stopped drawing edge-to-edge until
+  Expo Go was force-stopped). Not used; `userInterfaceStyle` above covers the icon
+  color. Worth re-checking in a development build before relying on it.
+- **`@expo/vector-icons` appears twice in the mobile bundle** — the same 15.1.1 under
+  two pnpm peer contexts that differ only in a `supports-color` version deep in
+  React Native's peers (the same split React Native itself has here). Both copies
+  register the same font names with `expo-font`, so it's harmless; not worth an
+  override.
+- **`apps/mobile/tsconfig.spec.json` doesn't type-check cleanly**: an implicit-`any`
+  in `src/test-setup.ts` and a tuple-destructuring error in
+  `conversation-screen.spec.tsx`, both predating M23. Jest compiles through Babel,
+  and no target runs `tsc` on the spec config, so nothing fails today.
 
 ---
 
@@ -6551,43 +6817,49 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 22 — Realtime Transport (SSE) is now complete** (see Completed/
-Validation Performed/Deviations/Bugs Found above); the recommendation below is for
-Milestone 23, decided here per this project's own "the milestone that finishes is
-the point to decide what's next" convention (`docs/IMPLEMENTATION_PLAN.md` M20 set
-this precedent for M21; M22 doesn't have a pre-written successor in
-`docs/IMPLEMENTATION_PLAN.md` the way M21/M22 themselves did, so this decision is
-recorded here rather than as a correction to an existing plan entry).
+**Milestone 23 — Design System Foundation, App Shells + Auth Screens is now
+complete** (see Completed/Validation Performed/Deviations/Bugs Found above). The
+styling track continues as planned in `docs/IMPLEMENTATION_PLAN.md`; push
+notifications stays at **Milestone 27**, after it.
 
-**Update (2026-10-09, project owner's request): the styling track comes next.**
-Milestones 23–26 style every web page and mobile screen consistently
-(`docs/IMPLEMENTATION_PLAN.md`'s "Styling Track", `docs/FEATURES.md` Feature 20).
-Push notifications, originally recommended as M23 below, moves to **Milestone 27**;
-its scoping notes are unchanged.
+**Milestone 24 — Feed, Posts & Profiles.** Full scope in
+`docs/IMPLEMENTATION_PLAN.md` M24 (M25, which covers discovery, activity, messages
+and settings, is independent of it and could go first). The foundation is in place,
+so this is screen work:
 
-**Milestone 23 — Design System Foundation, App Shells + Auth Screens.** Full scope in
-`docs/IMPLEMENTATION_PLAN.md` M23; decisions, component parity map and verified
-library versions in `docs/ARCHITECTURE.md` §5.5. Before writing code:
+1. **Use what M23 built, don't re-create it.** Colors, sizes and radii come from
+   `@instagram-clone/design-tokens` only. On web, prefer the token-backed Tailwind
+   utilities (`bg-surface`, `text-text-secondary`, `text-label`, `rounded-md`,
+   `max-w-feed`, ...) for layout and MUI components themed by `src/theme/theme.ts`.
+   On mobile, use NativeWind classes on core React Native elements, Paper components
+   (`components/ui/button.tsx` for buttons), and `PaperIcon`'s Material glyphs. Follow
+   the parity map in `docs/ARCHITECTURE.md` §5.5.
+2. **Keep accessible names, and keep the waits honest.** The like, save and follow
+   toggles become icons; each keeps its name (`Like`/`Unlike`, `Save`/`Unsave`,
+   `Follow`/`Unfollow`) as `aria-label`/`accessibilityLabel`. When a test waits for
+   an action, assert something only true once it has finished: a cleared field,
+   `exact: true` on toggled names, an exact URL (bugs #79/#80). Remember that
+   `getByText` also matches `<textarea>` contents.
+3. **Mobile home cleanup:** the home screen's header still carries its own "New
+   post"/"Notifications" links, a notification badge and a Log out button (Known
+   Issues). Decide where each belongs now that the tab bar exists: a tab badge for
+   unread notifications, Create from the profile or a header icon, Log out under
+   Settings. Move them, and update `home.spec.tsx`/`notification-badge.spec.tsx` to
+   match the new placement without weakening what they check.
+4. **Web pages render inside the shell's content column** (`max-w-content`, already
+   padded); the feed column is `max-w-feed`. `avatar-uploader.tsx` has a pre-existing
+   unused `eslint-disable` warning to clear while restyling it.
+5. **Validate visually on both platforms**, the same way M23 did: Playwright
+   screenshots at 1280 px and 390 px, and Expo Go on the Android emulator (the API
+   on `127.0.0.1`, `apps/mobile/.env` pointing at `10.0.2.2`). Force-stop Expo Go
+   after native-level changes such as `app.json`; hot reload doesn't reset native
+   state (see the `StatusBar` known issue).
 
-1. **Reconfirm every version** in §5.5's library table against npm and each project's
-   docs (risk #9). In particular, check each new package's React peer range against
-   the workspace's forced `react@19.2.3` (`pnpm-workspace.yaml` `overrides`, see Known
-   Issues) and that every mobile addition runs in Expo Go for SDK 56 (risk #16).
-   Install mobile packages from `apps/mobile` with `pnpm exec expo install`.
-2. **Tailwind v3 (mobile) and v4 (web) must coexist** (risk #15). Pin v3 in
-   `apps/mobile/package.json`, keep v4 in the root `package.json`, and verify with
-   `pnpm --filter mobile why tailwindcss`, which is how the react 19.2.3/19.3.0 split
-   was caught.
-3. **Don't change any accessible name.** `apps/web-e2e` finds elements by label, role
-   and text (`getByLabel('Email')`, `getByRole('button', { name: 'Create account' })`,
-   `getByText(/Notifications \(\d+\)/)`, ...), and mobile tests use `getByLabelText`.
-   Restyle around those names rather than editing the tests.
-4. **Merge, don't replace**, `apps/mobile/metro.config.js`: it already configures the
-   SVG transformer, and NativeWind's `withNativeWind` wraps that config.
-5. Test at a phone-width web viewport and in Expo Go on the Android emulator side by
-   side, since visual parity is the point of this track. The emulator needs
-   `apps/mobile/.env`'s `10.0.2.2` API URL and the API bound to `127.0.0.1` (Known
-   Issues).
+The guidance from Milestone 22 below still applies (throttle budgets, Playwright
+`--grep` placement, WebKit/Firefox checks, confirming process identity before
+killing anything on port 3000). Dev servers started from a background shell on this
+machine also survive their parent being stopped; check ports 3000/4200/8081 after
+stopping them.
 
 **Milestone 27 — Push Notifications** (originally recommended as Milestone 23; moved
 behind the styling track, otherwise unchanged). Of `docs/FEATURES.md`'s remaining Future

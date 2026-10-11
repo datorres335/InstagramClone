@@ -34,7 +34,15 @@ pnpm exec nx run prisma:generate
 pnpm exec nx run web:dev        # Next.js dev server
 pnpm exec nx run api:serve      # NestJS dev server
 pnpm --filter mobile exec expo start    # Expo dev server (works from any cwd)
+pnpm --filter mobile exec expo start -c # Same, but clears Metro's bundler cache first
 ```
+
+> **When to use `expo start -c`:** after changing anything Metro or Babel reads at
+> build time — `apps/mobile/.env` (`EXPO_PUBLIC_*` values are inlined into the
+> bundle), `metro.config.js`, `.babelrc.js`, `tailwind.config.js`, or
+> `@instagram-clone/design-tokens` — or after a `pnpm install` that changed mobile
+> dependencies. A stale cache otherwise keeps serving the old bundle. Changes to
+> `app.json` also need Expo Go fully closed and reopened.
 
 > **Why not `pnpm exec nx run mobile:start`?** On Windows, Nx cannot show Expo's
 > interactive CLI menu (the `i`/`a`/`w` shortcuts) — this is a confirmed upstream Nx
@@ -77,15 +85,16 @@ Firefox/WebKit e2e jobs are non-blocking in CI and aren't run by the hook.
 
 ```
 apps/
-  web/          Next.js 16 (App Router)
+  web/          Next.js 16 (App Router), Material UI + Tailwind CSS v4
   api/          NestJS
-  mobile/       Expo (Expo Router)
+  mobile/       Expo (Expo Router), React Native Paper + NativeWind
   web-e2e/      Playwright tests for apps/web
 packages/
   types/        Shared, framework-agnostic TypeScript types
   validation/   Shared Zod schemas (single source of truth for request/response shapes)
   api-client/   Typed REST client consumed by web + mobile
   config/       Env schema + typed config loader (zod-validated)
+  design-tokens/ Colors, type scale, spacing and radii behind both apps' themes
   eslint-config/ Shared ESLint + Prettier configuration
 prisma/         Prisma schema, migrations, seed script (shared by apps/api)
 docs/           Architecture, database, API, features, and implementation plan

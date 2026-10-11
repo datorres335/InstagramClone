@@ -1,15 +1,8 @@
 'use server';
 
-import { redirect } from 'next/navigation';
-
 import type { FeedResponse } from '@instagram-clone/validation';
 
 import { getApiClient } from '../../../lib/get-api-client';
-
-export async function logoutAction(): Promise<void> {
-  await getApiClient().auth.logout();
-  redirect('/login');
-}
 
 /**
  * The "load more" Server Action behind `FeedList` (Milestone 12) — only a

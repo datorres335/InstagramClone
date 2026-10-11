@@ -157,6 +157,9 @@ test.describe('critical path: one continuous journey across every feature', () =
     await followerPage
       .getByRole('button', { name: 'Post', exact: true })
       .click();
+    // Cleared only once the comment action resolves — `getByText` alone
+    // would also match the still-filled <textarea> (see comment-post.spec.ts).
+    await expect(followerPage.getByLabel('Add a comment')).toHaveValue('');
     await expect(followerPage.getByText('Nice post!')).toBeVisible();
 
     // ---- save, from the post detail page ----

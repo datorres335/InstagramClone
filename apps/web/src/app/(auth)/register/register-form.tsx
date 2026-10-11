@@ -1,6 +1,9 @@
 'use client';
 
-import { useActionState } from 'react';
+import Button from '@mui/material/Button';
+import FormHelperText from '@mui/material/FormHelperText';
+import TextField from '@mui/material/TextField';
+import { useActionState, useState } from 'react';
 
 import { initialAuthActionState } from '../../../lib/auth-action-state';
 import { registerAction } from './actions';
@@ -10,47 +13,61 @@ export function RegisterForm() {
     registerAction,
     initialAuthActionState,
   );
+  // Same post-action reset handling as LoginForm.
+  const [resetKey, setResetKey] = useState(0);
 
   return (
-    <form action={formAction}>
-      <div>
-        <label htmlFor="email">Email</label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          autoComplete="email"
-          required
-        />
-      </div>
-      <div>
-        <label htmlFor="username">Username</label>
-        <input
-          id="username"
-          name="username"
-          type="text"
-          autoComplete="username"
-          required
-          minLength={3}
-          maxLength={30}
-        />
-      </div>
-      <div>
-        <label htmlFor="password">Password</label>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          maxLength={128}
-        />
-      </div>
-      {state.error && <p role="alert">{state.error}</p>}
-      <button type="submit" disabled={pending}>
+    <form
+      action={formAction}
+      onReset={() => setResetKey((key) => key + 1)}
+      className="flex flex-col gap-4"
+    >
+      <TextField
+        key={`email-${resetKey}`}
+        id="email"
+        name="email"
+        label="Email"
+        type="email"
+        autoComplete="email"
+        required
+        fullWidth
+      />
+      <TextField
+        key={`username-${resetKey}`}
+        id="username"
+        name="username"
+        label="Username"
+        type="text"
+        autoComplete="username"
+        required
+        fullWidth
+        slotProps={{ htmlInput: { minLength: 3, maxLength: 30 } }}
+      />
+      <TextField
+        key={`password-${resetKey}`}
+        id="password"
+        name="password"
+        label="Password"
+        type="password"
+        autoComplete="new-password"
+        required
+        fullWidth
+        slotProps={{ htmlInput: { minLength: 8, maxLength: 128 } }}
+      />
+      {state.error && (
+        <FormHelperText error role="alert">
+          {state.error}
+        </FormHelperText>
+      )}
+      <Button
+        type="submit"
+        variant="contained"
+        size="large"
+        fullWidth
+        disabled={pending}
+      >
         {pending ? 'Creating account…' : 'Create account'}
-      </button>
+      </Button>
     </form>
   );
 }

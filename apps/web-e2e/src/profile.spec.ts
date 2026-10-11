@@ -62,12 +62,15 @@ test.describe('profile: edit own profile', () => {
   test('pre-fills the form with the current values on a second visit', async ({
     page,
   }) => {
-    await registerThroughUi(page);
+    const credentials = await registerThroughUi(page);
 
     await page.goto('/profile/edit');
     await page.getByLabel('Bio').fill('First save');
     await page.getByRole('button', { name: 'Save' }).click();
-    await page.waitForURL(/\/[^/]+$/);
+    // The exact profile URL, not a pattern: `/\/[^/]+$/` also matches
+    // `/profile/edit` itself, so it resolved before the save finished and
+    // the next `goto` could race it (the long-standing "pre-fills" flake).
+    await page.waitForURL(`/${credentials.username}`);
 
     await page.goto('/profile/edit');
     await expect(page.getByLabel('Bio')).toHaveValue('First save');

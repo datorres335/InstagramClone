@@ -1,5 +1,4 @@
-import Link from 'next/link';
-
+import { AuthCard } from '../auth-card';
 import { RegisterForm } from './register-form';
 
 export const metadata = {
@@ -8,12 +7,13 @@ export const metadata = {
 
 export default function RegisterPage() {
   return (
-    <main>
-      <h1>Create account</h1>
+    <AuthCard
+      title="Create account"
+      footerText="Already have an account?"
+      footerLinkText="Log in"
+      footerHref="/login"
+    >
       <RegisterForm />
-      <p>
-        Already have an account? <Link href="/login">Log in</Link>
-      </p>
-    </main>
+    </AuthCard>
   );
 }

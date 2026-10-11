@@ -52,6 +52,11 @@ test.describe('direct messages: start a conversation, send a message, see a repl
 
     await page.getByLabel('Message').fill('Hey Bob, welcome!');
     await page.getByRole('button', { name: 'Send' }).click();
+    // The field clears only once the send action has resolved. Without
+    // this, `getByText('Hey Bob, welcome!')` also matches the still-filled
+    // <textarea>, so bob's reply below could be written before alice's
+    // message and the inbox would show the wrong "last message".
+    await expect(page.getByLabel('Message')).toHaveValue('');
     await expect(page.getByText('Hey Bob, welcome!')).toBeVisible();
 
     // A deliberate gap before bob's reply: `Conversation.lastMessageAt`/the

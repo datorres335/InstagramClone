@@ -535,6 +535,26 @@ tailwindcss`, the same check that caught the React version split.
   - Manual side-by-side check: `web:dev` at phone width next to Expo Go on the Android
     emulator, with screenshots noted in `docs/PROGRESS.md`.
 
+**Implemented (Milestone 23)**, with these differences from the plan above (full
+record in `docs/PROGRESS.md`'s Milestone 23 entries):
+
+- Tokens reach Tailwind as `--ig-*` CSS variables emitted by the root layout, rather
+  than through MUI's `cssVariables`, so Tailwind doesn't depend on MUI's internal
+  variable names and tokens MUI has no palette slot for are covered too.
+- Inter is self-hosted on web (`next/font/local`), because `next/font/google`'s fetch
+  timed out in `next dev`.
+- Both platforms use the same, mostly filled Material glyphs (Expo's Material Icons
+  font lacks outlined variants), and the mobile tab bar is icon-only like web's
+  phone bar.
+- Web errors use inline `FormHelperText`, matching Paper's `HelperText`.
+- No shared Paper render helper: Paper works with its default theme in tests, and
+  every existing test passed unchanged.
+- Additions not in the plan: web's realtime hook now shares one connection
+  (`RealtimeProvider`), since the badge now shares pages with the messages screens;
+  Reanimated/Worklets are pinned workspace-wide to SDK 56's versions; four e2e
+  waits that could pass before their Server Action finished were fixed, which
+  explained two long-standing flakes.
+
 ### M24 — Feed, Posts & Profiles
 
 - **Screens**:

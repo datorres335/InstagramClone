@@ -56,6 +56,11 @@ test.describe('comments: comment on a post', () => {
     // `exact: true` — plain `{ name: 'Post' }` substring-matches both this
     // button and the post's own "Delete post" button.
     await page.getByRole('button', { name: 'Post', exact: true }).click();
+    // The form clears only once createCommentAction has resolved. Without
+    // this, `getByText('Great shot!')` also matches the still-filled
+    // <textarea> and passes before the comment is saved, letting the reload
+    // below race the action (the cause of bug #46's "unexplained" flake).
+    await expect(page.getByLabel('Add a comment')).toHaveValue('');
     await expect(page.getByText('Great shot!')).toBeVisible();
 
     // Reload to prove it's persisted server-side, not just local state.

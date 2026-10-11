@@ -1,7 +1,7 @@
 # Features
 
 Functional specification for the 17 MVP features, two implemented post-MVP features
-(Direct Messages, Milestone 21; Realtime Transport, Milestone 22), one planned
+(Direct Messages, Milestone 21; Realtime Transport, Milestone 22), one in-progress
 post-MVP feature (Consistent Visual Design, Milestones 23–26), plus explicit notes on
 how the architecture anticipates the remaining future features. Each feature lists: summary, core
 requirements, explicit out-of-scope items (so scope creep during implementation has a
@@ -330,12 +330,17 @@ original 17.
   pushed payload reuses `NotificationResponse`/`MessageResponse` verbatim
   (`packages/validation/src/lib/realtime.ts`).
 
-## Post-MVP Features (planned)
+## Post-MVP Features (in progress)
 
-### 20. Consistent Visual Design (planned, Milestones 23–26)
+### 20. Consistent Visual Design (in progress, Milestones 23–26)
 
+- **Status:** Milestone 23 shipped the foundation: shared design tokens, both themes,
+  the web app shell (left rail on desktop, bottom bar on phones), the styled mobile
+  tab bar, and the login/register screens on both platforms. The remaining screens
+  are restyled in M24 (feed, posts, profiles) and M25 (explore, search,
+  notifications, saved, messages, settings), then reviewed for consistency in M26.
 - Every web page and mobile screen gets a finished, Instagram-like visual design,
-  replacing today's unstyled HTML (web) and ad-hoc `StyleSheet`s (mobile).
+  replacing the original unstyled HTML (web) and ad-hoc `StyleSheet`s (mobile).
 - **Web**: Material UI v9 components plus Tailwind CSS v4 for layout. **Mobile**: the
   closest equivalents, React Native Paper v5 components plus NativeWind v4 (Tailwind
   for React Native) for layout. The same Material icon set and the same font (Inter)

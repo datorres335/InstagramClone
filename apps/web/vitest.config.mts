@@ -24,6 +24,10 @@ export default defineConfig(() => ({
         import.meta.dirname,
         '../.././packages/api-client/src/index.ts',
       ),
+      '@instagram-clone/design-tokens': join(
+        import.meta.dirname,
+        '../.././packages/design-tokens/src/index.ts',
+      ),
     },
   },
   test: {

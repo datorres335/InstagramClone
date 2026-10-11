@@ -86,7 +86,7 @@ test.describe('likes: like a post from the feed', () => {
 
     await viewerPage.getByRole('button', { name: 'Unlike' }).click();
     await expect(
-      viewerPage.getByRole('button', { name: 'Like' }),
+      viewerPage.getByRole('button', { name: 'Like', exact: true }),
     ).toBeVisible();
     await expect(viewerPage.getByText('0 likes')).toBeVisible();
   });

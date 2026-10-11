@@ -7,11 +7,13 @@
     "eas-build-post-install": "cd ../../ && node tools/scripts/eas-build-post-install.mjs . apps/mobile"
   },
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
     "@expo/metro": "*",
     "@expo/vector-icons": "*",
     "@testing-library/react-native": "*",
     "expo": "*",
     "expo-constants": "~56.0.26",
+    "expo-font": "~56.0.7",
     "expo-image-picker": "~56.0.25",
     "expo-linking": "~56.0.18",
     "expo-router": "~56.2.21",
@@ -20,13 +22,19 @@
     "expo-status-bar": "*",
     "expo-system-ui": "*",
     "jest-expo": "*",
+    "nativewind": "^4.2.7",
     "react": "*",
     "react-native": "*",
+    "react-native-css-interop": "0.2.7",
+    "react-native-paper": "^5.15.3",
+    "react-native-reanimated": "4.3.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "~4.26.2",
     "react-native-sse": "^1.2.1",
     "react-native-svg": "*",
     "react-native-svg-transformer": "*",
-    "react-native-web": "*"
+    "react-native-web": "*",
+    "react-native-worklets": "0.8.3",
+    "tailwindcss": "3.4.19"
   }
 }

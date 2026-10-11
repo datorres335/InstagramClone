@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { ExploreGrid } from './explore-grid';
@@ -22,7 +21,6 @@ export default async function ExplorePage() {
   return (
     <main>
       <h1>Explore</h1>
-      <Link href="/home">Back to home</Link>
       <ExploreGrid
         initialPosts={explore.data}
         initialNextCursor={explore.meta.nextCursor}

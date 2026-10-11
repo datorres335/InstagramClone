@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { NotificationsList } from './notifications-list';
@@ -28,7 +27,6 @@ export default async function NotificationsPage() {
   return (
     <main>
       <h1>Notifications</h1>
-      <Link href="/home">Back to home</Link>
       <NotificationsList
         initialNotifications={notifications.data}
         initialNextCursor={notifications.meta.nextCursor}

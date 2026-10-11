@@ -1,7 +1,10 @@
-import { Link, router } from 'expo-router';
+import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { View } from 'react-native';
+import { HelperText, TextInput } from 'react-native-paper';
 
+import { AuthCard } from '../../components/auth-card';
+import { Button } from '../../components/ui/button';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
@@ -28,71 +31,45 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
-        Log in
-      </Text>
-      <TextInput
-        style={styles.input}
-        placeholder="Email or username"
-        accessibilityLabel="Email or username"
-        autoCapitalize="none"
-        autoComplete="username"
-        value={emailOrUsername}
-        onChangeText={setEmailOrUsername}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Password"
-        accessibilityLabel="Password"
-        secureTextEntry
-        autoComplete="current-password"
-        value={password}
-        onChangeText={setPassword}
-      />
-      {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
-      )}
-      <Pressable
-        style={styles.button}
-        onPress={handleSubmit}
-        disabled={submitting}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>
+    <AuthCard
+      title="Log in"
+      footerText="Don't have an account?"
+      footerLinkText="Create one"
+      footerHref="/(auth)/register"
+    >
+      <View className="gap-4">
+        <TextInput
+          mode="outlined"
+          label="Email or username"
+          accessibilityLabel="Email or username"
+          autoCapitalize="none"
+          autoComplete="username"
+          value={emailOrUsername}
+          onChangeText={setEmailOrUsername}
+        />
+        <TextInput
+          mode="outlined"
+          label="Password"
+          accessibilityLabel="Password"
+          secureTextEntry
+          autoComplete="current-password"
+          value={password}
+          onChangeText={setPassword}
+        />
+        {error && (
+          <HelperText type="error" accessibilityRole="alert">
+            {error}
+          </HelperText>
+        )}
+        <Button
+          mode="contained"
+          onPress={handleSubmit}
+          disabled={submitting}
+          accessibilityRole="button"
+        >
           {submitting ? 'Logging in…' : 'Log in'}
-        </Text>
-      </Pressable>
-      <Link href="/(auth)/register">
-        Don&apos;t have an account? Create one
-      </Link>
-    </View>
+        </Button>
+      </View>
+    </AuthCard>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-    gap: 12,
-    backgroundColor: '#ffffff',
-  },
-  title: { fontSize: 24, fontWeight: '600', marginBottom: 12 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 12,
-  },
-  error: { color: '#dc2626' },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600' },
-});

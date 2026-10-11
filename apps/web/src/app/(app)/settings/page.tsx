@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
 import { getApiClient } from '../../../lib/get-api-client';
@@ -24,7 +23,6 @@ export default async function SettingsPage() {
   return (
     <main>
       <h1>Settings</h1>
-      <Link href="/home">Back to home</Link>
       <ChangePasswordForm />
       <ChangeEmailForm currentEmail={user.email} />
       <DeleteAccountForm />

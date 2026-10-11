@@ -46,7 +46,7 @@ and `IMPLEMENTATION_PLAN.md` all assume the decisions recorded here.
 | Local infra     | Docker Compose                                                        | Postgres, MinIO, Redis, Maildev                                    |
 | Testing         | Vitest (unit), Nest/Supertest (API integration), Playwright (web E2E) | Per-project Nx targets                                             |
 | Lint/format     | ESLint 9 (flat config) + Prettier                                     | Shared `packages/eslint-config`                                    |
-| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | **Planned, Milestones 23–26** — shared `packages/design-tokens`, see §5.5 |
+| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | Foundation implemented Milestone 23; screens restyled M24–M26. Shared `packages/design-tokens`, see §5.5 |
 
 Exact framework minor/patch versions are intentionally not pinned in this document —
 confirm current stable versions against each framework's official docs at the moment a
@@ -69,7 +69,7 @@ instagram-clone/
 │   ├── validation/            # Zod schemas — the single source of truth for shapes
 │   ├── api-client/            # Typed REST client consumed by web + mobile
 │   ├── config/                 # Env schema + typed config loader (zod-validated)
-│   ├── design-tokens/          # (planned, Milestone 23) colors/type/spacing tokens for web + mobile themes
+│   ├── design-tokens/          # colors/type/spacing tokens for web + mobile themes (Milestone 23)
 │   └── eslint-config/          # Shared flat ESLint config + Prettier config
 │
 ├── prisma/
@@ -126,9 +126,9 @@ Enforced with `@nx/enforce-module-boundaries` via project tags:
 | `scope:web`    | `web`, `web-e2e`                                               | `scope:shared`              |
 | `scope:api`    | `api`, `api-e2e`, `prisma`                                     | `scope:shared`              |
 | `scope:mobile` | `mobile`                                                       | `scope:shared`              |
-| `scope:shared` | `types`, `validation`, `api-client`, `config`, `eslint-config`, `design-tokens` (planned M23) | `scope:shared` only         |
+| `scope:shared` | `types`, `validation`, `api-client`, `config`, `eslint-config`, `design-tokens` | `scope:shared` only         |
 | `type:app`     | apps                                                           | `type:feature`, `type:util` |
-| `type:util`    | `types`, `validation`, `config`, `eslint-config`, `design-tokens` (planned M23) | `type:util` only            |
+| `type:util`    | `types`, `validation`, `config`, `eslint-config`, `design-tokens` | `type:util` only            |
 | `type:feature` | `api-client`                                                   | `type:util`                 |
 
 Rules encoded in root ESLint config:
@@ -189,11 +189,17 @@ large-file proxy.
 
 - App Router only (no `pages/`). Route groups: `(auth)` for login/register,
   `(app)` for the authenticated shell (feed, profile, explore, notifications, settings).
+- App shell (Milestone 23): `(app)/layout.tsx` renders the primary navigation
+  (`app-nav.tsx`) and the shared realtime connection for a signed-in visitor, and a
+  Log in / Sign up bar otherwise. It doesn't redirect: profiles, post permalinks,
+  likers/follower lists and search are public, and each page still does its own auth
+  check. Layouts persist across client-side navigation, so its session and
+  unread-count calls happen on full page loads only. Styling is described in §5.5.
 - Rendering strategy:
-  - Public/shareable pages (a single post permalink, a public profile) use Server
-    Components with the `"use cache"` directive (Cache Components model) plus
-    `revalidateTag` invalidation triggered from the API-client mutation layer, so a new
-    like/comment can bust the right cache entries.
+  - Public/shareable pages (a single post permalink, a public profile) were planned to
+    use the `"use cache"` directive with `revalidateTag` invalidation. **Not adopted:**
+    no page uses `"use cache"` today; every page renders per request (confirmed in
+    Milestone 23 while debugging a stale-reload test).
   - The authenticated feed, notifications, and any per-user views are dynamic (no
     full-route caching) since they depend on the caller's session and follow graph.
   - Mutations (create post, follow, like) go through Server Actions that call
@@ -352,27 +358,37 @@ real consumers needing it — not built speculatively ahead of either.
   replay by SSE event id. `NotificationBadge`/`ConversationsList`/`MessageThread`
   (and their mobile equivalents) all follow this shape: apply a pushed event
   immediately when connected, and re-fetch on every (re)connect.
+- **Web shares one connection per tab (since Milestone 23).** `RealtimeProvider`
+  (`apps/web/src/lib/use-realtime-events.tsx`), mounted in the signed-in app shell,
+  owns the single `EventSource`; `useRealtimeEvents` subscribes to it. Milestone 22
+  opened one connection per caller because no two callers were ever on screen
+  together, which stopped being true once the notification badge moved into the
+  persistent shell. A subscriber that joins an already-open stream gets its
+  `onConnect` immediately, so the re-fetch-on-connect contract above still holds.
+  Mobile still opens one connection per screen that needs one.
 
-### 5.5 UI Styling & Design System (planned, Milestones 23–26)
+### 5.5 UI Styling & Design System (foundation implemented Milestone 23)
 
-**Not implemented yet.** This section records the decisions the styling track
-(`IMPLEMENTATION_PLAN.md` M23–M26) will implement. Today `apps/web` is unstyled HTML
-plus the Nx generator's placeholder `global.css`, and `apps/mobile` uses
-per-component `StyleSheet`s.
+The styling track (`IMPLEMENTATION_PLAN.md` M23–M26). **Milestone 23 built the
+foundation**: the tokens package, both themes, the web app shell and mobile tab
+bar, and the login/register screens on both platforms. M24–M25 restyle the
+remaining screens and M26 is the consistency pass; until then those screens keep
+their pre-M23 markup inside the new shell.
 
 **Goal:** both apps look as alike as their platforms allow: same colors, type scale,
 spacing, icons, and component shapes. Each still follows its own platform's
 navigation conventions.
 
-**Libraries** (verified current on 2026-10-09; reconfirm at M23's start, risk #9):
+**Libraries** (installed in Milestone 23):
 
 | Role                     | Web                                                                                         | Mobile (closest equivalent)                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Material component kit   | `@mui/material` **9.x** (v9.0 released 2026-04-08; there is no v8, since MUI skipped it to align with MUI X v9). Still Emotion-based (`@emotion/react`, `@emotion/styled`) | `react-native-paper` **5.x** (latest stable 5.15.x; 6.0 is alpha and not used)                                |
-| Next.js integration      | `@mui/material-nextjs` 9.x: `AppRouterCacheProvider` with `enableCssLayer: true`            | n/a                                                                                                             |
-| Utility-class styling    | `tailwindcss` **4.x** + `@tailwindcss/postcss`, declared in the root `package.json`         | `nativewind` **4.x** (current stable), which requires Tailwind **v3** (`^3.4`), declared in `apps/mobile/package.json` |
-| Icons                    | `@mui/icons-material` (Google Material Icons)                                               | `@expo/vector-icons` `MaterialIcons` (the same icon set; already installed)                                     |
-| Font                     | Inter via `next/font/google`                                                                | Inter via `@expo-google-fonts/inter` + `expo-font`                                                              |
+| Material component kit   | `@mui/material` **9.5.0** (there is no v8; MUI went from v7 to v9 to align with MUI X). Emotion-based (`@emotion/react`, `@emotion/styled`, `@emotion/cache`) | `react-native-paper` **5.15.3** (6.0 is alpha and not used)                                                     |
+| Next.js integration      | `@mui/material-nextjs` 9.5.0: `AppRouterCacheProvider` (`v16-appRouter`) with `enableCssLayer: true` | n/a                                                                                                             |
+| Utility-class styling    | `tailwindcss` **4.3.3** + `@tailwindcss/postcss`, in the root `package.json`               | `nativewind` **4.2.7** + `react-native-css-interop` 0.2.7, with Tailwind **3.4.19**, all in `apps/mobile/package.json` |
+| Icons                    | `@mui/icons-material` (Google Material Icons)                                               | `@expo/vector-icons` `MaterialIcons`, the same set (with `MaterialCommunityIcons` only for Paper's internal names) |
+| Font                     | Inter, self-hosted: `next/font/local` + `@fontsource-variable/inter`                        | Inter via `@expo-google-fonts/inter` + `expo-font`                                                              |
+| Native modules           | n/a                                                                                         | `react-native-reanimated` 4.3.1 / `react-native-worklets` 0.8.3 (NativeWind's dependency), pinned workspace-wide by `pnpm-workspace.yaml` overrides to Expo SDK 56's versions |
 
 Not chosen, and why: NativeWind 5, which would match web's Tailwind v4, is a release
 candidate targeting Expo SDK 57 / React Native 0.86, and NativeWind's own docs say it
@@ -385,13 +401,17 @@ isn't production-ready. This project is on SDK 56, so v4 it is (risk #15).
   or size value is defined. It contains no framework code, which keeps it a
   `scope:shared`/`type:util` package.
 - **Web layering.**
-  - The MUI theme is built from the tokens with `cssVariables: true`, so MUI emits
-    `--mui-*` CSS variables.
+  - The root layout emits every token as a `--ig-*` CSS custom property
+    (`src/theme/token-css-variables.ts`, rendered into `<head>`).
   - `global.css` declares `@layer theme, base, mui, components, utilities;` before
     `@import 'tailwindcss';`. That puts MUI's styles in a layer below Tailwind
     utilities, so a utility class overrides MUI's defaults without `!important`.
-  - Tailwind's `@theme inline` maps its color names to MUI's variables, so both
-    libraries read one runtime value.
+  - Tailwind's `@theme inline` maps its names onto the `--ig-*` variables
+    (`bg-primary`, `text-text-secondary`, `text-label`, `rounded-md`, `max-w-feed`,
+    ...). A unit test checks that every `--ig-*` name it uses exists.
+  - The MUI theme (`src/theme/theme.ts`) imports the same tokens directly, with its
+    `md` breakpoint set to Tailwind's (768 px) and the required-field asterisk hidden
+    to match Paper.
   - Tailwind preflight is the only CSS reset. MUI's `CssBaseline` is not used.
 - **Web and Server Components.** MUI ships its components with `"use client"`, so
   Server Component pages can render them directly; pages don't gain `"use client"` just
@@ -410,6 +430,11 @@ isn't production-ready. This project is on SDK 56, so v4 it is (risk #15).
     Paper's `adaptNavigationTheme`. That function causes a type mismatch with SDK 56's
     `expo-router/react-navigation` imports (callstack/react-native-paper#4967), and its
     workaround is an `any` cast, which `CLAUDE.md` forbids.
+  - MD3 Paper draws buttons at 5 × `roundness`; `components/ui/button.tsx` scales that
+    back so buttons get the same 8 px radius as MUI's, at a 48 dp minimum height.
+  - The root Stack applies the top safe-area inset once for every screen (Android is
+    edge-to-edge). `app.json` declares `userInterfaceStyle: "light"` so the system
+    draws dark status-bar icons.
 - **Two Tailwind majors side by side.** Web's v4 sits in the root `package.json`;
   mobile's v3 is pinned in `apps/mobile/package.json`. pnpm's isolated `node_modules`
   gives each app its own copy. Verify with `pnpm --filter mobile why tailwindcss`.
@@ -422,7 +447,7 @@ the same on both platforms):
 | -------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------- |
 | Primary / secondary button       | `Button` `variant="contained"` / `"text"`                    | `Button` `mode="contained"` / `"text"`                        |
 | Text field                       | `TextField` `variant="outlined"`                             | `TextInput` `mode="outlined"`                                 |
-| Field / form error               | `TextField` `helperText` + `error`, or `Alert`              | `HelperText type="error"`                                    |
+| Field / form error               | `FormHelperText error` (inline red text, `role="alert"`)    | `HelperText type="error"` (`accessibilityRole="alert"`)      |
 | Icon action (like, save, ...)    | `IconButton` + `@mui/icons-material`                         | `IconButton` + `MaterialIcons`                                |
 | Avatar                           | `Avatar`                                                     | `Avatar.Image` / `Avatar.Text`                                |
 | List row (followers, inbox, ...) | `List` + `ListItemButton` + `ListItemAvatar`                 | `List.Item` with an avatar on the left                        |
@@ -431,7 +456,8 @@ the same on both platforms):
 | Loading placeholder              | `Skeleton`                                                   | Token-colored placeholder `View` (Paper has no skeleton)      |
 | Confirmation                     | `Dialog`                                                     | `Portal` + `Dialog`                                           |
 | Transient message                | `Snackbar`                                                   | `Snackbar`                                                    |
-| Primary navigation               | Left rail at `md`+, bottom bar below `md` (Tailwind layout)  | Expo Router `Tabs`, token colors + `MaterialIcons`            |
+| Primary navigation               | `(app)/app-nav.tsx`: one `<nav>`, a labelled left rail at `md`+ and an icon-only bottom bar below it | `(tabs)/_layout.tsx`: icon-only Expo Router `Tabs`, same glyphs, order and tints |
+| Auth screen                      | `(auth)/auth-card.tsx`                                       | `components/auth-card.tsx`                                    |
 | Layout, spacing, grids           | Tailwind utilities                                           | NativeWind utilities on core RN elements                      |
 
 **Rules:**
@@ -445,6 +471,10 @@ the same on both platforms):
    the same semantic token names.
 4. Every mobile dependency must run in Expo Go for SDK 56 (pure JS, or a native module
    Expo Go already bundles), installed via `pnpm exec expo install`.
+5. Icons use glyphs both icon fonts share. Expo's Material Icons font has filled glyphs
+   only for most nav icons, so web uses the same filled ones and both platforms show
+   the active item by tint (text vs. secondary text); only the heart has an
+   outlined/filled pair.
 
 ## 6. Shared Packages
 
@@ -460,7 +490,7 @@ strong, concrete need for shared UI emerges later (e.g. a design-token package d
 both Tailwind config on web and a theme object on mobile), that's a narrow, additive
 package — not a shared component library.
 
-**That need has now arrived (planned, Milestones 23–26):** the styling track adds
+**That need has now arrived (Milestone 23):** the styling track adds
 exactly that narrow package, `packages/design-tokens`. It holds plain token objects;
 each app turns them into its own MUI/Paper themes and Tailwind configs. Components
 stay per-platform, as this section argues. See §5.5.
@@ -472,7 +502,7 @@ stay per-platform, as this section argues. See §5.5.
 | `api-client`    | Typed REST client: one function per endpoint, generated method signatures from the OpenAPI spec, hand-written transport (fetch + auth-refresh interceptor + retry-once-on-401 logic + pagination helpers)                   | `web`, `mobile`                                    |
 | `config`        | `zod`-validated env schema per app (`ApiEnvSchema`, `WebEnvSchema`, `MobileEnvSchema`) and a small `loadEnv()` helper that throws a readable error on startup if env vars are missing/invalid                               | `api`, `web`, `mobile`                             |
 | `eslint-config` | Shared flat ESLint config (base + per-framework overrides for Next/Nest/Expo) and shared Prettier config                                                                                                                    | every project via root config                      |
-| `design-tokens` | **(planned, Milestone 23)** Framework-agnostic visual tokens: semantic colors, font family + type scale, spacing, radii, icon sizes, layout widths. No MUI/Paper/Tailwind code; adapters live in each app (§5.5)         | `web`, `mobile`                                    |
+| `design-tokens` | **(Milestone 23)** Framework-agnostic visual tokens: semantic colors, font family + type scale, spacing, radii, icon sizes, layout widths. No MUI/Paper/Tailwind code; adapters live in each app (§5.5)         | `web`, `mobile`                                    |
 
 ### 6.1 Why `types` _and_ `validation` (not just one)
 
@@ -754,9 +784,9 @@ Risks are ordered roughly by how early they need a decision, not by severity.
 | 11  | **`redirect()` called inside a Server Action bound to `useActionState`, on a form resubmitted after that same action previously returned a normal (non-redirecting) state, doesn't reliably navigate the browser** — a confirmed, open upstream Next.js App Router limitation (vercel/next.js discussions #73199/#82080, issue #72842), reproduced independently of this codebase's own code, dev vs. production builds, and `redirect()` vs. a client-side `router.push`/`window.location` alternative. | Affects `login`/`register`/profile-edit/delete-account — any user who corrects a mistake and resubmits the same page would be stuck, not redirected, after the retry genuinely succeeds. | **Found, not fixed (Milestone 20)** — see `docs/PROGRESS.md`'s Milestone 20 Bugs Found/Known Issues for the full repro history. `apps/web-e2e/src/critical-path.spec.ts` works around it with a `page.reload()` between a failed and a corrected submission (both a reliable workaround and a realistic thing a stuck real user would do). A real client-side fix (e.g., abandoning `useActionState` for these four forms in favor of a plain client-submit-then-`router.push` pattern) is a reasonable follow-up once a future milestone has UI-polish scope, not pursued now since it touches four forms for a framework-level issue outside this milestone's own scope. **Scheduled: Milestone 26** (the styling track's polish pass, `IMPLEMENTATION_PLAN.md`). |     |
 | 12  | **`EventsService`'s realtime fan-out (§5.4, Milestone 22) is in-process RxJS, not Redis pub/sub** — a client connected to one `apps/api` instance never sees an event emitted on another.                                                                                                                                                                                                                                                                                                                 | Breaks the moment `apps/api` runs as more than one instance (the same ceiling risk #4 already names for BullMQ processors, just for push instead of jobs).                              | Accepted for MVP single-instance scale. Not a silent correctness gap: REST stays authoritative (§5.4's "reconnect → re-fetch" contract), so a missed push on the wrong instance is recovered on the client's next reconnect, not lost. Revisit (Redis pub/sub, or a dedicated realtime-gateway process) only once `apps/api` is actually scaled past one instance.                                                                                                                                                                                                                                                                                                       |
 | 13  | **Mobile's SSE client (`react-native-sse`) reconnects with the `Authorization` header it was constructed with**, not a freshly-read token — unlike the browser-native `EventSource` web uses via its proxy route, which re-authenticates through the Route Handler on every reconnect.                                                                                                                                                                                                                  | A connection that outlives its access token's validity (15 min) without anything else refreshing it will 401 on reconnect and keep retrying with the same stale token indefinitely.     | Accepted for MVP: the server's own forced ~10-minute disconnect (§5.4) is comfortably inside the 15-minute token TTL for a connection that was valid when opened, and ordinary app usage (any other REST call) independently refreshes the stored token. Documented, not solved, here — see `docs/PROGRESS.md`'s Milestone 22 Known Issues.                                                                                                                                                                                                                                                                                                                              |
-| 14  | **MUI and React Native Paper follow different Material Design generations** (planned, §5.5): MUI v9's components are Material Design 2-based, while Paper v5's `MD3` themes are Material Design 3 (tonal surfaces, pill-shaped buttons, different elevation). | Left at defaults, the same "button" or "card" looks visibly different on web and mobile, which works against the styling track's main goal. | The tokens override what differs: radii (Paper `roundness`, MUI `shape`), colors (no MD3 tonal elevation tints; flat surfaces with token borders), and typography on both. The M26 parity review is the check. If a Paper component can't be made to match through its theme, fall back to a small NativeWind-styled core-RN component for that one element, not to `cssInterop` on Paper. |
-| 15  | **Web uses Tailwind v4, mobile uses Tailwind v3** (planned, §5.5): NativeWind 4, the stable line, requires Tailwind v3; NativeWind 5, which supports v4, is a release candidate targeting Expo SDK 57. Some utility names and defaults changed between v3 and v4 (e.g. the `shadow`/`rounded` scales were shifted, and the default `ring` width changed). | The same class string can render differently on the two platforms, and two Tailwind versions must coexist in one pnpm workspace. | Share token names, not raw class strings: both configs expose the same token-backed custom names (`bg-primary`, `text-secondary`, ...), and visual sizes come from tokens rather than Tailwind's default scales. Tailwind v3 is pinned in `apps/mobile/package.json`, v4 at the root; check with `pnpm --filter mobile why tailwindcss`. Revisit (NativeWind 5 + Tailwind v4 on mobile) as part of a future Expo SDK 57 upgrade, once NativeWind 5 is stable. |
-| 16  | **New UI dependencies vs. the pinned React and Expo Go** (planned, §5.5): the workspace forces `react@19.2.3` through `pnpm-workspace.yaml` `overrides` (react-native 0.85.3's renderer is locked to it), and mobile is tested in Expo Go for SDK 56, which only runs its own bundled native modules. | A library whose peer range excludes 19.2.3, or that needs a native module Expo Go doesn't ship, either breaks the install or crashes at runtime in Expo Go. | M23 checks every new package's peer ranges against 19.2.3 before installing and limits mobile additions to pure-JS libraries or Expo-Go-bundled native modules (`react-native-reanimated`, `expo-font`), installed via `pnpm exec expo install`. pnpm's `minimumReleaseAge` may block very fresh releases; use the newest version past that gate rather than adding exclusions. |
+| 14  | **MUI and React Native Paper follow different Material Design generations** (§5.5): MUI v9's components are Material Design 2-based, while Paper v5's `MD3` themes are Material Design 3 (tonal surfaces, pill-shaped buttons, different elevation). | Left at defaults, the same "button" or "card" looks visibly different on web and mobile, which works against the styling track's main goal. | The tokens override what differs: radii (Paper `roundness`, MUI `shape`), colors (no MD3 tonal elevation tints; flat surfaces with token borders), and typography on both. The M26 parity review is the check. If a Paper component can't be made to match through its theme, fall back to a small NativeWind-styled core-RN component for that one element, not to `cssInterop` on Paper. **M23:** applied to buttons (`components/ui/button.tsx`), inputs and elevation; login/register checked side by side on web and Expo Go. |
+| 15  | **Web uses Tailwind v4, mobile uses Tailwind v3** (§5.5): NativeWind 4, the stable line, requires Tailwind v3; NativeWind 5, which supports v4, is a release candidate targeting Expo SDK 57. Some utility names and defaults changed between v3 and v4 (e.g. the `shadow`/`rounded` scales were shifted, and the default `ring` width changed). | The same class string can render differently on the two platforms, and two Tailwind versions must coexist in one pnpm workspace. | Share token names, not raw class strings: both configs expose the same token-backed custom names (`bg-primary`, `text-secondary`, ...), and visual sizes come from tokens rather than Tailwind's default scales. Tailwind v3 is pinned in `apps/mobile/package.json`, v4 at the root; check with `pnpm --filter mobile why tailwindcss`. Revisit (NativeWind 5 + Tailwind v4 on mobile) as part of a future Expo SDK 57 upgrade, once NativeWind 5 is stable. **M23:** in place; mobile resolves 3.4.19 and web 4.3.3, both configs expose the same token names. |
+| 16  | **New UI dependencies vs. the pinned React and Expo Go** (§5.5): the workspace forces `react@19.2.3` through `pnpm-workspace.yaml` `overrides` (react-native 0.85.3's renderer is locked to it), and mobile is tested in Expo Go for SDK 56, which only runs its own bundled native modules. | A library whose peer range excludes 19.2.3, or that needs a native module Expo Go doesn't ship, either breaks the install or crashes at runtime in Expo Go. | M23 checks every new package's peer ranges against 19.2.3 before installing and limits mobile additions to pure-JS libraries or Expo-Go-bundled native modules (`react-native-reanimated`, `expo-font`), installed via `pnpm exec expo install`. pnpm's `minimumReleaseAge` may block very fresh releases; use the newest version past that gate rather than adding exclusions. **M23:** all new packages accept React 19.2.3; Reanimated/Worklets are pinned to Expo SDK 56's 4.3.1/0.8.3 by `pnpm-workspace.yaml` overrides after a second, incompatible Reanimated 4.7.0 slipped in through optional peers; checked in Expo Go on the Android emulator. |
 
 ## 13. Open Questions (deferred, not blocking design)
 

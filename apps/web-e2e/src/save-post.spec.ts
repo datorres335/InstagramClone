@@ -63,7 +63,12 @@ test.describe('saved posts: save a post and find it in the saved list', () => {
     await expect(page.getByText('save me for later')).toBeVisible();
 
     await page.getByRole('button', { name: 'Unsave' }).click();
-    await expect(page.getByRole('button', { name: 'Save' })).toBeVisible();
+    // `exact: true` — a plain 'Save' substring-matches the 'Unsave' button
+    // that's still showing while unsaveAction runs, so the reload below
+    // could race the action.
+    await expect(
+      page.getByRole('button', { name: 'Save', exact: true }),
+    ).toBeVisible();
 
     // Reload /saved: the unsaved post should no longer be in the list
     // (SavedPostsList doesn't remove it locally on unsave, so this is the

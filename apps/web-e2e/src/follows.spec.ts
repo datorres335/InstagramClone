@@ -74,7 +74,9 @@ test.describe('follows: follow/unfollow from a profile', () => {
     await expect(page.getByText('1 followers')).toBeVisible();
 
     await page.getByRole('button', { name: 'Unfollow' }).click();
-    await expect(page.getByRole('button', { name: 'Follow' })).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: 'Follow', exact: true }),
+    ).toBeVisible();
     await expect(page.getByText('0 followers')).toBeVisible();
   });
 
