@@ -72,6 +72,16 @@ describe('SettingsScreen', () => {
     );
   });
 
+  it('logs out and navigates back to /login', async () => {
+    logout.mockResolvedValue(undefined);
+
+    render(<SettingsScreen />);
+    fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
+
+    await waitFor(() => expect(logout).toHaveBeenCalled());
+    expect(router.replace).toHaveBeenCalledWith('/(auth)/login');
+  });
+
   describe('change password', () => {
     it('changes the password and shows a success message', async () => {
       jest.mocked(apiClient.users.changePassword).mockResolvedValue(undefined);

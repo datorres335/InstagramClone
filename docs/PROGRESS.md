@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Post-MVP Features
-**Current Milestone:** Milestone 23 — Design System Foundation, App Shells + Auth Screens
+**Current Milestone:** Milestone 24 — Feed, Posts & Profiles
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -292,6 +292,21 @@ caller), and four `web-e2e` specs had latent races where an assertion could pass
 before a Server Action finished. Fixing those also explained the long-standing
 "unexplained" `comment-post`/`profile` pre-fill flakes (bug #46 and the Milestone 20
 known issues). No API, database or validation changes.
+
+Milestone 24 restyles the feed, post and profile screens on both platforms: the post
+card (avatar header, a photo carousel framed at the first photo's aspect ratio with
+page dots, a like/comment/save icon row, caption and a compact "3h"-style timestamp),
+post detail with its comments, the likers/followers/following lists, create post,
+the profile header and 3-column grid, and edit profile. Like and save are now icon
+toggles that keep their accessible names (`Like`/`Unlike`, `Save`/`Unsave`) and expose
+their pressed state. The mobile home header is cleaned up: unread notifications are a
+tab-bar badge, New post is a header icon, and Log out moved to Settings. Mobile
+screens outside the tabs now get a native stack header with a back button and title.
+Two small shared helpers were added: `formatTimeAgo` (`packages/types`), so both apps
+print identical timestamps, and `frameAspect`/`avatarSize` (`packages/design-tokens`).
+A follower list no longer shows a Follow button on the viewer's own row, and
+`apps/mobile` gained a `typecheck` target that CI and the pre-push hook now run. No
+API, database or validation changes.
 
 ---
 
@@ -1789,6 +1804,66 @@ IMPLEMENTATION_PLAN.md` M21/M22
 - [x] Updated `docs/ARCHITECTURE.md` (§2, §3, §3.2, §5.4, §5.5 now implemented,
       §6, risks #11/#14–#17), `docs/IMPLEMENTATION_PLAN.md` (M23 record),
       `docs/FEATURES.md` (Feature 20 progress), `README.md` (repository layout)
+
+### Milestone 24 — Feed, Posts & Profiles
+
+- [x] Shared helpers: `formatTimeAgo` in `packages/types` ("Just now", "5m", "3h",
+      "2d", "4w", then "Mar 5" / "Dec 31, 2025"; 13 tests), and in
+      `packages/design-tokens` `avatarSize` (32/44/80/150) plus `mediaAspect` and
+      `frameAspect(width, height)`, which clamps a post's frame to Instagram's
+      4:5–1.91:1 range (tests added). Web emits the avatar sizes as `--ig-avatar-*`
+      and maps them to `size-avatar-*` utilities
+- [x] Web building blocks (`src/components/ui/`): `UserAvatar` (MUI `Avatar`,
+      letter fallback), `EmptyState` (icon + sentence), `TimeAgo` (`<time>`).
+      `(app)/media-carousel.tsx`: a scroll-snap row of real `<img>`s with page dots,
+      previous/next buttons at `md`+, and "Photo i of n" for screen readers.
+      `(app)/user-list.tsx` for the three people lists
+- [x] Web screens: post card (avatar + `@username` + location header, Delete as an
+      icon button, carousel, like/comment/save icon row with counts, caption,
+      timestamp), feed (`max-w-feed` column, empty state, outlined "Load more"),
+      post detail + comment section (avatar rows, timestamps, an outlined "Add a
+      comment" field), likers/followers/following lists, create post (dropzone,
+      thumbnail grid with per-photo progress and remove buttons, Caption/Location
+      fields, Share), profile (avatar header, stats, Edit profile/Saved or a
+      Follow button, 3-column square grid, empty state), edit profile (avatar row
+      with a "Change photo" button, outlined fields, a Private account switch)
+- [x] Icon toggles: like is `FavoriteBorder`/`Favorite` in the like color, save is
+      `BookmarkBorder`/`Bookmark`; `aria-label` keeps `Like`/`Unlike` and
+      `Save`/`Unsave`, `aria-pressed` carries the state. Follow is a contained
+      "Follow" / outlined "Unfollow" button
+- [x] Mobile building blocks: `components/ui/user-avatar.tsx`
+      (`Avatar.Image`/`Avatar.Text`), `empty-state.tsx`, `time-ago.tsx`,
+      `skeleton.tsx`, plus `media-carousel.tsx` (paging `FlatList` at the same
+      `frameAspect`, page dots), `follow-button.tsx` (presentational), and
+      `user-list.tsx` (skeleton rows while loading)
+- [x] Mobile screens: the same post card, post detail + comments, likers/
+      followers/following, create post, profile and edit profile designs as web,
+      with Paper `IconButton`s (`accessibilityLabel` + `accessibilityState.selected`)
+- [x] Mobile navigation: screens outside the tabs get a native stack header (back
+      button + title: "Post", "Likes", "New post", "@username", "Edit profile",
+      "Followers", "Following"). The home header is now "Welcome, …" plus a New post
+      icon; the unread count is a `tabBarBadge` on the Notifications tab
+      (`lib/use-unread-notification-count.ts`, replacing `notification-badge.tsx`);
+      Log out is a button at the bottom of Settings
+- [x] Own-row fix: followers/following/likers lists hide the Follow button on the
+      viewer's own row on both platforms (the M10 known issue; bug #86)
+- [x] Cleared `avatar-uploader.tsx`'s unused `eslint-disable` warning
+- [x] Tests: `apps/web/src/app/(app)/post-toggles.spec.tsx` (7: icon and
+      `aria-pressed` for each like/save state), mobile `like-button`/`save-button`
+      specs (icon glyph + `selected` state for each value, via a new
+      `test-support/render-with-theme.tsx`), `use-unread-notification-count.spec.ts`
+      (6, replacing `notification-badge.spec.tsx`'s 5, including the tab's
+      "Notifications (N)" name), a `home.spec.tsx` test for the
+      New post icon, a `settings-screen.spec.tsx` test for Log out, and own-row
+      tests in `follow-lists.spec.tsx`/`post-likes.spec.tsx`. Existing specs moved
+      from text to role queries where a text button became an icon; every e2e spec
+      passes with its selectors unchanged
+- [x] Fixed the known issue that `apps/mobile/tsconfig.spec.json` didn't type-check
+      (bug #87), and added a `typecheck` target to `apps/mobile` (app + spec
+      configs), run by a new CI step ("Typecheck affected") and the pre-push hook
+- [x] Updated `docs/ARCHITECTURE.md` (§5.5 status, parity map and building blocks,
+      §6 packages table), `docs/IMPLEMENTATION_PLAN.md` (M24 record),
+      `docs/FEATURES.md` (Features 6 and 20), `docs/API.md` (§5 own-row note)
 
 ---
 
@@ -3592,6 +3667,45 @@ web's phone bar), mobile content under the status bar (top inset applied in
 the root Stack), and light status-bar icons on a light app (`userInterfaceStyle:
 light`).
 
+### Milestone 24
+
+```bash
+pnpm exec nx run-many -t test -p types design-tokens    # formatTimeAgo 13, frameAspect/avatarSize added
+pnpm exec nx run-many -t lint test build -p web
+# ^ first build failed: "Can't resolve '@mui/icons-material/ChatBubbleOutline'"
+#   (and DeleteOutline, PeopleOutline). @mui/icons-material v9 dropped the
+#   bare *Outline aliases; switched to the *OutlineOutlined names.
+#   avatar-uploader.tsx's unused eslint-disable warning is gone.
+
+pnpm exec tsc -p apps/mobile/tsconfig.app.json --noEmit
+# ^ TS2883 on renderWithTheme's inferred return type; annotated RenderResult.
+pnpm exec nx run mobile:test
+# ^ like/save/post-detail/saved-posts/home specs queried the old text
+#   buttons ("Like", "Save") and exact captions; moved to
+#   getByRole('button', { name }) and caption regexes (the caption line now
+#   starts with "@username"). No assertion removed.
+pnpm --filter mobile exec expo export --platform android   # 5.4 MB Hermes bundle
+
+pnpm exec nx run-many -t lint test build --exclude=mobile,web-e2e,api-e2e --skip-nx-cache   # 9 projects, clean
+pnpm exec nx run-many -t lint typecheck test -p mobile --skip-nx-cache   # 27 suites / 138 tests
+pnpm exec nx run-many -t typecheck --skip-nx-cache             # mobile (new) + prisma
+# ^ first run of the spec config: the two known errors (bug #87); fixed.
+pnpm exec nx run web-e2e:e2e -- --project=chromium              # 30/30
+pnpm exec nx run web-e2e:e2e -- --project=webkit --workers=1    # 30/30
+pnpm exec nx run web-e2e:e2e -- --project=firefox --workers=1   # 30/30
+pnpm exec nx run api-e2e:e2e --skip-nx-cache                    # 154/154
+```
+
+Visual check (not automated): Playwright screenshots at 1280 px and 390 px of the
+feed, post detail, profile, followers, edit profile and create post; `adb
+screencap` in Expo Go on the `Pixel_6a` emulator of the feed, post detail, another
+user's profile, a followers list, the viewer's own profile, edit profile and New
+post. Fixes that came out of it: a Follow button on the viewer's own row in a
+follower list (bug #86), the mobile profile's Follow button now spans the header
+like web's, grid tiles get a placeholder color while their image loads, and
+mobile's Bio field gained web's "Up to 150 characters." hint. Photos stay gray on
+the emulator (Known Issues: media URLs point at `localhost`).
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -3983,7 +4097,9 @@ record.
   computation is more predictable than carving out an exception for one row.
   Recorded here because it's a real, slightly-surprising-at-first-glance
   behavior worth knowing about, not because it needs changing (also see Known
-  Issues below, and `docs/API.md` §5's note on the same point).
+  Issues below, and `docs/API.md` §5's note on the same point). Milestone 24
+  kept the API value but stopped both apps from rendering a Follow button on
+  that row (bug #86).
 - **Mobile's followers/following screens are flat routes
   (`app/profile/followers.tsx`/`following.tsx`) reached via `router.push`
   with `username` as a param, not nested under `app/profile/[username]/`.**
@@ -4896,6 +5012,54 @@ corrections to something it got wrong.
   in front of the user's next action on that page (part of bug #79). It resets to
   zero when `/notifications` opens and relies on realtime pushes plus the reconnect
   re-fetch otherwise.
+
+### Milestone 24
+
+- **The like and comment counts sit next to their icons** ("♥ 3 likes 💬 2
+  comments … 🔖") instead of Instagram's separate "3 likes" line under the icon
+  row. The `N likes` link (to the likers list) and the comment count were already
+  there and are what tests and screen-reader users find; keeping them beside their
+  icons gives one row that fits at 390 px on both platforms.
+- **`formatTimeAgo` lives in `packages/types`**, the first runtime function in a
+  package that so far held only types. Both apps need byte-identical output, and
+  `types` is the shared package with no dependencies that both already resolve;
+  `validation` is for Zod schemas and `design-tokens` for visual values.
+  `docs/ARCHITECTURE.md` §6's table now says so.
+- **`design-tokens` holds one pure function, `frameAspect`.** It turns the
+  `mediaAspect` tokens into a post's frame ratio (first photo's ratio, clamped to
+  4:5–1.91:1, square when unknown). Both carousels must agree on it, so it sits
+  next to the tokens it reads rather than being written twice.
+- **Mobile screens outside the tabs get a native stack header.** The plan didn't
+  cover navigation chrome for pushed screens; before M24 they had no visible back
+  button (only Android's system back) and showed their own titles in the content.
+  The header uses token colors and Inter through `screenOptions`, like the tab bar.
+  Saved, Settings and a conversation show an untitled header (back button only)
+  until M25 restyles them, because they still render their own in-screen titles.
+- **Mobile's unread count is a tab badge** (`useUnreadNotificationCount` in
+  `(tabs)/_layout.tsx`). This reverses two Milestone 16 decisions (the badge only on
+  the landing screen; no `tabBarBadge` because every tab would have to become
+  explicit): M23 already made every tab explicit, so the badge now costs one option.
+  The hook keeps the badge's realtime and race-guard behavior (bug #85) and its
+  spec replaces `notification-badge.spec.tsx` with the same checks plus the reset
+  on opening Notifications.
+- **New post is a home-header icon on mobile, and Log out is a button at the bottom
+  of Settings.** Web has Create and Log out in its rail; mobile keeps its six tabs
+  (a seventh would crowd the bar), so New post goes where Instagram's app puts it
+  and Log out joins the other account actions.
+- **A shared mobile test render helper now exists** (`test-support/render-with-theme.tsx`).
+  M23 deferred it until a test needed token-themed rendering; the new icon tests
+  do, because Paper only renders `MaterialIcons` glyphs through the `PaperIcon`
+  provider.
+- **People lists are plain rows, not `List`/`ListItemButton` (web) or `List.Item`
+  (mobile).** Each row holds two separate controls, a profile link and a Follow
+  button, and `ListItemButton` would make the whole row one button with another
+  nested inside. Web uses `<ul>`/`<li>` with Tailwind, mobile a `View` row with
+  NativeWind; the parity map in `docs/ARCHITECTURE.md` §5.5 is updated.
+- **Loading states.** Web pages are Server Components that render once their data
+  is fetched, so there's no client-side loading state to restyle (adding
+  `loading.tsx` skeletons would be new behavior). On mobile the people lists show
+  skeleton rows; the feed, post and profile keep the centered `ActivityIndicator`,
+  since their layout depends on photo sizes the skeleton wouldn't know yet.
 
 ---
 
@@ -6169,6 +6333,30 @@ dev`/`web-e2e` harness instead of Jest, and failing because that job
     re-fetch and keep the larger value if any arrived; a new mobile unit test fails
     without the fix and passes with it. This predates M23 (Milestone 22 code).
 
+### Milestone 24
+
+86. **A follower, following or likers list showed a Follow button on the viewer's
+    own row.** `isFollowedByMe` asks "does the viewer follow this user", which is
+    always false for yourself, so viewing someone else's followers list that
+    includes you offered "Follow" next to your own name (pressing it would hit the
+    API's self-follow `409`). Milestone 10 recorded this as expected API behavior; it is
+    still the correct API value, but the button was a UI bug, and it became obvious
+    once the rows had avatars. Both apps now pass the signed-in username to the
+    list and hide the button on that row (web reads it from `auth.session()`,
+    mobile from `useAuth()`); new tests in `follow-lists.spec.tsx` and
+    `post-likes.spec.tsx`.
+87. **`apps/mobile/tsconfig.spec.json` didn't type-check** (a Milestone 23 known
+    issue): `test-setup.ts`'s `defineGlobal` had untyped parameters, and three
+    specs destructured `mock.calls[0]`, which `noUncheckedIndexedAccess` types as
+    possibly undefined (`tsc` reports only the first, at
+    `conversation-screen.spec.tsx:149`, because it caches the check per type).
+    Typed the parameters and guarded each lookup the way the new hook spec does.
+    Nothing ran `tsc` on mobile at all (Jest and Metro use Babel), so `apps/mobile`
+    now has a `typecheck` target covering the app and spec configs, run in CI and
+    the pre-push hook. That step also picks up `prisma`'s existing `typecheck`
+    target, which had never run in CI and didn't depend on `prisma:generate` even
+    though `seed.ts` imports the gitignored generated client; it now does.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -6286,9 +6474,9 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   per test.
 - **`isFollowedByMe` on a followers/following list row is always `false` when the
   row happens to be the viewer's own entry** (Milestone 10, see Deviations above) —
-  a correct, literal consequence of "does the viewer follow this row's user," not a
-  bug, but worth knowing before assuming a "Follow" button next to your own name in
-  your own follower list means something is broken.
+  a correct, literal consequence of "does the viewer follow this row's user." Since
+  Milestone 24 neither app shows a Follow button on that row (bug #86); the API
+  value is unchanged.
 - **No follower-count/following-count caching or denormalization** —
   `FollowsService.getFollowCounts` runs two real `COUNT(*)` queries against
   `follows` on every `GET /users/:username` call. Fine at MVP scale (`follows` has
@@ -6678,11 +6866,23 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   milestone (no on-device SSE run happened, same limitation Milestone 7's mobile
   auth entry already notes for this environment) — worth a real device/simulator
   pass alongside that existing follow-up.
-- **Only the shell and auth screens are styled so far (Milestone 23).** Every other
-  screen still has its pre-M23 markup inside the new shell. On mobile the home screen
-  still shows its own "New post"/"Notifications" links, notification badge and a
-  dark Log out button in its header; those belong to Milestones 24–25, which restyle
-  each screen.
+- **Discovery, activity, messages and settings screens aren't restyled yet.** M23
+  styled the shell and auth screens and M24 the feed, post and profile screens;
+  explore, search, notifications, saved, the messages inbox and thread, and settings
+  still have their pre-M23 markup inside the new shell until Milestone 25. On
+  mobile, Saved, Settings and a conversation show an untitled stack header (back
+  button only) because they still render their own titles in the content; M25
+  gives them header titles like the other pushed screens.
+- **Post photos and avatars don't load in the Android emulator, and uploads from it
+  would fail the same way.** `StorageService` builds both public media URLs and
+  presigned upload URLs from `S3_ENDPOINT` (`http://localhost:9000` in `.env`), and
+  inside the emulator `localhost` is the emulator itself. Images stay as gray
+  placeholders (layout, carousel dots and everything else render normally); the
+  API itself reaches MinIO fine. Fixing it needs a separate client-facing media
+  base URL (e.g. `http://10.0.2.2:9000` for the emulator, a LAN IP for a phone)
+  alongside the API's own `S3_ENDPOINT`, which also changes how presigned URLs are
+  signed. That's a configuration change, not a styling one, so it's left for when
+  a physical device or a deployment needs it. Found during M24's emulator check.
 - **Web and mobile run different Tailwind majors** (v4 and v3; `docs/ARCHITECTURE.md`
   risk #15). Shared utility names come from the tokens, but Tailwind's own default
   scales differ between the two (e.g. `shadow-sm`, `rounded`), so prefer token-backed
@@ -6708,10 +6908,6 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   happen locally; a production deployment should serve `apps/web` over HTTP/2,
   which multiplexes streams over one connection. In tests, close any extra
   browser context when done with it (bug #84). See `docs/ARCHITECTURE.md` risk #17.
-- **`apps/mobile/tsconfig.spec.json` doesn't type-check cleanly**: an implicit-`any`
-  in `src/test-setup.ts` and a tuple-destructuring error in
-  `conversation-screen.spec.tsx`, both predating M23. Jest compiles through Babel,
-  and no target runs `tsc` on the spec config, so nothing fails today.
 
 ---
 
@@ -6848,7 +7044,9 @@ web-proxy-vs-mobile-direct auth split, adding `react-native-sse` via `pnpm add`
 rather than `expo install`, and the seventh register-throttle increase) are equally
 each decided and recorded above with rationale, not left open — including the
 WebSocket-vs-SSE choice itself, explicitly decided (not deferred) in
-`docs/IMPLEMENTATION_PLAN.md`'s M22 section. Everything else recorded in
+`docs/IMPLEMENTATION_PLAN.md`'s M22 section. Milestones 23 and 24 (the first
+two styling milestones) made styling and placement decisions only, each recorded
+with its reason in their Deviations entries above. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -6859,48 +7057,49 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 23 — Design System Foundation, App Shells + Auth Screens is now
-complete** (see Completed/Validation Performed/Deviations/Bugs Found above). The
-styling track continues as planned in `docs/IMPLEMENTATION_PLAN.md`; push
-notifications stays at **Milestone 27**, after it.
+**Milestone 24 — Feed, Posts & Profiles is now complete** (see Completed/Validation
+Performed/Deviations/Bugs Found above). The styling track continues as planned in
+`docs/IMPLEMENTATION_PLAN.md`; push notifications stays at **Milestone 27**, after it.
 
-**Milestone 24 — Feed, Posts & Profiles.** Full scope in
-`docs/IMPLEMENTATION_PLAN.md` M24 (M25, which covers discovery, activity, messages
-and settings, is independent of it and could go first). The foundation is in place,
-so this is screen work:
+**Milestone 25 — Discovery, Activity, Messages & Settings.** Full scope in
+`docs/IMPLEMENTATION_PLAN.md` M25: explore, search, notifications, saved posts, the
+messages inbox and conversation thread, and settings, on web and mobile. This is
+the last batch of screens before M26's consistency pass:
 
-1. **Use what M23 built, don't re-create it.** Colors, sizes and radii come from
-   `@instagram-clone/design-tokens` only. On web, prefer the token-backed Tailwind
-   utilities (`bg-surface`, `text-text-secondary`, `text-label`, `rounded-md`,
-   `max-w-feed`, ...) for layout and MUI components themed by `src/theme/theme.ts`.
-   On mobile, use NativeWind classes on core React Native elements, Paper components
-   (`components/ui/button.tsx` for buttons), and `PaperIcon`'s Material glyphs. Follow
-   the parity map in `docs/ARCHITECTURE.md` §5.5.
-2. **Keep accessible names, and keep the waits honest.** The like, save and follow
-   toggles become icons; each keeps its name (`Like`/`Unlike`, `Save`/`Unsave`,
-   `Follow`/`Unfollow`) as `aria-label`/`accessibilityLabel`. When a test waits for
-   an action, assert something only true once it has finished: a cleared field,
-   `exact: true` on toggled names, an exact URL (bugs #79/#80). Remember that
-   `getByText` also matches `<textarea>` contents. After any `goto()`/`reload()`,
-   call `waitForHydration(locator)` (`apps/web-e2e/src/support/hydration.ts`)
-   before typing into, uploading to or clicking a client-side control, never a
-   fixed `waitForTimeout` (bug #83). Close every extra `browser.newContext()` when
-   the test is done with it (bug #84). Validate new specs the way CI runs them:
+1. **Reuse M24's building blocks rather than writing new ones.** Web:
+   `components/ui/` (`UserAvatar`, `EmptyState`, `TimeAgo`), `(app)/post-card.tsx`,
+   and the profile page's 3-column grid markup for explore and saved. Mobile:
+   `components/ui/` (`UserAvatar`, `EmptyState`, `TimeAgo`, `Skeleton`, `Button`),
+   `post-card.tsx`, and the profile screen's grid `FlatList`. Search results and
+   notification rows follow the people-list row (`follow-list-item.tsx` on both
+   platforms): avatar, a link, a trailing control. Colors and sizes still come from
+   `@instagram-clone/design-tokens` only (`avatarSize` for avatars); follow the
+   parity map in `docs/ARCHITECTURE.md` §5.5.
+2. **Give mobile's Saved, Settings and conversation screens real header titles.**
+   They show an untitled stack header today (`app/_layout.tsx`, Known Issues)
+   because each still renders its own title; move the title into the header the
+   way M24 did for post, likes, profile and edit screens. The conversation title is
+   the other participant's `@username`, like `usernameTitle` does for profiles.
+3. **Keep accessible names and keep the waits honest.** Rows that become icon
+   buttons keep their names as `aria-label`/`accessibilityLabel`. Unread state needs
+   a non-visual signal as well as the highlight (for example "unread" in the row's
+   accessible name), and the web notifications nav item keeps `Notifications (N)`.
+   In e2e, assert something only true once an action has finished (bugs #79/#80),
+   call `waitForHydration(locator)` after `goto()`/`reload()` before interacting
+   (bug #83), close extra browser contexts (bug #84), and validate with
    `--project=webkit --workers=1` as well as Chromium.
-3. **Mobile home cleanup:** the home screen's header still carries its own "New
-   post"/"Notifications" links, a notification badge and a Log out button (Known
-   Issues). Decide where each belongs now that the tab bar exists: a tab badge for
-   unread notifications, Create from the profile or a header icon, Log out under
-   Settings. Move them, and update `home.spec.tsx`/`notification-badge.spec.tsx` to
-   match the new placement without weakening what they check.
-4. **Web pages render inside the shell's content column** (`max-w-content`, already
-   padded); the feed column is `max-w-feed`. `avatar-uploader.tsx` has a pre-existing
-   unused `eslint-disable` warning to clear while restyling it.
-5. **Validate visually on both platforms**, the same way M23 did: Playwright
+4. **Settings' delete-account confirmation** becomes a MUI `Dialog` on web and a
+   Paper `Portal` + `Dialog` on mobile. Keep the existing button and field names the
+   e2e and unit tests use.
+5. **Validate visually on both platforms**, the same way M23/M24 did: Playwright
    screenshots at 1280 px and 390 px, and Expo Go on the Android emulator (the API
-   on `127.0.0.1`, `apps/mobile/.env` pointing at `10.0.2.2`). Force-stop Expo Go
-   after native-level changes such as `app.json`; hot reload doesn't reset native
-   state (see the `StatusBar` known issue).
+   on `127.0.0.1`, `apps/mobile/.env` pointing at `10.0.2.2`). Photos show as gray
+   placeholders on the emulator (Known Issues: media URLs use `localhost`), so
+   check image layout on web. Expo Go's floating dev-tools button can cover a
+   header icon; drag it aside rather than restyling around it.
+6. **Run `nx run-many -t lint typecheck test`** before calling it done; mobile's
+   new `typecheck` target covers app and spec code, which Jest and Metro don't
+   type-check.
 
 The guidance from Milestone 22 below still applies (throttle budgets, Playwright
 `--grep` placement, WebKit/Firefox checks, confirming process identity before

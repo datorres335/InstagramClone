@@ -1,10 +1,15 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { HelperText, Text, TextInput } from 'react-native-paper';
 
+import { colors } from '@instagram-clone/design-tokens';
 import type { CommentResponse } from '@instagram-clone/validation';
 
 import { apiClient } from '../lib/api-client';
 import { authErrorMessage } from '../lib/auth-error-message';
+import { Button } from './ui/button';
+import { TimeAgo } from './ui/time-ago';
+import { UserAvatar } from './ui/user-avatar';
 
 interface CommentSectionProps {
   postId: string;
@@ -16,12 +21,10 @@ interface CommentSectionProps {
 
 /**
  * The comment thread + add-comment form on the post detail screen only
- * (docs/IMPLEMENTATION_PLAN.md M14) — not the feed; `PostCard`'s comments
- * count is just a link to this screen there. Plain `.map()`, not a
- * `FlatList` — this renders inside `post/[id].tsx`'s outer `ScrollView`,
- * and nesting a vertical `FlatList` inside a vertical `ScrollView` (unlike
- * the feed's horizontal-in-vertical carousel nesting) is the same-direction
- * case React Native actually warns about.
+ * (docs/IMPLEMENTATION_PLAN.md M14) — twin of apps/web's `CommentSection`.
+ * Plain `.map()`, not a `FlatList` — this renders inside `post/[id].tsx`'s
+ * outer `ScrollView`, and a vertical list inside a vertical `ScrollView` is
+ * the same-direction nesting React Native warns about.
  */
 export function CommentSection({
   postId,
@@ -82,97 +85,89 @@ export function CommentSection({
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
+    <View className="gap-3 p-3">
+      <Text variant="labelLarge" role="heading">
         Comments
       </Text>
-      {comments.length === 0 && <Text>No comments yet.</Text>}
+      {comments.length === 0 && (
+        <Text variant="bodyMedium" style={{ color: colors.textSecondary }}>
+          No comments yet.
+        </Text>
+      )}
       {comments.map((comment) => {
         const canDelete =
           viewerUsername === comment.author.username ||
           viewerUsername === postAuthorUsername;
         return (
-          <View key={comment.id} style={styles.row}>
-            <Text style={styles.body}>
-              <Text style={styles.author}>@{comment.author.username}</Text>{' '}
-              {comment.body}
-            </Text>
-            {canDelete && (
-              <Pressable
-                onPress={() => handleDelete(comment.id)}
-                accessibilityRole="button"
-              >
-                <Text style={styles.delete}>Delete</Text>
-              </Pressable>
-            )}
+          <View key={comment.id} className="flex-row gap-3">
+            <UserAvatar
+              username={comment.author.username}
+              avatarUrl={comment.author.avatarUrl}
+              size="sm"
+            />
+            <View className="flex-1 gap-0.5">
+              <Text variant="bodyMedium">
+                <Text variant="labelLarge">@{comment.author.username}</Text>{' '}
+                {comment.body}
+              </Text>
+              <View className="flex-row items-center gap-3">
+                <TimeAgo iso={comment.createdAt} />
+                {canDelete && (
+                  <Pressable
+                    onPress={() => handleDelete(comment.id)}
+                    accessibilityRole="button"
+                    hitSlop={8}
+                  >
+                    <Text
+                      variant="labelSmall"
+                      style={{ color: colors.textSecondary }}
+                    >
+                      Delete
+                    </Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
           </View>
         );
       })}
       {nextCursor && (
-        <Pressable
+        <Button
+          mode="text"
           onPress={handleLoadMore}
           disabled={loadingMore}
-          accessibilityRole="button"
+          style={{ alignSelf: 'flex-start' }}
         >
-          <Text style={styles.loadMore}>
-            {loadingMore ? 'Loading…' : 'Load more comments'}
-          </Text>
-        </Pressable>
+          {loadingMore ? 'Loading…' : 'Load more comments'}
+        </Button>
       )}
       {viewerUsername && (
-        <View style={styles.form}>
+        <View className="flex-row items-center gap-2 border-t border-border pt-3">
           <TextInput
-            style={styles.input}
-            placeholder="Add a comment"
+            mode="outlined"
+            dense
+            label="Add a comment"
             accessibilityLabel="Add a comment"
             value={body}
             onChangeText={setBody}
             maxLength={2200}
             multiline
+            style={{ flex: 1 }}
           />
-          <Pressable
-            style={styles.postButton}
+          <Button
+            mode="text"
             onPress={handlePost}
             disabled={posting || !body.trim()}
-            accessibilityRole="button"
           >
-            <Text style={styles.postButtonText}>
-              {posting ? 'Posting…' : 'Post'}
-            </Text>
-          </Pressable>
+            {posting ? 'Posting…' : 'Post'}
+          </Button>
         </View>
       )}
       {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
+        <HelperText type="error" accessibilityRole="alert">
           {error}
-        </Text>
+        </HelperText>
       )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { padding: 12, gap: 8 },
-  title: { fontSize: 16, fontWeight: '600' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  body: { flex: 1 },
-  author: { fontWeight: '600' },
-  delete: { color: '#dc2626', fontSize: 12 },
-  loadMore: { color: '#2563eb' },
-  form: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 8,
-  },
-  postButton: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  postButtonText: { color: '#ffffff', fontWeight: '600' },
-  error: { color: '#dc2626' },
-});

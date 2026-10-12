@@ -88,7 +88,7 @@ describe('PostScreen', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: '@alice' })).toBeTruthy(),
     );
-    expect(screen.getByText('Hello world')).toBeTruthy();
+    expect(screen.getByText(/Hello world/)).toBeTruthy();
     expect(screen.getByText('San Francisco')).toBeTruthy();
     expect(screen.getByText('2 likes')).toBeTruthy();
     expect(screen.getByText('1 comments')).toBeTruthy();
@@ -126,7 +126,9 @@ describe('PostScreen', () => {
 
     render(<PostScreen />);
 
-    await waitFor(() => expect(screen.getByText('Delete post')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete post' })).toBeTruthy(),
+    );
   });
 
   it('hides the delete button for a non-author viewer', async () => {
@@ -143,7 +145,7 @@ describe('PostScreen', () => {
     await waitFor(() =>
       expect(screen.getByRole('heading', { name: '@alice' })).toBeTruthy(),
     );
-    expect(screen.queryByText('Delete post')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Delete post' })).toBeNull();
   });
 
   it('toggles the like button and count for an authenticated viewer', async () => {
@@ -159,14 +161,16 @@ describe('PostScreen', () => {
     });
 
     render(<PostScreen />);
-    await waitFor(() => expect(screen.getByText('Like')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Like' })).toBeTruthy(),
+    );
     expect(screen.getByText('2 likes')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('Like'));
+    fireEvent.press(screen.getByRole('button', { name: 'Like' }));
 
     await waitFor(() => {
       expect(apiClient.likes.like).toHaveBeenCalledWith('post-1');
-      expect(screen.getByText('Unlike')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Unlike' })).toBeTruthy();
       expect(screen.getByText('3 likes')).toBeTruthy();
     });
   });
@@ -182,8 +186,10 @@ describe('PostScreen', () => {
     });
 
     render(<PostScreen />);
-    await waitFor(() => expect(screen.getByText('Delete post')).toBeTruthy());
-    fireEvent.press(screen.getByText('Delete post'));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete post' })).toBeTruthy(),
+    );
+    fireEvent.press(screen.getByRole('button', { name: 'Delete post' }));
 
     await waitFor(() => {
       expect(apiClient.posts.remove).toHaveBeenCalledWith('post-1');

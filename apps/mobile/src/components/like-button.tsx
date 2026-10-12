@@ -1,6 +1,9 @@
 import { Link } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { IconButton, Text } from 'react-native-paper';
+
+import { colors, iconSize } from '@instagram-clone/design-tokens';
 
 import { apiClient } from '../lib/api-client';
 import { authErrorMessage } from '../lib/auth-error-message';
@@ -11,7 +14,12 @@ interface LikeButtonProps {
   initialLikesCount: number;
 }
 
-/** Local component state — `apiClient` is called directly (no Server Action indirection needed on mobile, per the established pattern). */
+/**
+ * The heart toggle plus its "N likes" link — twin of apps/web's
+ * `LikeButton`. Accessible name `Like`/`Unlike`, state in
+ * `accessibilityState.selected`. Calls `apiClient` directly (no Server
+ * Action indirection on mobile).
+ */
 export function LikeButton({
   postId,
   initialIsLiked,
@@ -43,32 +51,30 @@ export function LikeButton({
   }
 
   return (
-    <View style={styles.row}>
-      <Pressable
+    <View className="flex-row items-center">
+      <IconButton
+        icon={isLiked ? 'favorite' : 'favorite-border'}
+        iconColor={isLiked ? colors.like : colors.text}
+        size={iconSize.md}
         onPress={handlePress}
         disabled={pending}
-        accessibilityRole="button"
-      >
-        <Text style={styles.likeText}>{isLiked ? 'Unlike' : 'Like'}</Text>
-      </Pressable>
-      <Link
-        href={{ pathname: '/post/likes', params: { postId } }}
-        style={styles.countLink}
-      >
-        {likesCount} likes
+        accessibilityLabel={isLiked ? 'Unlike' : 'Like'}
+        accessibilityState={{ selected: isLiked, disabled: pending }}
+      />
+      <Link href={{ pathname: '/post/likes', params: { postId } }} asChild>
+        <Pressable accessibilityRole="link" hitSlop={8}>
+          <Text variant="labelLarge">{likesCount} likes</Text>
+        </Pressable>
       </Link>
       {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
+        <Text
+          variant="bodySmall"
+          accessibilityRole="alert"
+          style={{ color: colors.error, marginLeft: 8 }}
+        >
           {error}
         </Text>
       )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  likeText: { fontWeight: '600' },
-  countLink: {},
-  error: { color: '#dc2626' },
-});

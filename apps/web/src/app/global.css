@@ -49,6 +49,10 @@
   --radius-full: var(--ig-radius-full);
 
   --spacing: var(--ig-spacing-unit);
+  --spacing-avatar-sm: var(--ig-avatar-sm);
+  --spacing-avatar-md: var(--ig-avatar-md);
+  --spacing-avatar-lg: var(--ig-avatar-lg);
+  --spacing-avatar-xl: var(--ig-avatar-xl);
 
   --container-feed: var(--ig-layout-feed-width);
   --container-content: var(--ig-layout-content-max-width);

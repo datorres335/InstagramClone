@@ -72,9 +72,9 @@ describe('SavedPostsScreen', () => {
     render(<SavedPostsScreen />);
 
     await waitFor(() =>
-      expect(screen.getByText('caption for post-2')).toBeTruthy(),
+      expect(screen.getByText(/caption for post-2/)).toBeTruthy(),
     );
-    expect(screen.getByText('caption for post-1')).toBeTruthy();
+    expect(screen.getByText(/caption for post-1/)).toBeTruthy();
   });
 
   it('shows an empty-state message when there are no saved posts', async () => {
@@ -103,7 +103,7 @@ describe('SavedPostsScreen', () => {
 
     render(<SavedPostsScreen />);
     await waitFor(() =>
-      expect(screen.getByText('caption for post-1')).toBeTruthy(),
+      expect(screen.getByText(/caption for post-1/)).toBeTruthy(),
     );
 
     fireEvent(screen.getByTestId('saved-posts-list'), 'onEndReached');
@@ -112,7 +112,7 @@ describe('SavedPostsScreen', () => {
       expect(apiClient.savedPosts.getSaved).toHaveBeenCalledWith({
         cursor: 'cursor-1',
       });
-      expect(screen.getByText('caption for post-0')).toBeTruthy();
+      expect(screen.getByText(/caption for post-0/)).toBeTruthy();
     });
   });
 
@@ -124,9 +124,11 @@ describe('SavedPostsScreen', () => {
     jest.mocked(apiClient.posts.remove).mockResolvedValue(undefined);
 
     render(<SavedPostsScreen />);
-    await waitFor(() => expect(screen.getByText('Delete post')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete post' })).toBeTruthy(),
+    );
 
-    fireEvent.press(screen.getByText('Delete post'));
+    fireEvent.press(screen.getByRole('button', { name: 'Delete post' }));
 
     await waitFor(() =>
       expect(apiClient.posts.remove).toHaveBeenCalledWith('post-1'),

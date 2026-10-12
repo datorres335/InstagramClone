@@ -1,5 +1,8 @@
 'use client';
 
+import FavoriteIcon from '@mui/icons-material/Favorite';
+import FavoriteBorderIcon from '@mui/icons-material/FavoriteBorder';
+import IconButton from '@mui/material/IconButton';
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 
@@ -12,10 +15,13 @@ interface LikeButtonProps {
 }
 
 /**
+ * The heart toggle plus its "N likes" link (docs/ARCHITECTURE.md §5.5). Its
+ * accessible name stays `Like`/`Unlike` (what the e2e suite and screen
+ * readers use) and `aria-pressed` carries the state.
+ *
  * Local component state, not `router.refresh()` (unlike `FollowButton`) —
  * a like on a feed item shouldn't re-fetch the whole feed page, which would
- * discard `FeedList`'s "Load more" pagination state. Nothing else on the
- * page depends on fresh server data the way follower/following counts do.
+ * discard `FeedList`'s "Load more" pagination state.
  */
 export function LikeButton({
   postId,
@@ -47,12 +53,27 @@ export function LikeButton({
   }
 
   return (
-    <span>
-      <button type="button" onClick={handleClick} disabled={pending}>
-        {isLiked ? 'Unlike' : 'Like'}
-      </button>{' '}
-      <Link href={`/p/${postId}/likes`}>{likesCount} likes</Link>
-      {error && <span role="alert">{error}</span>}
+    <span className="flex items-center">
+      <IconButton
+        aria-label={isLiked ? 'Unlike' : 'Like'}
+        aria-pressed={isLiked}
+        onClick={handleClick}
+        disabled={pending}
+        className={isLiked ? 'text-like' : 'text-text'}
+      >
+        {isLiked ? <FavoriteIcon /> : <FavoriteBorderIcon />}
+      </IconButton>
+      <Link
+        href={`/p/${postId}/likes`}
+        className="text-label font-semibold hover:underline"
+      >
+        {likesCount} likes
+      </Link>
+      {error && (
+        <span role="alert" className="ml-2 text-caption text-error">
+          {error}
+        </span>
+      )}
     </span>
   );
 }

@@ -2,6 +2,7 @@ import { Redirect, router } from 'expo-router';
 import { useState } from 'react';
 import {
   Pressable,
+  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -9,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { Button } from '../../components/ui/button';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
@@ -20,7 +22,7 @@ import { useAuth } from '../../lib/auth-context';
  * small on its own to justify its own screen).
  */
 export default function SettingsScreen() {
-  const { user, loading, setUser } = useAuth();
+  const { user, loading, setUser, logout } = useAuth();
 
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -78,6 +80,11 @@ export default function SettingsScreen() {
     }
   }
 
+  async function handleLogout() {
+    await logout();
+    router.replace('/(auth)/login');
+  }
+
   async function handleDeleteAccount() {
     setDeleteError(null);
     setDeleteSubmitting(true);
@@ -94,7 +101,7 @@ export default function SettingsScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <ScrollView contentContainerStyle={styles.container}>
       <Text style={styles.title} role="heading">
         Settings
       </Text>
@@ -211,13 +218,18 @@ export default function SettingsScreen() {
           </Text>
         </Pressable>
       </View>
-    </View>
+
+      {/* Moved here from the home screen's header in Milestone 24. */}
+      <Button mode="outlined" onPress={handleLogout}>
+        Log out
+      </Button>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
+    flexGrow: 1,
     padding: 24,
     gap: 24,
     backgroundColor: '#ffffff',

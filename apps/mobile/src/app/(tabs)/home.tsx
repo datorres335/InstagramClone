@@ -1,60 +1,49 @@
-import { Link, router } from 'expo-router';
+import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, View } from 'react-native';
+import { HelperText, IconButton, Text } from 'react-native-paper';
 
+import { colors, iconSize } from '@instagram-clone/design-tokens';
 import type { PostResponse } from '@instagram-clone/validation';
 
-import { NotificationBadge } from '../../components/notification-badge';
 import { PostCard } from '../../components/post-card';
+import { EmptyState } from '../../components/ui/empty-state';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
 
 /**
- * The authenticated home feed (docs/API.md §7, docs/FEATURES.md #10,
- * Milestone 12) — the stub welcome shell from earlier milestones now
- * renders real, fan-out-on-read content: posts from followed accounts,
- * newest first, never the viewer's own posts.
+ * The authenticated home feed (docs/API.md §7, docs/FEATURES.md #10) —
+ * posts from followed accounts, newest first, never the viewer's own posts.
  *
  * Real infinite scroll (`onEndReached`), not a "Load more" button — mobile's
- * usual convention, unlike `apps/web`'s equivalent (a button is simpler to
- * reason about and test without a scroll-position API, and more idiomatic
- * for a web page); `docs/IMPLEMENTATION_PLAN.md` M12 explicitly offers both
- * as acceptable, so this is a per-platform choice, not an inconsistency.
+ * usual convention, unlike `apps/web`'s equivalent; `docs/
+ * IMPLEMENTATION_PLAN.md` M12 explicitly offers both, so this is a
+ * per-platform choice, not an inconsistency.
+ *
+ * Since Milestone 24 the header holds only the greeting and a "New post"
+ * button: the unread count is a badge on the Notifications tab and Log out
+ * lives in Settings, like apps/web's shell.
  *
  * Deleting a post from the feed removes it from the local list in place
- * rather than navigating away (unlike `post/[id].tsx`, which navigates to
- * the author's profile after deleting) — better feed UX, and simple since
- * the feed already holds the full list in state.
+ * rather than navigating away (unlike `post/[id].tsx`).
  */
 export default function HomeScreen() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const [posts, setPosts] = useState<PostResponse[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [unreadCount, setUnreadCount] = useState(0);
 
   const loadFirstPage = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [feed, unread] = await Promise.all([
-        apiClient.posts.getFeed(),
-        apiClient.notifications.getUnreadCount(),
-      ]);
+      const feed = await apiClient.posts.getFeed();
       setPosts(feed.data);
       setNextCursor(feed.meta.nextCursor);
-      setUnreadCount(unread.count);
     } catch (caught) {
       setError(authErrorMessage(caught));
     } finally {
@@ -93,15 +82,10 @@ export default function HomeScreen() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    router.replace('/(auth)/login');
-  }
-
   return (
     <FlatList
       testID="feed-list"
-      style={styles.container}
+      className="flex-1 bg-background"
       data={posts}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
@@ -114,23 +98,23 @@ export default function HomeScreen() {
         />
       )}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title} role="heading">
-            Welcome, {user?.username}
-          </Text>
-          <Link href="/post/new">New post</Link>
-          <NotificationBadge initialCount={unreadCount} />
-          <Pressable
-            style={styles.button}
-            onPress={handleLogout}
-            accessibilityRole="button"
-          >
-            <Text style={styles.buttonText}>Log out</Text>
-          </Pressable>
-          {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error}
+        <View className="border-b border-border">
+          <View className="flex-row items-center justify-between py-1 pr-1 pl-4">
+            <Text variant="titleLarge" role="heading" numberOfLines={1}>
+              Welcome, {user?.username}
             </Text>
+            <IconButton
+              icon="add-box"
+              iconColor={colors.text}
+              size={iconSize.lg}
+              accessibilityLabel="New post"
+              onPress={() => router.push('/post/new')}
+            />
+          </View>
+          {error && (
+            <HelperText type="error" accessibilityRole="alert">
+              {error}
+            </HelperText>
           )}
         </View>
       }
@@ -138,36 +122,26 @@ export default function HomeScreen() {
         loading ? (
           <ActivityIndicator
             testID="loading-indicator"
-            style={styles.centered}
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
           />
         ) : (
-          <Text style={styles.empty}>
-            No posts yet. Follow some accounts to see their posts here.
-          </Text>
+          <EmptyState
+            icon="photo-camera"
+            message="No posts yet. Follow some accounts to see their posts here."
+          />
         )
       }
       ListFooterComponent={
-        loadingMore ? <ActivityIndicator style={styles.centered} /> : null
+        loadingMore ? (
+          <ActivityIndicator
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
+          />
+        ) : null
       }
       onEndReachedThreshold={0.5}
       onEndReached={handleLoadMore}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  header: { padding: 16, gap: 12 },
-  centered: { padding: 16 },
-  title: { fontSize: 20, fontWeight: '600' },
-  empty: { padding: 16, textAlign: 'center', color: '#6b7280' },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    alignItems: 'center',
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600' },
-  error: { color: '#dc2626' },
-});

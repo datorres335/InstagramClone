@@ -20,6 +20,10 @@ jest.mock('../lib/api-client', () => ({
     },
   },
 }));
+// The signed-in viewer, distinct from every fixture row unless a test says otherwise.
+jest.mock('../lib/auth-context', () => ({
+  useAuth: () => ({ user: { username: 'dave' } }),
+}));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {
@@ -71,6 +75,21 @@ describe('FollowersScreen', () => {
     await waitFor(() =>
       expect(screen.getByText('No followers yet.')).toBeTruthy(),
     );
+  });
+
+  it("renders no follow button on the viewer's own row", async () => {
+    jest.mocked(apiClient.follows.getFollowers).mockResolvedValue({
+      data: [
+        fakeItem({ username: 'dave', fullName: 'Dave', isFollowedByMe: false }),
+      ],
+      meta: { nextCursor: null },
+    });
+
+    render(<FollowersScreen />);
+
+    await waitFor(() => expect(screen.getByText(/Dave/)).toBeTruthy());
+    expect(screen.queryByText('Follow')).toBeNull();
+    expect(screen.queryByText('Unfollow')).toBeNull();
   });
 
   it('renders no follow button for an anonymous viewer (isFollowedByMe null)', async () => {

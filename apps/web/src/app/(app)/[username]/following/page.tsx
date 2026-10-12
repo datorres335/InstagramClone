@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ApiError } from '@instagram-clone/api-client';
 
 import { getApiClient } from '../../../../lib/get-api-client';
-import { FollowListItem } from '../../follow-list-item';
+import { UserList } from '../../user-list';
 
 interface FollowingPageProps {
   params: Promise<{ username: string }>;
@@ -12,9 +12,10 @@ interface FollowingPageProps {
 export default async function FollowingPage({ params }: FollowingPageProps) {
   const { username } = await params;
 
+  const apiClient = getApiClient();
   let result;
   try {
-    result = await getApiClient().follows.getFollowing(username);
+    result = await apiClient.follows.getFollowing(username);
   } catch (error) {
     if (error instanceof ApiError && error.problem.status === 404) {
       notFound();
@@ -22,18 +23,14 @@ export default async function FollowingPage({ params }: FollowingPageProps) {
     throw error;
   }
 
+  const viewer = await apiClient.auth.session();
+
   return (
-    <main>
-      <h1>Accounts {username} follows</h1>
-      {result.data.length === 0 ? (
-        <p>Not following anyone yet.</p>
-      ) : (
-        <ul>
-          {result.data.map((item) => (
-            <FollowListItem key={item.id} item={item} />
-          ))}
-        </ul>
-      )}
-    </main>
+    <UserList
+      title="Following"
+      items={result.data}
+      viewerUsername={viewer?.username ?? null}
+      emptyMessage="Not following anyone yet."
+    />
   );
 }

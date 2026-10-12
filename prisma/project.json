@@ -8,6 +8,7 @@
     "typecheck": {
       "executor": "nx:run-commands",
       "cache": true,
+      "dependsOn": ["generate"],
       "inputs": ["{projectRoot}/**/*.ts", "{projectRoot}/tsconfig.json"],
       "options": {
         "command": "tsc -p prisma/tsconfig.json"

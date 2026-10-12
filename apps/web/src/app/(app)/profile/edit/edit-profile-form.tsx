@@ -1,12 +1,18 @@
 'use client';
 
-import { useActionState } from 'react';
+import Button from '@mui/material/Button';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import FormHelperText from '@mui/material/FormHelperText';
+import Switch from '@mui/material/Switch';
+import TextField from '@mui/material/TextField';
+import { useActionState, useState } from 'react';
 
 import { initialAuthActionState } from '../../../../lib/auth-action-state';
 import { updateProfileAction } from './actions';
 import { AvatarUploader } from './avatar-uploader';
 
 interface EditProfileFormProps {
+  username: string;
   initial: {
     fullName: string | null;
     bio: string | null;
@@ -17,6 +23,7 @@ interface EditProfileFormProps {
 }
 
 export function EditProfileForm({
+  username,
   initial,
   currentAvatarUrl,
 }: EditProfileFormProps) {
@@ -24,54 +31,73 @@ export function EditProfileForm({
     updateProfileAction,
     initialAuthActionState,
   );
+  // React 19 resets the uncontrolled fields after a failed submit; remount
+  // them so MUI's floating labels match (same fix as the auth forms, M23).
+  const [resetKey, setResetKey] = useState(0);
 
   return (
-    <form action={formAction}>
-      <AvatarUploader currentAvatarUrl={currentAvatarUrl} />
-      <div>
-        <label htmlFor="fullName">Name</label>
-        <input
-          id="fullName"
-          name="fullName"
-          type="text"
-          maxLength={150}
-          defaultValue={initial.fullName ?? ''}
-        />
-      </div>
-      <div>
-        <label htmlFor="bio">Bio</label>
-        <textarea
-          id="bio"
-          name="bio"
-          maxLength={150}
-          defaultValue={initial.bio ?? ''}
-        />
-      </div>
-      <div>
-        <label htmlFor="websiteUrl">Website</label>
-        <input
-          id="websiteUrl"
-          name="websiteUrl"
-          type="url"
-          defaultValue={initial.websiteUrl ?? ''}
-          placeholder="https://"
-        />
-      </div>
-      <div>
-        <label htmlFor="isPrivate">
-          <input
+    <form
+      action={formAction}
+      onReset={() => setResetKey((key) => key + 1)}
+      className="flex flex-col gap-5"
+    >
+      <AvatarUploader username={username} currentAvatarUrl={currentAvatarUrl} />
+      <TextField
+        key={`fullName-${resetKey}`}
+        id="fullName"
+        name="fullName"
+        label="Name"
+        defaultValue={initial.fullName ?? ''}
+        fullWidth
+        slotProps={{ htmlInput: { maxLength: 150 } }}
+      />
+      <TextField
+        key={`bio-${resetKey}`}
+        id="bio"
+        name="bio"
+        label="Bio"
+        defaultValue={initial.bio ?? ''}
+        multiline
+        minRows={2}
+        maxRows={5}
+        fullWidth
+        helperText="Up to 150 characters."
+        slotProps={{ htmlInput: { maxLength: 150 } }}
+      />
+      <TextField
+        key={`websiteUrl-${resetKey}`}
+        id="websiteUrl"
+        name="websiteUrl"
+        label="Website"
+        type="url"
+        defaultValue={initial.websiteUrl ?? ''}
+        placeholder="https://"
+        fullWidth
+      />
+      <FormControlLabel
+        key={`isPrivate-${resetKey}`}
+        control={
+          <Switch
             id="isPrivate"
             name="isPrivate"
-            type="checkbox"
             defaultChecked={initial.isPrivate}
           />
-          Private account
-        </label>
-      </div>
-      {state.error && <p role="alert">{state.error}</p>}
-      <button type="submit" disabled={pending}>
+        }
+        label="Private account"
+      />
+      {state.error && (
+        <FormHelperText error role="alert">
+          {state.error}
+        </FormHelperText>
+      )}
+      <Button
+        type="submit"
+        variant="contained"
+        disabled={pending}
+        className="self-start"
+      >
         {pending ? 'Saving…' : 'Save'}
-      </button>
+      </Button>
     </form>
   );
 }

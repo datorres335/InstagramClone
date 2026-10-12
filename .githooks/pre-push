@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the same checks as CI's "Lint, test, build" steps on the projects this
+# Runs the same checks as CI's "Lint, typecheck, test, build" steps on the projects this
 # push affects, and aborts the push if any fail. Set PREPUSH_E2E=1 to also run
 # the e2e suites (needs `docker compose up -d` and a migrated database).
 
@@ -36,7 +36,7 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) build_exclude="--exclude=mobile" ;; esac
 
   echo "pre-push: checking $local_ref"
-  pnpm exec nx $affected -t lint test $range || exit 1
+  pnpm exec nx $affected -t lint typecheck test $range || exit 1
   pnpm exec nx $affected -t build $range $build_exclude || exit 1
 
   if [ "$PREPUSH_E2E" = "1" ]; then

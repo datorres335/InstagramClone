@@ -69,12 +69,12 @@ pnpm exec nx run <project>:<target>                    # run one target on one p
 ## Pre-push Checks
 
 `pnpm install` enables a git `pre-push` hook (`.githooks/pre-push`) that runs CI's
-lint, test and build steps on the projects your push affects, and cancels the push
-if any of them fail. On Windows it skips `mobile:build` (known Nx path bug, see
-`docs/PROGRESS.md`); CI still builds mobile on Linux.
+lint, typecheck, test and build steps on the projects your push affects, and cancels
+the push if any of them fail. On Windows it skips `mobile:build` (known Nx path bug,
+see `docs/PROGRESS.md`); CI still builds mobile on Linux.
 
 ```bash
-git push                    # lint + test + build (affected)
+git push                    # lint + typecheck + test + build (affected)
 PREPUSH_E2E=1 git push      # also run API and web (Chromium) e2e; needs docker compose up -d
 ```
 

@@ -121,6 +121,12 @@ jobs:
         timeout-minutes: 10
         run: pnpm exec nx affected -t lint
 
+      # Only projects whose `build` doesn't already type-check define this
+      # target (mobile: Jest and Metro both compile through Babel).
+      - name: Typecheck affected
+        timeout-minutes: 10
+        run: pnpm exec nx affected -t typecheck
+
       - name: Test affected
         timeout-minutes: 10
         run: pnpm exec nx affected -t test

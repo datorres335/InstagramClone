@@ -1,9 +1,14 @@
 'use client';
 
+import Button from '@mui/material/Button';
+import TextField from '@mui/material/TextField';
+import Link from 'next/link';
 import { useState, useTransition } from 'react';
 
 import type { CommentResponse } from '@instagram-clone/validation';
 
+import { TimeAgo } from '../../../../components/ui/time-ago';
+import { UserAvatar } from '../../../../components/ui/user-avatar';
 import {
   createCommentAction,
   deleteCommentAction,
@@ -88,53 +93,88 @@ export function CommentSection({
   }
 
   return (
-    <section>
-      <h2>Comments</h2>
+    <section className="flex flex-col gap-3 rounded-lg border border-border bg-background p-4">
+      <h2 className="text-label font-semibold">Comments</h2>
       {comments.length === 0 ? (
-        <p>No comments yet.</p>
+        <p className="text-text-secondary">No comments yet.</p>
       ) : (
-        <ul>
+        <ul className="flex flex-col gap-3">
           {comments.map((comment) => {
             const canDelete =
               viewerUsername === comment.author.username ||
               viewerUsername === postAuthorUsername;
             return (
-              <li key={comment.id}>
-                <strong>@{comment.author.username}</strong> {comment.body}
-                {canDelete && (
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(comment.id)}
-                    disabled={pending}
-                  >
-                    Delete
-                  </button>
-                )}
+              <li key={comment.id} className="flex gap-3">
+                <UserAvatar
+                  username={comment.author.username}
+                  avatarUrl={comment.author.avatarUrl}
+                  size="sm"
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <p className="whitespace-pre-line wrap-break-word">
+                    <Link
+                      href={`/${comment.author.username}`}
+                      className="font-semibold hover:underline"
+                    >
+                      @{comment.author.username}
+                    </Link>{' '}
+                    {comment.body}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <TimeAgo iso={comment.createdAt} />
+                    {canDelete && (
+                      <button
+                        type="button"
+                        onClick={() => handleDelete(comment.id)}
+                        disabled={pending}
+                        className="text-caption font-semibold text-text-secondary hover:text-error disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
               </li>
             );
           })}
         </ul>
       )}
       {nextCursor && (
-        <button type="button" onClick={handleLoadMore} disabled={pending}>
+        <Button
+          variant="text"
+          onClick={handleLoadMore}
+          disabled={pending}
+          className="self-start"
+        >
           Load more comments
-        </button>
+        </Button>
       )}
       {viewerUsername && (
-        <form onSubmit={handleSubmit}>
-          <label htmlFor="comment-body">Add a comment</label>
-          <textarea
+        <form
+          onSubmit={handleSubmit}
+          className="flex items-end gap-2 border-t border-border pt-3"
+        >
+          <TextField
             id="comment-body"
-            maxLength={2200}
+            label="Add a comment"
+            multiline
+            maxRows={4}
+            size="small"
+            fullWidth
             value={body}
             onChange={(event) => setBody(event.target.value)}
+            slotProps={{ htmlInput: { maxLength: 2200 } }}
           />
-          <button type="submit" disabled={pending || !body.trim()}>
+          <Button type="submit" disabled={pending || !body.trim()}>
             Post
-          </button>
+          </Button>
         </form>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert" className="text-error">
+          {error}
+        </p>
+      )}
     </section>
   );
 }

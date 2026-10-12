@@ -18,9 +18,10 @@ export default async function EditProfilePage() {
   const profile = await apiClient.users.getProfile(user.username);
 
   return (
-    <main>
-      <h1>Edit profile</h1>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-6">
+      <h1 className="text-title font-semibold">Edit profile</h1>
       <EditProfileForm
+        username={user.username}
         initial={{
           fullName: user.fullName,
           bio: user.bio,

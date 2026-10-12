@@ -82,7 +82,7 @@ referenced to `DATABASE.md` / `API.md`).
   `isFollowedByMe` is already computed per row regardless of whose list is being
   viewed, so restricting the button to the viewer's own list would be a strictly less
   useful subset of what the API already supports. See docs/PROGRESS.md's Milestone 10
-  deviations.
+  deviations. The viewer's own row never shows the button (Milestone 24).
 - **Out of scope**: mutual-followers indicator, search-within-list.
 - Entities/endpoints: `GET /users/:username/followers`, `GET
 /users/:username/following` (`API.md` §5).
@@ -336,9 +336,12 @@ original 17.
 
 - **Status:** Milestone 23 shipped the foundation: shared design tokens, both themes,
   the web app shell (left rail on desktop, bottom bar on phones), the styled mobile
-  tab bar, and the login/register screens on both platforms. The remaining screens
-  are restyled in M24 (feed, posts, profiles) and M25 (explore, search,
-  notifications, saved, messages, settings), then reviewed for consistency in M26.
+  tab bar, and the login/register screens on both platforms. Milestone 24 restyled
+  the feed, post detail and comments, create post, profiles, edit profile and the
+  likers/followers/following lists, with icon toggles for like and save, and gave
+  mobile's pushed screens a native header with a back button. M25 restyles explore,
+  search, notifications, saved, messages and settings, then M26 reviews everything
+  for consistency.
 - Every web page and mobile screen gets a finished, Instagram-like visual design,
   replacing the original unstyled HTML (web) and ad-hoc `StyleSheet`s (mobile).
 - **Web**: Material UI v9 components plus Tailwind CSS v4 for layout. **Mobile**: the

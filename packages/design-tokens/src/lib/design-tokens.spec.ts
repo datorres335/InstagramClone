@@ -1,7 +1,10 @@
 import {
+  avatarSize,
   colors,
   fontWeight,
+  frameAspect,
   layout,
+  mediaAspect,
   radii,
   spacingUnit,
   typography,
@@ -93,5 +96,21 @@ describe('spacing and sizes', () => {
 
   it('meets the minimum touch target size', () => {
     expect(layout.minTouchTarget).toBeGreaterThanOrEqual(44);
+  });
+
+  it('frames photos at their own ratio within the 4:5 to 1.91:1 range', () => {
+    expect(frameAspect(1080, 1080)).toBe(1);
+    expect(frameAspect(1600, 1200)).toBeCloseTo(4 / 3);
+    expect(frameAspect(1000, 2000)).toBe(mediaAspect.min);
+    expect(frameAspect(4000, 1000)).toBe(mediaAspect.max);
+    expect(frameAspect(null, 800)).toBe(1);
+  });
+
+  it('keeps avatar sizes increasing and on the spacing grid', () => {
+    const sizes = Object.values(avatarSize);
+    expect([...sizes].sort((a, b) => a - b)).toEqual(sizes);
+    for (const size of sizes) {
+      expect(size % 2).toBe(0);
+    }
   });
 });

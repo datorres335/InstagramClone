@@ -12,8 +12,8 @@ export default async function NewPostPage() {
   if (!user) redirect('/login');
 
   return (
-    <main>
-      <h1>New post</h1>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-6">
+      <h1 className="text-title font-semibold">New post</h1>
       <CreatePostForm />
     </main>
   );

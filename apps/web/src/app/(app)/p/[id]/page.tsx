@@ -37,7 +37,7 @@ export default async function PostPage({ params }: PostPageProps) {
   const isAuthor = viewer?.username === post.author.username;
 
   return (
-    <main>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-4">
       <PostCard post={post} isAuthor={isAuthor} />
       <CommentSection
         postId={post.id}

@@ -18,6 +18,18 @@
     "build-eas": {
       "executor": "@nx/expo:build",
       "options": {}
+    },
+    "typecheck": {
+      "cache": true,
+      "executor": "nx:run-commands",
+      "options": {
+        "cwd": "apps/mobile",
+        "commands": [
+          "tsc --noEmit -p tsconfig.app.json",
+          "tsc --noEmit -p tsconfig.spec.json"
+        ],
+        "parallel": false
+      }
     }
   }
 }

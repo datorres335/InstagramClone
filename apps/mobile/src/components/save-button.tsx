@@ -1,5 +1,8 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { View } from 'react-native';
+import { IconButton, Text } from 'react-native-paper';
+
+import { colors, iconSize } from '@instagram-clone/design-tokens';
 
 import { apiClient } from '../lib/api-client';
 import { authErrorMessage } from '../lib/auth-error-message';
@@ -10,10 +13,9 @@ interface SaveButtonProps {
 }
 
 /**
- * Local component state, mirroring `LikeButton` — `apiClient` is called
- * directly (no Server Action indirection needed on mobile). No count to
- * track here (unlike likes, saves are private — there's no "N saves" to
- * show anyone), just the boolean toggle.
+ * The bookmark toggle — twin of apps/web's `SaveButton`. Accessible name
+ * `Save`/`Unsave`, state in `accessibilityState.selected`. No count: saves
+ * are private.
  */
 export function SaveButton({ postId, initialIsSaved }: SaveButtonProps) {
   const [isSaved, setIsSaved] = useState(initialIsSaved);
@@ -39,25 +41,25 @@ export function SaveButton({ postId, initialIsSaved }: SaveButtonProps) {
   }
 
   return (
-    <View style={styles.row}>
-      <Pressable
-        onPress={handlePress}
-        disabled={pending}
-        accessibilityRole="button"
-      >
-        <Text style={styles.saveText}>{isSaved ? 'Unsave' : 'Save'}</Text>
-      </Pressable>
+    <View className="flex-row items-center">
       {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
+        <Text
+          variant="bodySmall"
+          accessibilityRole="alert"
+          style={{ color: colors.error, marginRight: 8 }}
+        >
           {error}
         </Text>
       )}
+      <IconButton
+        icon={isSaved ? 'bookmark' : 'bookmark-border'}
+        iconColor={colors.text}
+        size={iconSize.md}
+        onPress={handlePress}
+        disabled={pending}
+        accessibilityLabel={isSaved ? 'Unsave' : 'Save'}
+        accessibilityState={{ selected: isSaved, disabled: pending }}
+      />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  saveText: { fontWeight: '600' },
-  error: { color: '#dc2626' },
-});

@@ -1,17 +1,11 @@
 import { useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
 
 import type { FollowListItem as FollowListItemType } from '@instagram-clone/validation';
 
-import { FollowListItem } from '../../components/follow-list-item';
+import { UserList } from '../../components/user-list';
 import { apiClient } from '../../lib/api-client';
+import { useAuth } from '../../lib/auth-context';
 
 /**
  * `GET /users/:username/followers` (docs/API.md §5, docs/FEATURES.md #6). A
@@ -23,6 +17,7 @@ import { apiClient } from '../../lib/api-client';
 export default function FollowersScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const [items, setItems] = useState<FollowListItemType[] | null>(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
@@ -35,30 +30,11 @@ export default function FollowersScreen() {
     };
   }, [username]);
 
-  if (items === null) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator testID="loading-indicator" />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
-        Followers
-      </Text>
-      <FlatList
-        data={items}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <FollowListItem item={item} />}
-        ListEmptyComponent={<Text>No followers yet.</Text>}
-      />
-    </View>
+    <UserList
+      items={items}
+      emptyMessage="No followers yet."
+      viewerUsername={user?.username ?? null}
+    />
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, backgroundColor: '#ffffff' },
-  title: { fontSize: 20, fontWeight: '600', marginBottom: 12 },
-});

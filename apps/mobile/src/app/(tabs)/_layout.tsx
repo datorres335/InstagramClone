@@ -6,6 +6,10 @@ import type { ColorValue } from 'react-native';
 import { colors, iconSize } from '@instagram-clone/design-tokens';
 
 import { useAuth } from '../../lib/auth-context';
+import {
+  unreadTabBadge,
+  useUnreadNotificationCount,
+} from '../../lib/use-unread-notification-count';
 
 type IconName = ComponentProps<typeof MaterialIcons>['name'];
 
@@ -48,6 +52,13 @@ export default function TabsLayout() {
     return <Redirect href="/(auth)/login" />;
   }
 
+  return <SignedInTabs />;
+}
+
+/** Split out so the unread-count hook (which opens the realtime stream) only runs with a session. */
+function SignedInTabs() {
+  const unreadCount = useUnreadNotificationCount();
+
   return (
     <Tabs
       screenOptions={{
@@ -83,6 +94,11 @@ export default function TabsLayout() {
         options={{
           title: 'Notifications',
           tabBarIcon: tabIcon('favorite-border', 'favorite'),
+          ...unreadTabBadge(unreadCount),
+          tabBarBadgeStyle: {
+            backgroundColor: colors.error,
+            color: colors.onPrimary,
+          },
         }}
       />
       <Tabs.Screen

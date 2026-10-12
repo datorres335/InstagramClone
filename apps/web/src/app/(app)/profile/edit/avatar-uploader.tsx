@@ -1,9 +1,12 @@
 'use client';
 
+import Button from '@mui/material/Button';
+import LinearProgress from '@mui/material/LinearProgress';
 import { useState } from 'react';
 
 import type { MediaResponse } from '@instagram-clone/validation';
 
+import { UserAvatar } from '../../../../components/ui/user-avatar';
 import {
   completeAvatarUpload,
   getAvatarMediaStatus,
@@ -36,6 +39,7 @@ async function waitUntilProcessed(mediaId: string): Promise<MediaResponse> {
 }
 
 interface AvatarUploaderProps {
+  username: string;
   currentAvatarUrl: string | null;
 }
 
@@ -46,12 +50,16 @@ interface AvatarUploaderProps {
  * `MediaProcessor`) handles squaring the thumbnail, an explicit scoping
  * decision recorded in docs/PROGRESS.md.
  */
-export function AvatarUploader({ currentAvatarUrl }: AvatarUploaderProps) {
+export function AvatarUploader({
+  username,
+  currentAvatarUrl,
+}: AvatarUploaderProps) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(currentAvatarUrl);
   const [status, setStatus] = useState<
     'idle' | 'uploading' | 'processing' | 'done'
   >('idle');
   const [error, setError] = useState<string | null>(null);
+  const busy = status === 'uploading' || status === 'processing';
 
   async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -109,44 +117,54 @@ export function AvatarUploader({ currentAvatarUrl }: AvatarUploaderProps) {
   }
 
   return (
-    <div>
-      {previewUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element -- a transient
-        // local object URL preview during upload; Next's Image loader
-        // doesn't handle blob: URLs.
-        <img
-          src={previewUrl}
-          alt="Your avatar"
-          width={96}
-          height={96}
-          style={{ borderRadius: '50%', objectFit: 'cover' }}
-        />
-      ) : (
-        <div
-          aria-hidden="true"
-          style={{
-            width: 96,
-            height: 96,
-            borderRadius: '50%',
-            backgroundColor: '#e5e7eb',
-          }}
-        />
-      )}
-      <div>
-        <label htmlFor="avatar">Change photo</label>
+    <div className="flex items-center gap-4 rounded-lg bg-surface p-4">
+      <UserAvatar
+        username={username}
+        avatarUrl={previewUrl}
+        size="md"
+        alt="Your avatar"
+      />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="font-semibold">@{username}</span>
+        {busy && (
+          <LinearProgress
+            aria-label={status === 'uploading' ? 'Uploading' : 'Processing'}
+          />
+        )}
+        {status === 'uploading' && (
+          <p className="text-caption text-text-secondary">Uploading…</p>
+        )}
+        {status === 'processing' && (
+          <p className="text-caption text-text-secondary">Processing…</p>
+        )}
+        {status === 'done' && (
+          <p className="text-caption text-success">Photo updated.</p>
+        )}
+        {error && (
+          <p role="alert" className="text-caption text-error">
+            {error}
+          </p>
+        )}
+      </div>
+      {/* The label is the button, so `getByLabel('Change photo')` and screen
+          readers both reach the file input through it. */}
+      <Button
+        component="label"
+        variant="contained"
+        size="small"
+        disabled={busy}
+      >
+        Change photo
         <input
           id="avatar"
           name="avatar"
           type="file"
           accept="image/jpeg,image/png,image/webp"
           onChange={handleFileChange}
-          disabled={status === 'uploading' || status === 'processing'}
+          disabled={busy}
+          className="sr-only"
         />
-      </div>
-      {status === 'uploading' && <p>Uploading…</p>}
-      {status === 'processing' && <p>Processing…</p>}
-      {status === 'done' && <p>Photo updated.</p>}
-      {error && <p role="alert">{error}</p>}
+      </Button>
     </div>
   );
 }

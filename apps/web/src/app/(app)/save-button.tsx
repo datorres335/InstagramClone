@@ -1,5 +1,8 @@
 'use client';
 
+import BookmarkIcon from '@mui/icons-material/Bookmark';
+import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
+import IconButton from '@mui/material/IconButton';
 import { useState, useTransition } from 'react';
 
 import { saveAction, unsaveAction } from './save-actions';
@@ -10,11 +13,10 @@ interface SaveButtonProps {
 }
 
 /**
- * Local component state, not `router.refresh()` — the same reasoning
- * `LikeButton` applies: a save on a feed item shouldn't re-fetch the whole
- * page and discard `FeedList`'s/`SavedPostsList`'s "Load more" pagination
- * state. No count to track here (unlike likes, saves are private — there's
- * no "N saves" to show anyone), just the boolean toggle.
+ * The bookmark toggle. Accessible name `Save`/`Unsave`, state in
+ * `aria-pressed` (docs/ARCHITECTURE.md §5.5). Local component state, not
+ * `router.refresh()` — the same reasoning `LikeButton` applies. No count:
+ * saves are private.
  */
 export function SaveButton({ postId, initialIsSaved }: SaveButtonProps) {
   const [isSaved, setIsSaved] = useState(initialIsSaved);
@@ -39,11 +41,21 @@ export function SaveButton({ postId, initialIsSaved }: SaveButtonProps) {
   }
 
   return (
-    <span>
-      <button type="button" onClick={handleClick} disabled={pending}>
-        {isSaved ? 'Unsave' : 'Save'}
-      </button>
-      {error && <span role="alert">{error}</span>}
+    <span className="flex items-center">
+      {error && (
+        <span role="alert" className="mr-2 text-caption text-error">
+          {error}
+        </span>
+      )}
+      <IconButton
+        aria-label={isSaved ? 'Unsave' : 'Save'}
+        aria-pressed={isSaved}
+        onClick={handleClick}
+        disabled={pending}
+        className="text-text"
+      >
+        {isSaved ? <BookmarkIcon /> : <BookmarkBorderIcon />}
+      </IconButton>
     </span>
   );
 }

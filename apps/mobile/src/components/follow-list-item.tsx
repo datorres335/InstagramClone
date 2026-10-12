@@ -1,20 +1,33 @@
 import { Link } from 'expo-router';
 import { useState } from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, View } from 'react-native';
+import { Text } from 'react-native-paper';
 
+import { colors } from '@instagram-clone/design-tokens';
 import type { FollowListItem as FollowListItemType } from '@instagram-clone/validation';
 
 import { apiClient } from '../lib/api-client';
 import { authErrorMessage } from '../lib/auth-error-message';
+import { FollowButton } from './follow-button';
+import { UserAvatar } from './ui/user-avatar';
+
+interface FollowListItemProps {
+  item: FollowListItemType;
+  /** The row is the signed-in viewer themself — no follow button. */
+  isViewer?: boolean;
+}
 
 /**
- * One row of a followers/following list (docs/FEATURES.md #6). The inline
- * follow/unfollow button renders for any authenticated viewer (`isFollowedByMe`
- * non-null), not only on the viewer's own list — same scope simplification as
- * the web equivalent (`apps/web/.../[username]/follow-list-item.tsx`), see
- * docs/PROGRESS.md's Milestone 10 deviations.
+ * One row of a followers/following/likers list (docs/FEATURES.md #6) — twin
+ * of apps/web's `FollowListItem`: avatar, "@username" with the full name
+ * underneath, and a follow toggle for any authenticated viewer
+ * (docs/PROGRESS.md's Milestone 10 deviations) — except on the viewer's own
+ * row, where `isFollowedByMe` is a self-check that is always false.
  */
-export function FollowListItem({ item }: { item: FollowListItemType }) {
+export function FollowListItem({
+  item,
+  isViewer = false,
+}: FollowListItemProps) {
   const [isFollowing, setIsFollowing] = useState(item.isFollowedByMe);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,65 +51,37 @@ export function FollowListItem({ item }: { item: FollowListItemType }) {
   }
 
   return (
-    <View style={styles.row}>
-      {item.avatarUrl ? (
-        <Image
-          source={{ uri: item.avatarUrl }}
-          accessibilityLabel={item.username}
-          style={styles.avatar}
-        />
-      ) : (
-        <View style={styles.avatarPlaceholder} />
-      )}
-      <Link href={`/profile/${item.username}`} style={styles.name}>
-        {item.fullName
-          ? `${item.fullName} (@${item.username})`
-          : `@${item.username}`}
-      </Link>
-      {isFollowing !== null && (
-        <View>
-          <Pressable
-            style={styles.button}
-            onPress={handleToggle}
-            disabled={pending}
-            accessibilityRole="button"
-          >
-            <Text style={styles.buttonText}>
-              {isFollowing ? 'Unfollow' : 'Follow'}
-            </Text>
-          </Pressable>
-          {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error}
+    <View className="flex-row items-center gap-3 py-2">
+      <UserAvatar
+        username={item.username}
+        avatarUrl={item.avatarUrl}
+        size="md"
+      />
+      <Link href={`/profile/${item.username}`} asChild>
+        <Pressable accessibilityRole="link" className="flex-1">
+          <Text variant="labelLarge" numberOfLines={1}>
+            @{item.username}
+          </Text>
+          {item.fullName && (
+            <Text
+              variant="bodyMedium"
+              numberOfLines={1}
+              style={{ color: colors.textSecondary }}
+            >
+              {item.fullName}
             </Text>
           )}
-        </View>
+        </Pressable>
+      </Link>
+      {isFollowing !== null && !isViewer && (
+        <FollowButton
+          isFollowing={isFollowing}
+          pending={pending}
+          error={error}
+          onPress={handleToggle}
+          compact
+        />
       )}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
-  },
-  avatar: { width: 40, height: 40, borderRadius: 20 },
-  avatarPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#e5e7eb',
-  },
-  name: { flex: 1 },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600', fontSize: 12 },
-  error: { color: '#dc2626', fontSize: 12 },
-});

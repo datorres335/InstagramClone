@@ -1,5 +1,13 @@
 'use client';
 
+import AddPhotoAlternateOutlinedIcon from '@mui/icons-material/AddPhotoAlternateOutlined';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import CloseIcon from '@mui/icons-material/Close';
+import Button from '@mui/material/Button';
+import FormHelperText from '@mui/material/FormHelperText';
+import IconButton from '@mui/material/IconButton';
+import LinearProgress from '@mui/material/LinearProgress';
+import TextField from '@mui/material/TextField';
 import { useState } from 'react';
 
 import type { MediaResponse } from '@instagram-clone/validation';
@@ -190,9 +198,25 @@ export function CreatePostForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <div>
-        <label htmlFor="images">Photos</label>
+    <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      {/* The label is the visible picker, so `getByLabel('Photos')` and
+          screen readers reach the hidden file input through it. */}
+      <label
+        htmlFor="images"
+        className={`flex flex-col items-center gap-2 rounded-lg border-2 border-dashed border-outline px-4 py-8 text-center ${
+          images.length >= MAX_IMAGES
+            ? 'opacity-50'
+            : 'cursor-pointer hover:bg-surface'
+        }`}
+      >
+        <AddPhotoAlternateOutlinedIcon
+          aria-hidden="true"
+          className="size-12 text-text-secondary"
+        />
+        <span className="font-semibold text-primary">Add photos</span>
+        <span className="text-caption text-text-secondary">
+          JPEG, PNG or WebP, up to {MAX_IMAGES}
+        </span>
         <input
           id="images"
           type="file"
@@ -200,55 +224,90 @@ export function CreatePostForm() {
           multiple
           onChange={handleFilesSelected}
           disabled={images.length >= MAX_IMAGES}
+          className="sr-only"
         />
-      </div>
-      <ul>
-        {images.map((slot, index) => (
-          <li key={slot.previewUrl}>
-            <img
-              src={slot.previewUrl}
-              alt={`Selected photo ${index + 1}`}
-              width={96}
-              height={96}
-              style={{ objectFit: 'cover' }}
-            />
-            {slot.status === 'uploading' && <span> Uploading…</span>}
-            {slot.status === 'processing' && <span> Processing…</span>}
-            {slot.status === 'ready' && <span> Ready</span>}
-            {slot.status === 'error' && <span role="alert"> {slot.error}</span>}
-            <button
-              type="button"
-              onClick={() => removeImage(slot)}
-              disabled={submitting}
+      </label>
+      {images.length > 0 && (
+        <ul className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+          {images.map((slot, index) => (
+            <li
+              key={slot.previewUrl}
+              className="relative overflow-hidden rounded-md bg-surface-variant"
             >
-              Remove
-            </button>
-          </li>
-        ))}
-      </ul>
-      <div>
-        <label htmlFor="caption">Caption</label>
-        <textarea
-          id="caption"
-          maxLength={2200}
-          value={caption}
-          onChange={(event) => setCaption(event.target.value)}
-        />
-      </div>
-      <div>
-        <label htmlFor="location">Location</label>
-        <input
-          id="location"
-          type="text"
-          maxLength={255}
-          value={location}
-          onChange={(event) => setLocation(event.target.value)}
-        />
-      </div>
-      {error && <p role="alert">{error}</p>}
-      <button type="submit" disabled={!canSubmit}>
+              <img
+                src={slot.previewUrl}
+                alt={`Selected photo ${index + 1}`}
+                className="aspect-square w-full object-cover"
+              />
+              <IconButton
+                aria-label={`Remove photo ${index + 1}`}
+                onClick={() => removeImage(slot)}
+                disabled={submitting}
+                size="small"
+                className="absolute top-1 right-1 bg-background/80 hover:bg-background"
+              >
+                <CloseIcon fontSize="small" />
+              </IconButton>
+              <div className="absolute inset-x-0 bottom-0 flex flex-col gap-1 bg-background/85 px-2 py-1 text-caption">
+                {(slot.status === 'uploading' ||
+                  slot.status === 'processing') && (
+                  <>
+                    <span>
+                      {slot.status === 'uploading'
+                        ? 'Uploading…'
+                        : 'Processing…'}
+                    </span>
+                    <LinearProgress aria-hidden="true" />
+                  </>
+                )}
+                {slot.status === 'ready' && (
+                  <span className="flex items-center gap-1 text-success">
+                    <CheckCircleIcon aria-hidden="true" fontSize="inherit" />
+                    Ready
+                  </span>
+                )}
+                {slot.status === 'error' && (
+                  <span role="alert" className="text-error">
+                    {slot.error}
+                  </span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <TextField
+        id="caption"
+        label="Caption"
+        multiline
+        minRows={3}
+        maxRows={8}
+        fullWidth
+        value={caption}
+        onChange={(event) => setCaption(event.target.value)}
+        slotProps={{ htmlInput: { maxLength: 2200 } }}
+      />
+      <TextField
+        id="location"
+        label="Location"
+        fullWidth
+        value={location}
+        onChange={(event) => setLocation(event.target.value)}
+        slotProps={{ htmlInput: { maxLength: 255 } }}
+      />
+      {error && (
+        <FormHelperText error role="alert">
+          {error}
+        </FormHelperText>
+      )}
+      <Button
+        type="submit"
+        variant="contained"
+        size="large"
+        disabled={!canSubmit}
+      >
         {submitting ? 'Posting…' : 'Share'}
-      </button>
+      </Button>
     </form>
   );
 }

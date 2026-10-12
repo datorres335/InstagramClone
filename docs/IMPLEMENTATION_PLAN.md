@@ -581,6 +581,23 @@ record in `docs/PROGRESS.md`'s Milestone 23 entries):
 - **Tests**: existing e2e and unit tests pass unchanged. Add component tests that the
   like and save toggles render the correct icon and pressed state for each value.
 
+**Implemented (Milestone 24)**, with these differences from the plan above (full
+record in `docs/PROGRESS.md`'s Milestone 24 entries):
+
+- Like and comment counts sit next to their icons in the action row, rather than on
+  a separate line below it.
+- People lists are plain rows (`<ul>`/`<li>` on web, a `View` row on mobile), not
+  MUI `List`/Paper `List.Item`, because each row has two separate controls.
+- Loading: web pages are Server Components with no client loading state to style;
+  mobile people lists show skeleton rows, and the feed, post and profile keep a
+  spinner.
+- Additions not in the plan: `formatTimeAgo` in `packages/types` and
+  `frameAspect`/`avatarSize` in `packages/design-tokens`, shared by both apps;
+  native stack headers for mobile's pushed screens; the mobile home cleanup
+  (unread count as a tab badge, New post as a header icon, Log out in Settings);
+  the Follow button hidden on the viewer's own list row; a `typecheck` target for
+  `apps/mobile` in CI and the pre-push hook.
+
 ### M25 — Discovery, Activity, Messages & Settings
 
 - **Screens**:

@@ -167,9 +167,11 @@ No approval/request step in the MVP even for `isPrivate` accounts — see
 narrower than `PublicProfileResponse` (no `bio`/`websiteUrl`/counts), matching
 docs/FEATURES.md #6's "avatar/username/full name... a follow/unfollow affordance
 inline." `isFollowedByMe` is computed relative to the _viewer_, not the list's subject
-— on your own followers/following list, your own row (if present) always shows `false`
+— on any list that includes the viewer, the viewer's own row always shows `false`
 (a self-follow-state check, and self-follows are never possible), not an error; this is
-expected, not a bug (see docs/PROGRESS.md's Milestone 10 known issues).
+expected, not a bug (see docs/PROGRESS.md's Milestone 10 known issues). Since
+Milestone 24 both clients compare the row's `username` with the signed-in user's and
+render no Follow button on that row.
 
 `GET /users/:username`'s `followersCount`/`followingCount`/`isFollowedByMe` (§4) are all
 real as of this milestone — the first fields on that response that were hardcoded stubs
@@ -532,7 +534,7 @@ deferred here the way likes/comments' notification side effect was in Milestones
 
 New-message detection on both web and mobile is now realtime-pushed over §18's SSE
 channel rather than polled — retrofitted in Milestone 22, which gave that transport
-its second real consumer (alongside `NotificationBadge`'s unread count). Each
+its second real consumer (alongside the unread notification count). Each
 client still re-fetches the newest page on every (re)connect, so a client that was
 briefly disconnected still catches up over REST rather than assuming zero missed
 messages.

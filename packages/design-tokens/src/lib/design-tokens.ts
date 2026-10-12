@@ -1,7 +1,8 @@
 /**
  * The single source of visual truth for apps/web and apps/mobile
- * (docs/ARCHITECTURE.md §5.5). Plain values only — each app adapts these into
- * its own MUI / React Native Paper theme and Tailwind config.
+ * (docs/ARCHITECTURE.md §5.5). Plain values (plus the pure `frameAspect`
+ * helper) — each app adapts these into its own MUI / React Native Paper theme
+ * and Tailwind config.
  */
 
 export interface ColorTokens {
@@ -85,6 +86,32 @@ export const iconSize = {
   sm: 20,
   md: 24,
   lg: 28,
+} as const;
+
+/**
+ * A post's photos are framed at the first photo's aspect ratio (width /
+ * height), clamped to Instagram's range: 4:5 portrait up to 1.91:1 landscape.
+ */
+export const mediaAspect = {
+  min: 4 / 5,
+  max: 1.91,
+} as const;
+
+/** The frame aspect ratio for a post's first photo (square when its size is unknown). */
+export function frameAspect(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): number {
+  if (!width || !height) return 1;
+  return Math.min(mediaAspect.max, Math.max(mediaAspect.min, width / height));
+}
+
+/** Avatar diameters: post/comment headers, list rows, the profile header on phones and on desktop. */
+export const avatarSize = {
+  sm: 32,
+  md: 44,
+  lg: 80,
+  xl: 150,
 } as const;
 
 export const layout = {

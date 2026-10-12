@@ -22,6 +22,10 @@ jest.mock('../lib/api-client', () => ({
     },
   },
 }));
+// The signed-in viewer, distinct from every fixture row unless a test says otherwise.
+jest.mock('../lib/auth-context', () => ({
+  useAuth: () => ({ user: { username: 'dave' } }),
+}));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {

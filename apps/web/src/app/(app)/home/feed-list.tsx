@@ -1,9 +1,12 @@
 'use client';
 
+import PhotoCameraOutlinedIcon from '@mui/icons-material/PhotoCameraOutlined';
+import Button from '@mui/material/Button';
 import { useState, useTransition } from 'react';
 
 import type { PostResponse } from '@instagram-clone/validation';
 
+import { EmptyState } from '../../../components/ui/empty-state';
 import { PostCard } from '../post-card';
 import { getFeedPageAction } from './actions';
 
@@ -43,11 +46,16 @@ export function FeedList({
   }
 
   if (posts.length === 0) {
-    return <p>No posts yet. Follow some accounts to see their posts here.</p>;
+    return (
+      <EmptyState
+        icon={<PhotoCameraOutlinedIcon />}
+        message="No posts yet. Follow some accounts to see their posts here."
+      />
+    );
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       {posts.map((post) => (
         <PostCard
           key={post.id}
@@ -56,11 +64,15 @@ export function FeedList({
         />
       ))}
       {nextCursor && (
-        <button type="button" onClick={handleLoadMore} disabled={pending}>
+        <Button variant="outlined" onClick={handleLoadMore} disabled={pending}>
           {pending ? 'Loading…' : 'Load more'}
-        </button>
+        </Button>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert" className="text-center text-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

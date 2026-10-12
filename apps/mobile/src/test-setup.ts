@@ -10,7 +10,7 @@ jest.mock('expo/src/winter/ImportMetaRegistry', () => ({
 // require files Jest treats as "outside of the scope of the test code" in a
 // monorepo. Replace them with the runtime's own globals so the lazy getters
 // never fire during tests.
-const defineGlobal = (name, value) => {
+const defineGlobal = (name: string, value: unknown) => {
   try {
     Object.defineProperty(global, name, {
       value,

@@ -12,44 +12,83 @@ import {
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
 
-import { colors } from '@instagram-clone/design-tokens';
+import { colors, typography } from '@instagram-clone/design-tokens';
 
 import '../global.css';
 import { AuthProvider } from '../lib/auth-context';
+import { interFamily } from '../theme/fonts';
 import { PaperIcon } from '../theme/paper-icon';
 import { paperTheme } from '../theme/paper-theme';
 
 const paperSettings = { icon: PaperIcon };
 
+function usernameTitle(params: object | undefined): string {
+  return params && 'username' in params && typeof params.username === 'string'
+    ? `@${params.username}`
+    : '';
+}
+
 /**
- * Every screen hides the native header, so with Android's edge-to-edge
- * layout their content would draw under the status bar; the top inset is
- * applied once here rather than in each screen. The tab bar handles the
- * bottom inset itself.
+ * Screens pushed on top of the tabs (post, profile, lists, forms) get a
+ * token-styled native header with a back button (Milestone 24). The tab
+ * group, the auth screens and the index redirect hide it, so with Android's
+ * edge-to-edge layout they take the top safe-area inset here instead; the
+ * tab bar handles the bottom inset itself.
  */
 function RootStack() {
   const insets = useSafeAreaInsets();
+  const headerless = {
+    headerShown: false,
+    contentStyle: {
+      backgroundColor: colors.background,
+      paddingTop: insets.top,
+    },
+  };
+
   return (
     <Stack
       screenOptions={{
-        headerShown: false,
-        contentStyle: {
-          backgroundColor: colors.background,
-          paddingTop: insets.top,
+        headerShown: true,
+        headerBackButtonDisplayMode: 'minimal',
+        headerTintColor: colors.text,
+        headerStyle: { backgroundColor: colors.background },
+        headerShadowVisible: false,
+        headerTitleStyle: {
+          fontFamily: interFamily.semibold,
+          fontSize: typography.bodyLarge.fontSize,
         },
+        contentStyle: { backgroundColor: colors.background },
       }}
     >
+      <Stack.Screen name="index" options={headerless} />
+      <Stack.Screen name="(tabs)" options={headerless} />
       {/* The auth screens sit on the surface color (like apps/web's), so the
           strip under the status bar should match it. */}
       <Stack.Screen
         name="(auth)"
         options={{
+          ...headerless,
           contentStyle: {
             backgroundColor: colors.surface,
             paddingTop: insets.top,
           },
         }}
       />
+      <Stack.Screen name="post/[id]" options={{ title: 'Post' }} />
+      <Stack.Screen name="post/likes" options={{ title: 'Likes' }} />
+      <Stack.Screen name="post/new" options={{ title: 'New post' }} />
+      <Stack.Screen
+        name="profile/[username]"
+        options={({ route }) => ({ title: usernameTitle(route.params) })}
+      />
+      <Stack.Screen name="profile/edit" options={{ title: 'Edit profile' }} />
+      <Stack.Screen name="profile/followers" options={{ title: 'Followers' }} />
+      <Stack.Screen name="profile/following" options={{ title: 'Following' }} />
+      {/* Restyled in Milestone 25; until then they keep their own in-screen
+          titles, so the header only provides the back button. */}
+      <Stack.Screen name="profile/saved" options={{ title: '' }} />
+      <Stack.Screen name="profile/settings" options={{ title: '' }} />
+      <Stack.Screen name="conversation/[id]" options={{ title: '' }} />
     </Stack>
   );
 }

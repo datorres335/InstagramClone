@@ -1,4 +1,5 @@
 import {
+  avatarSize,
   colors,
   layout,
   radii,
@@ -32,6 +33,9 @@ export function tokenCssVariables(): string {
   }
   for (const [name, value] of Object.entries(layout)) {
     declarations.push(`--ig-layout-${kebab(name)}: ${value}px`);
+  }
+  for (const [name, value] of Object.entries(avatarSize)) {
+    declarations.push(`--ig-avatar-${name}: ${value}px`);
   }
   declarations.push(`--ig-spacing-unit: ${spacingUnit}px`);
 

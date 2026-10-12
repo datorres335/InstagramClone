@@ -164,7 +164,8 @@ describe('MessagesScreen', () => {
       expect(screen.getByText('No conversations yet.')).toBeTruthy(),
     );
 
-    const [onEvent] = jest.mocked(useRealtimeEvents).mock.calls[0];
+    const onEvent = jest.mocked(useRealtimeEvents).mock.calls[0]?.[0];
+    if (!onEvent) throw new Error('useRealtimeEvents not called');
     onEvent({
       type: 'message',
       message: {

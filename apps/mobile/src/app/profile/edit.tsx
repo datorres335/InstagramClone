@@ -1,16 +1,19 @@
 import * as ImagePicker from 'expo-image-picker';
 import { Redirect, router } from 'expo-router';
 import { useEffect, useState } from 'react';
+import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
 import {
-  Image,
-  Pressable,
-  StyleSheet,
+  HelperText,
+  ProgressBar,
   Switch,
   Text,
   TextInput,
-  View,
-} from 'react-native';
+} from 'react-native-paper';
 
+import { colors } from '@instagram-clone/design-tokens';
+
+import { Button } from '../../components/ui/button';
+import { UserAvatar } from '../../components/ui/user-avatar';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
@@ -128,129 +131,103 @@ export default function EditProfileScreen() {
     }
   }
 
+  const avatarBusy =
+    avatarStatus === 'uploading' || avatarStatus === 'processing';
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
-        Edit profile
-      </Text>
-      <View style={styles.avatarRow}>
-        {avatarUrl ? (
-          <Image
-            source={{ uri: avatarUrl }}
+    <KeyboardAvoidingView
+      className="flex-1 bg-background"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerClassName="gap-4 p-4">
+        <View className="flex-row items-center gap-4 rounded-lg bg-surface p-4">
+          <UserAvatar
+            username={user?.username ?? ''}
+            avatarUrl={avatarUrl}
+            size="md"
             accessibilityLabel="Your avatar"
-            style={styles.avatar}
           />
-        ) : (
-          <View style={styles.avatarPlaceholder} />
-        )}
-        <Pressable
-          onPress={handlePickAvatar}
-          disabled={
-            avatarStatus === 'uploading' || avatarStatus === 'processing'
-          }
-          accessibilityRole="button"
-        >
-          <Text>
+          <View className="flex-1 gap-1">
+            <Text variant="labelLarge">@{user?.username}</Text>
+            {avatarBusy && <ProgressBar indeterminate color={colors.primary} />}
+            {avatarStatus === 'done' && (
+              <Text variant="bodySmall" style={{ color: colors.success }}>
+                Photo updated.
+              </Text>
+            )}
+          </View>
+          <Button
+            mode="contained"
+            compact
+            onPress={handlePickAvatar}
+            disabled={avatarBusy}
+            accessibilityRole="button"
+          >
             {avatarStatus === 'uploading'
               ? 'Uploading…'
               : avatarStatus === 'processing'
                 ? 'Processing…'
                 : 'Change photo'}
-          </Text>
-        </Pressable>
-      </View>
-      {avatarError && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {avatarError}
-        </Text>
-      )}
-      <TextInput
-        style={styles.input}
-        placeholder="Name"
-        accessibilityLabel="Name"
-        value={fullName}
-        onChangeText={setFullName}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Bio"
-        accessibilityLabel="Bio"
-        multiline
-        value={bio}
-        onChangeText={setBio}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Website"
-        accessibilityLabel="Website"
-        autoCapitalize="none"
-        keyboardType="url"
-        value={websiteUrl}
-        onChangeText={setWebsiteUrl}
-      />
-      <View style={styles.switchRow}>
-        <Text>Private account</Text>
-        <Switch
-          accessibilityLabel="Private account"
-          value={isPrivate}
-          onValueChange={setIsPrivate}
+          </Button>
+        </View>
+        {avatarError && (
+          <HelperText type="error" accessibilityRole="alert">
+            {avatarError}
+          </HelperText>
+        )}
+        <TextInput
+          mode="outlined"
+          label="Name"
+          accessibilityLabel="Name"
+          value={fullName}
+          onChangeText={setFullName}
+          maxLength={150}
         />
-      </View>
-      {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
-      )}
-      <Pressable
-        style={styles.button}
-        onPress={handleSubmit}
-        disabled={submitting}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Saving…' : 'Save'}</Text>
-      </Pressable>
-    </View>
+        <View>
+          <TextInput
+            mode="outlined"
+            label="Bio"
+            accessibilityLabel="Bio"
+            multiline
+            value={bio}
+            onChangeText={setBio}
+            maxLength={150}
+          />
+          <HelperText type="info">Up to 150 characters.</HelperText>
+        </View>
+        <TextInput
+          mode="outlined"
+          label="Website"
+          accessibilityLabel="Website"
+          autoCapitalize="none"
+          keyboardType="url"
+          placeholder="https://"
+          value={websiteUrl}
+          onChangeText={setWebsiteUrl}
+        />
+        <View className="flex-row items-center justify-between">
+          <Text variant="bodyLarge">Private account</Text>
+          <Switch
+            accessibilityLabel="Private account"
+            value={isPrivate}
+            onValueChange={setIsPrivate}
+            color={colors.primary}
+          />
+        </View>
+        {error && (
+          <HelperText type="error" accessibilityRole="alert">
+            {error}
+          </HelperText>
+        )}
+        <Button
+          mode="contained"
+          onPress={handleSubmit}
+          disabled={submitting}
+          accessibilityRole="button"
+        >
+          {submitting ? 'Saving…' : 'Save'}
+        </Button>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-    gap: 12,
-    backgroundColor: '#ffffff',
-  },
-  title: { fontSize: 24, fontWeight: '600', marginBottom: 12 },
-  avatarRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  avatar: { width: 64, height: 64, borderRadius: 32 },
-  avatarPlaceholder: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: '#e5e7eb',
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 12,
-  },
-  switchRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  error: { color: '#dc2626' },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600' },
-});

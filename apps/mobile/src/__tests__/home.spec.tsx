@@ -14,17 +14,15 @@ jest.mock('../lib/api-client', () => ({
   apiClient: {
     posts: { getFeed: jest.fn(), remove: jest.fn() },
     likes: { like: jest.fn(), unlike: jest.fn() },
-    notifications: { getUnreadCount: jest.fn() },
   },
 }));
 jest.mock('../lib/auth-context', () => ({
   useAuth: jest.fn(),
 }));
-jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {
-    router: { replace: jest.fn() },
+    router: { replace: jest.fn(), push: jest.fn() },
     Link: ({ children }: { children: React.ReactNode }) => (
       <Text>{children}</Text>
     ),
@@ -32,7 +30,7 @@ jest.mock('expo-router', () => {
 });
 
 const { router } = jest.requireMock('expo-router') as {
-  router: { replace: jest.Mock };
+  router: { replace: jest.Mock; push: jest.Mock };
 };
 
 const fakePost = (id: string, username = 'bob') => ({
@@ -68,9 +66,6 @@ describe('HomeScreen', () => {
       setUser: jest.fn(),
       logout: jest.fn(),
     });
-    jest
-      .mocked(apiClient.notifications.getUnreadCount)
-      .mockResolvedValue({ count: 0 });
   });
 
   it('greets the logged-in user by username', async () => {
@@ -93,9 +88,9 @@ describe('HomeScreen', () => {
     render(<HomeScreen />);
 
     await waitFor(() =>
-      expect(screen.getByText('caption for post-2')).toBeTruthy(),
+      expect(screen.getByText(/caption for post-2/)).toBeTruthy(),
     );
-    expect(screen.getByText('caption for post-1')).toBeTruthy();
+    expect(screen.getByText(/caption for post-1/)).toBeTruthy();
   });
 
   it('shows an empty-state message when the feed has no posts', async () => {
@@ -128,7 +123,7 @@ describe('HomeScreen', () => {
 
     render(<HomeScreen />);
     await waitFor(() =>
-      expect(screen.getByText('caption for post-1')).toBeTruthy(),
+      expect(screen.getByText(/caption for post-1/)).toBeTruthy(),
     );
 
     fireEvent(screen.getByTestId('feed-list'), 'onEndReached');
@@ -137,7 +132,7 @@ describe('HomeScreen', () => {
       expect(apiClient.posts.getFeed).toHaveBeenCalledWith({
         cursor: 'cursor-1',
       });
-      expect(screen.getByText('caption for post-0')).toBeTruthy();
+      expect(screen.getByText(/caption for post-0/)).toBeTruthy();
     });
   });
 
@@ -149,9 +144,11 @@ describe('HomeScreen', () => {
     jest.mocked(apiClient.posts.remove).mockResolvedValue(undefined);
 
     render(<HomeScreen />);
-    await waitFor(() => expect(screen.getByText('Delete post')).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Delete post' })).toBeTruthy(),
+    );
 
-    fireEvent.press(screen.getByText('Delete post'));
+    fireEvent.press(screen.getByRole('button', { name: 'Delete post' }));
 
     // Asserts the API call, not the post-delete visual state: `FlatList`'s
     // `VirtualizedList` commits an item-removal re-render on a real timer
@@ -169,22 +166,14 @@ describe('HomeScreen', () => {
     );
   });
 
-  it('logs out and navigates back to /login', async () => {
+  it('opens the new-post screen from the header', async () => {
     jest
       .mocked(apiClient.posts.getFeed)
       .mockResolvedValue({ data: [], meta: { nextCursor: null } });
-    const logout = jest.fn().mockResolvedValue(undefined);
-    jest.mocked(useAuth).mockReturnValue({
-      user: { id: 'user-1', username: 'alice' } as never,
-      loading: false,
-      setUser: jest.fn(),
-      logout,
-    });
 
     render(<HomeScreen />);
-    fireEvent.press(screen.getByText('Log out'));
+    fireEvent.press(screen.getByRole('button', { name: 'New post' }));
 
-    await waitFor(() => expect(logout).toHaveBeenCalled());
-    expect(router.replace).toHaveBeenCalledWith('/(auth)/login');
+    expect(router.push).toHaveBeenCalledWith('/post/new');
   });
 });

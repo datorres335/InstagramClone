@@ -1,20 +1,34 @@
+import { MaterialIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
-  StyleSheet,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import {
+  HelperText,
+  IconButton,
+  ProgressBar,
   Text,
   TextInput,
-  View,
-} from 'react-native';
+} from 'react-native-paper';
 
+import { colors, iconSize } from '@instagram-clone/design-tokens';
+
+import { Button } from '../../components/ui/button';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 
 const MAX_IMAGES = 10;
+const TILE_COLUMNS = 3;
+const TILE_GAP = 8;
+const SCREEN_PADDING = 16;
 
 interface ImageSlot {
   uri: string;
@@ -33,6 +47,9 @@ interface ImageSlot {
  * anyway (the `feed` variant, unlike the avatar `thumbnail` variant).
  */
 export default function NewPostScreen() {
+  const { width } = useWindowDimensions();
+  const tileSize =
+    (width - SCREEN_PADDING * 2 - TILE_GAP * (TILE_COLUMNS - 1)) / TILE_COLUMNS;
   const [images, setImages] = useState<ImageSlot[]>([]);
   const [caption, setCaption] = useState('');
   const [location, setLocation] = useState('');
@@ -137,102 +154,122 @@ export default function NewPostScreen() {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
-        New post
-      </Text>
-      <Pressable
-        style={styles.button}
-        onPress={handlePickImages}
-        disabled={images.length >= MAX_IMAGES}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>Add photos</Text>
-      </Pressable>
-      {/* A plain mapped row, not FlatList/VirtualizedList — capped at 10
-          images, so virtualization has no benefit and only adds a
-          known-finicky dependency (its internal real-timer-based cell
-          scheduling doesn't play well with RNTL's `waitFor` in tests). */}
-      <ScrollView horizontal>
-        {images.map((item) => (
-          <View key={item.uri} style={styles.imageSlot}>
-            <Image source={{ uri: item.uri }} style={styles.thumbnail} />
-            {item.status === 'uploading' && <Text>Uploading…</Text>}
-            {item.status === 'processing' && <Text>Processing…</Text>}
-            {item.status === 'ready' && <Text>Ready</Text>}
-            {item.status === 'error' && (
-              <Text accessibilityRole="alert" style={styles.error}>
-                {item.error}
-              </Text>
-            )}
-            <Pressable
-              onPress={() => removeImage(item)}
-              disabled={submitting}
-              accessibilityRole="button"
-            >
-              <Text>Remove</Text>
-            </Pressable>
+    <KeyboardAvoidingView
+      className="flex-1 bg-background"
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView contentContainerClassName="gap-4 p-4">
+        <Pressable
+          onPress={handlePickImages}
+          disabled={images.length >= MAX_IMAGES}
+          accessibilityRole="button"
+          className={`items-center gap-2 rounded-lg border-2 border-dashed border-outline px-4 py-8 ${
+            images.length >= MAX_IMAGES ? 'opacity-50' : ''
+          }`}
+        >
+          <MaterialIcons
+            name="add-photo-alternate"
+            size={48}
+            color={colors.textSecondary}
+          />
+          <Text variant="labelLarge" style={{ color: colors.primary }}>
+            Add photos
+          </Text>
+          <Text variant="bodySmall" style={{ color: colors.textSecondary }}>
+            JPEG, PNG or WebP, up to {MAX_IMAGES}
+          </Text>
+        </Pressable>
+        {/* A plain wrapped row, not FlatList/VirtualizedList — capped at 10
+            images, so virtualization has no benefit and only adds a
+            known-finicky dependency (its internal real-timer-based cell
+            scheduling doesn't play well with RNTL's `waitFor` in tests). */}
+        {images.length > 0 && (
+          <View className="flex-row flex-wrap" style={{ gap: TILE_GAP }}>
+            {images.map((item, index) => (
+              <View
+                key={item.uri}
+                className="overflow-hidden rounded-md bg-surface-variant"
+                style={{ width: tileSize, height: tileSize }}
+              >
+                <Image
+                  source={{ uri: item.uri }}
+                  accessibilityLabel={`Selected photo ${index + 1}`}
+                  style={{ width: tileSize, height: tileSize }}
+                />
+                <View className="absolute top-0 right-0">
+                  <IconButton
+                    icon="close"
+                    size={iconSize.sm}
+                    mode="contained"
+                    containerColor={colors.background}
+                    iconColor={colors.text}
+                    onPress={() => removeImage(item)}
+                    disabled={submitting}
+                    accessibilityLabel={`Remove photo ${index + 1}`}
+                  />
+                </View>
+                <View className="absolute inset-x-0 bottom-0 gap-1 bg-background px-2 py-1">
+                  {(item.status === 'uploading' ||
+                    item.status === 'processing') && (
+                    <>
+                      <Text variant="bodySmall">
+                        {item.status === 'uploading'
+                          ? 'Uploading…'
+                          : 'Processing…'}
+                      </Text>
+                      <ProgressBar indeterminate color={colors.primary} />
+                    </>
+                  )}
+                  {item.status === 'ready' && (
+                    <Text variant="bodySmall" style={{ color: colors.success }}>
+                      Ready
+                    </Text>
+                  )}
+                  {item.status === 'error' && (
+                    <Text
+                      variant="bodySmall"
+                      accessibilityRole="alert"
+                      style={{ color: colors.error }}
+                    >
+                      {item.error}
+                    </Text>
+                  )}
+                </View>
+              </View>
+            ))}
           </View>
-        ))}
-      </ScrollView>
-      <TextInput
-        style={styles.input}
-        placeholder="Caption"
-        accessibilityLabel="Caption"
-        multiline
-        maxLength={2200}
-        value={caption}
-        onChangeText={setCaption}
-      />
-      <TextInput
-        style={styles.input}
-        placeholder="Location"
-        accessibilityLabel="Location"
-        maxLength={255}
-        value={location}
-        onChangeText={setLocation}
-      />
-      {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
-      )}
-      <Pressable
-        style={styles.button}
-        onPress={handleSubmit}
-        disabled={!canSubmit}
-        accessibilityRole="button"
-      >
-        <Text style={styles.buttonText}>
+        )}
+        <TextInput
+          mode="outlined"
+          label="Caption"
+          accessibilityLabel="Caption"
+          multiline
+          maxLength={2200}
+          value={caption}
+          onChangeText={setCaption}
+        />
+        <TextInput
+          mode="outlined"
+          label="Location"
+          accessibilityLabel="Location"
+          maxLength={255}
+          value={location}
+          onChangeText={setLocation}
+        />
+        {error && (
+          <HelperText type="error" accessibilityRole="alert">
+            {error}
+          </HelperText>
+        )}
+        <Button
+          mode="contained"
+          onPress={handleSubmit}
+          disabled={!canSubmit}
+          accessibilityRole="button"
+        >
           {submitting ? 'Posting…' : 'Share'}
-        </Text>
-      </Pressable>
-    </View>
+        </Button>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 16,
-    gap: 12,
-    backgroundColor: '#ffffff',
-  },
-  title: { fontSize: 20, fontWeight: '600' },
-  imageSlot: { marginRight: 8, alignItems: 'center' },
-  thumbnail: { width: 96, height: 96 },
-  input: {
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 12,
-  },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    padding: 14,
-    alignItems: 'center',
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600' },
-  error: { color: '#dc2626' },
-});

@@ -46,7 +46,7 @@ and `IMPLEMENTATION_PLAN.md` all assume the decisions recorded here.
 | Local infra     | Docker Compose                                                        | Postgres, MinIO, Redis, Maildev                                    |
 | Testing         | Vitest (unit), Nest/Supertest (API integration), Playwright (web E2E) | Per-project Nx targets                                             |
 | Lint/format     | ESLint 9 (flat config) + Prettier                                     | Shared `packages/eslint-config`                                    |
-| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | Foundation implemented Milestone 23; screens restyled M24–M26. Shared `packages/design-tokens`, see §5.5 |
+| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | Foundation implemented Milestone 23; feed, posts and profiles restyled Milestone 24; remaining screens M25, polish M26. Shared `packages/design-tokens`, see §5.5 |
 
 Exact framework minor/patch versions are intentionally not pinned in this document —
 confirm current stable versions against each framework's official docs at the moment a
@@ -365,18 +365,23 @@ real consumers needing it — not built speculatively ahead of either.
   together, which stopped being true once the notification badge moved into the
   persistent shell. A subscriber that joins an already-open stream gets its
   `onConnect` immediately, so the re-fetch-on-connect contract above still holds.
-  Mobile still opens one connection per screen that needs one. Because every
+  Mobile still opens one connection per caller: since Milestone 24 the tab bar's
+  unread-count hook (`useUnreadNotificationCount`) holds one for the whole
+  signed-in session, and the messages screens open a second while shown. Because every
   signed-in page now holds a stream, the per-host HTTP/1.1 connection limit matters
   (risk #17). A re-fetch result never overwrites a push that arrived while it was in
   flight (the unread badge keeps the larger value).
 
-### 5.5 UI Styling & Design System (foundation implemented Milestone 23)
+### 5.5 UI Styling & Design System (foundation Milestone 23, screens from Milestone 24)
 
 The styling track (`IMPLEMENTATION_PLAN.md` M23–M26). **Milestone 23 built the
 foundation**: the tokens package, both themes, the web app shell and mobile tab
-bar, and the login/register screens on both platforms. M24–M25 restyle the
-remaining screens and M26 is the consistency pass; until then those screens keep
-their pre-M23 markup inside the new shell.
+bar, and the login/register screens on both platforms. **Milestone 24 restyled the
+feed, post and profile screens** (post card, carousel, comments, create post,
+profile, edit profile, people lists) and added the shared building blocks below.
+M25 restyles the rest (explore, search, notifications, saved, messages, settings),
+which keep their pre-M23 markup inside the new shell until then, and M26 is the
+consistency pass.
 
 **Goal:** both apps look as alike as their platforms allow: same colors, type scale,
 spacing, icons, and component shapes. Each still follows its own platform's
@@ -400,9 +405,11 @@ isn't production-ready. This project is on SDK 56, so v4 it is (risk #15).
 **How the pieces combine:**
 
 - **Tokens.** `packages/design-tokens` exports plain objects (semantic colors, type
-  scale, 4 px spacing base, radii, icon sizes, layout widths), the only place a color
-  or size value is defined. It contains no framework code, which keeps it a
-  `scope:shared`/`type:util` package.
+  scale, 4 px spacing base, radii, icon sizes, avatar sizes, layout widths, the
+  post-media aspect range), the only place a color or size value is defined, plus
+  one pure helper, `frameAspect(width, height)`, that both carousels use to frame a
+  post at its first photo's ratio clamped to 4:5–1.91:1. It contains no framework
+  code, which keeps it a `scope:shared`/`type:util` package.
 - **Web layering.**
   - The root layout emits every token as a `--ig-*` CSS custom property
     (`src/theme/token-css-variables.ts`, rendered into `<head>`).
@@ -451,12 +458,19 @@ the same on both platforms):
 | Primary / secondary button       | `Button` `variant="contained"` / `"text"`                    | `Button` `mode="contained"` / `"text"`                        |
 | Text field                       | `TextField` `variant="outlined"`                             | `TextInput` `mode="outlined"`                                 |
 | Field / form error               | `FormHelperText error` (inline red text, `role="alert"`)    | `HelperText type="error"` (`accessibilityRole="alert"`)      |
-| Icon action (like, save, ...)    | `IconButton` + `@mui/icons-material`                         | `IconButton` + `MaterialIcons`                                |
-| Avatar                           | `Avatar`                                                     | `Avatar.Image` / `Avatar.Text`                                |
-| List row (followers, inbox, ...) | `List` + `ListItemButton` + `ListItemAvatar`                 | `List.Item` with an avatar on the left                        |
-| Unread count                     | `Badge`                                                      | `Badge`                                                       |
+| Icon action (like, save, ...)    | `IconButton` + `@mui/icons-material`, `aria-label` + `aria-pressed` | `IconButton` + `MaterialIcons`, `accessibilityLabel` + `accessibilityState.selected` |
+| Avatar                           | `components/ui/user-avatar.tsx` (`Avatar`, letter fallback)  | `components/ui/user-avatar.tsx` (`Avatar.Image` / `Avatar.Text`) |
+| People row (likers, followers)   | `(app)/follow-list-item.tsx`: `<li>` with avatar, profile link, Follow button | `components/follow-list-item.tsx`: `View` row, same parts     |
+| List row with one action (inbox, ...) | `List` + `ListItemButton` + `ListItemAvatar`            | `List.Item` with an avatar on the left                        |
+| Post card                        | `(app)/post-card.tsx`                                        | `components/post-card.tsx`                                    |
+| Photo carousel                   | `(app)/media-carousel.tsx`: scroll-snap row, dots, arrows at `md`+ | `components/media-carousel.tsx`: paging `FlatList`, dots |
+| Follow toggle                    | `(app)/follow-button.tsx`: contained "Follow" / outlined "Unfollow" | `components/follow-button.tsx`: same                    |
+| Timestamp                        | `components/ui/time-ago.tsx` (`<time>`)                      | `components/ui/time-ago.tsx`; both print `formatTimeAgo` (`packages/types`) |
+| Empty state                      | `components/ui/empty-state.tsx` (icon + sentence)            | `components/ui/empty-state.tsx`                               |
+| Pushed-screen title / back       | The page's own `<h1>` (browser back)                          | Native stack header from the root `_layout.tsx`               |
+| Unread count                     | `Badge`                                                      | `Badge`; the Notifications tab's `tabBarBadge` (`lib/use-unread-notification-count.ts`) |
 | Progress                         | `CircularProgress` / `LinearProgress`                        | `ActivityIndicator` / `ProgressBar`                           |
-| Loading placeholder              | `Skeleton`                                                   | Token-colored placeholder `View` (Paper has no skeleton)      |
+| Loading placeholder              | `Skeleton`                                                   | `components/ui/skeleton.tsx`, a token-colored `View` (Paper has no skeleton) |
 | Confirmation                     | `Dialog`                                                     | `Portal` + `Dialog`                                           |
 | Transient message                | `Snackbar`                                                   | `Snackbar`                                                    |
 | Primary navigation               | `(app)/app-nav.tsx`: one `<nav>`, a labelled left rail at `md`+ and an icon-only bottom bar below it | `(tabs)/_layout.tsx`: icon-only Expo Router `Tabs`, same glyphs, order and tints |
@@ -500,12 +514,12 @@ stay per-platform, as this section argues. See §5.5.
 
 | Package         | Contains                                                                                                                                                                                                                    | Depended on by                                     |
 | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `types`         | Framework-agnostic TS types/enums not derivable from Zod alone (e.g. discriminated unions for notification payloads, pagination envelope generics)                                                                          | `validation`, `api-client`, `api`, `web`, `mobile` |
+| `types`         | Framework-agnostic TS types/enums not derivable from Zod alone (e.g. discriminated unions for notification payloads, pagination envelope generics), plus small pure helpers both apps must agree on (`formatTimeAgo`, Milestone 24) | `validation`, `api-client`, `api`, `web`, `mobile` |
 | `validation`    | Zod schemas for every request/response body and query string (`RegisterInputSchema`, `CreatePostInputSchema`, `PostResponseSchema`, ...); schemas are the source both Nest DTOs and client-side form validation derive from | `api-client`, `api`, `web`, `mobile`               |
 | `api-client`    | Typed REST client: one function per endpoint, generated method signatures from the OpenAPI spec, hand-written transport (fetch + auth-refresh interceptor + retry-once-on-401 logic + pagination helpers)                   | `web`, `mobile`                                    |
 | `config`        | `zod`-validated env schema per app (`ApiEnvSchema`, `WebEnvSchema`, `MobileEnvSchema`) and a small `loadEnv()` helper that throws a readable error on startup if env vars are missing/invalid                               | `api`, `web`, `mobile`                             |
 | `eslint-config` | Shared flat ESLint config (base + per-framework overrides for Next/Nest/Expo) and shared Prettier config                                                                                                                    | every project via root config                      |
-| `design-tokens` | **(Milestone 23)** Framework-agnostic visual tokens: semantic colors, font family + type scale, spacing, radii, icon sizes, layout widths. No MUI/Paper/Tailwind code; adapters live in each app (§5.5)         | `web`, `mobile`                                    |
+| `design-tokens` | **(Milestone 23)** Framework-agnostic visual tokens: semantic colors, font family + type scale, spacing, radii, icon and avatar sizes, layout widths, the post-media aspect range and its `frameAspect` helper. No MUI/Paper/Tailwind code; adapters live in each app (§5.5) | `web`, `mobile`                                    |
 
 ### 6.1 Why `types` _and_ `validation` (not just one)
 
@@ -721,7 +735,9 @@ each app loads only the subset it needs, validated at boot.
 
 Every Nx project exposes `test`/`lint` targets; `build`/`test` for `api` depend on
 Prisma Client generation being up to date. **CI implemented Milestone 20**:
-`.github/workflows/ci.yml` runs `nx affected -t lint test build`, then
+`.github/workflows/ci.yml` runs `nx affected -t lint`, `-t typecheck` (projects whose
+build doesn't already type-check: `mobile`, since Milestone 24, and `prisma`), `-t
+test` and `-t build`, then
 `apps/api-e2e`'s and `apps/web-e2e`'s (Chromium) `e2e` targets as their own steps, on
 every PR and on push to `main`, reusing the same `docker-compose.yml` every local dev
 environment already runs for Postgres/Redis/MinIO rather than re-declaring equivalent

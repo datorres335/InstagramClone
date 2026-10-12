@@ -1,12 +1,9 @@
 import { useLocalSearchParams, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, ScrollView, View } from 'react-native';
+import { Text } from 'react-native-paper';
+
+import { colors } from '@instagram-clone/design-tokens';
 
 import { ApiError } from '@instagram-clone/api-client';
 import type {
@@ -75,16 +72,21 @@ export default function PostScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator testID="loading-indicator" />
+      <View className="flex-1 items-center justify-center bg-background">
+        <ActivityIndicator
+          testID="loading-indicator"
+          color={colors.textSecondary}
+        />
       </View>
     );
   }
 
   if (notFound || !post) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text role="heading">Post not found</Text>
+      <View className="flex-1 items-center justify-center bg-background">
+        <Text variant="titleLarge" role="heading">
+          Post not found
+        </Text>
       </View>
     );
   }
@@ -92,7 +94,7 @@ export default function PostScreen() {
   const isAuthor = viewer?.username === post.author.username;
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView className="flex-1 bg-background">
       <PostCard
         post={post}
         isAuthor={isAuthor}
@@ -112,8 +114,3 @@ export default function PostScreen() {
     </ScrollView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  centered: { alignItems: 'center', justifyContent: 'center' },
-});

@@ -5,23 +5,28 @@ import {
   FlatList,
   Image,
   Pressable,
-  StyleSheet,
-  Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
+import { IconButton, Text } from 'react-native-paper';
 
 import { ApiError } from '@instagram-clone/api-client';
+import { colors, iconSize } from '@instagram-clone/design-tokens';
 import type {
   PostSummary,
   PublicProfileResponse,
 } from '@instagram-clone/validation';
 
+import { FollowButton } from '../../components/follow-button';
+import { Button } from '../../components/ui/button';
+import { EmptyState } from '../../components/ui/empty-state';
+import { UserAvatar } from '../../components/ui/user-avatar';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
 
 const GRID_COLUMNS = 3;
-const GRID_TILE_SIZE = 120;
+const GRID_GAP = 2;
 
 /**
  * Public profile view (docs/API.md §4, docs/FEATURES.md #3) — the same
@@ -33,6 +38,7 @@ const GRID_TILE_SIZE = 120;
 export default function ProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { user: viewer } = useAuth();
+  const { width } = useWindowDimensions();
   const [profile, setProfile] = useState<PublicProfileResponse | null>(null);
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [notFound, setNotFound] = useState(false);
@@ -94,95 +100,138 @@ export default function ProfileScreen() {
 
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator testID="loading-indicator" />
+      <View className="flex-1 items-center justify-center bg-background">
+        <ActivityIndicator
+          testID="loading-indicator"
+          color={colors.textSecondary}
+        />
       </View>
     );
   }
 
   if (notFound || !profile) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text role="heading">User not found</Text>
+      <View className="flex-1 items-center justify-center bg-background">
+        <Text variant="titleLarge" role="heading">
+          User not found
+        </Text>
       </View>
     );
   }
 
   const isOwnProfile = viewer?.username === profile.username;
+  const tileSize = (width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
 
   return (
     <FlatList
-      style={styles.container}
+      className="flex-1 bg-background"
       data={posts}
       numColumns={GRID_COLUMNS}
+      columnWrapperStyle={{ gap: GRID_GAP }}
+      contentContainerStyle={{ gap: GRID_GAP }}
       keyExtractor={(post) => post.id}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title} role="heading">
-            {profile.username}
-          </Text>
-          {profile.fullName && <Text>{profile.fullName}</Text>}
-          {profile.bio && <Text>{profile.bio}</Text>}
-          {profile.websiteUrl && <Text>{profile.websiteUrl}</Text>}
-          <View style={styles.stats}>
-            <Text>{profile.postsCount} posts</Text>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/profile/followers',
-                  params: { username: profile.username },
-                })
-              }
-            >
-              <Text>{profile.followersCount} followers</Text>
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              onPress={() =>
-                router.push({
-                  pathname: '/profile/following',
-                  params: { username: profile.username },
-                })
-              }
-            >
-              <Text>{profile.followingCount} following</Text>
-            </Pressable>
+        <View className="gap-3 border-b border-border px-4 pt-4 pb-3">
+          <View className="flex-row items-center gap-5">
+            <UserAvatar
+              username={profile.username}
+              avatarUrl={profile.avatarUrl}
+              size="lg"
+            />
+            <View className="flex-1 gap-2">
+              <Text variant="titleLarge" role="heading" numberOfLines={1}>
+                {profile.username}
+              </Text>
+              <View className="flex-row flex-wrap gap-x-4 gap-y-1">
+                <Text variant="bodyMedium">
+                  <Text variant="labelLarge">{profile.postsCount}</Text> posts
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/profile/followers',
+                      params: { username: profile.username },
+                    })
+                  }
+                >
+                  <Text variant="bodyMedium">
+                    <Text variant="labelLarge">{profile.followersCount}</Text>{' '}
+                    followers
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    router.push({
+                      pathname: '/profile/following',
+                      params: { username: profile.username },
+                    })
+                  }
+                >
+                  <Text variant="bodyMedium">
+                    <Text variant="labelLarge">{profile.followingCount}</Text>{' '}
+                    following
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+          <View className="gap-0.5">
+            {profile.fullName && (
+              <Text variant="labelLarge">{profile.fullName}</Text>
+            )}
+            {profile.bio && <Text variant="bodyMedium">{profile.bio}</Text>}
+            {profile.websiteUrl && (
+              <Text variant="labelLarge" style={{ color: colors.primary }}>
+                {profile.websiteUrl}
+              </Text>
+            )}
           </View>
           {isOwnProfile && (
-            <>
-              <Link href="/profile/edit">Edit profile</Link>
-              <Link href="/post/new">New post</Link>
-              <Link href="/profile/saved">Saved posts</Link>
-              <Link href="/profile/settings">Settings</Link>
-            </>
-          )}
-          {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (
-            <View>
-              <Pressable
-                style={styles.button}
-                onPress={handleFollowToggle}
-                disabled={followPending}
-                accessibilityRole="button"
-              >
-                <Text style={styles.buttonText}>
-                  {profile.isFollowedByMe ? 'Unfollow' : 'Follow'}
-                </Text>
-              </Pressable>
-              {followError && (
-                <Text accessibilityRole="alert" style={styles.error}>
-                  {followError}
-                </Text>
-              )}
+            <View className="flex-row items-center gap-2">
+              <View className="flex-1">
+                <Link href="/profile/edit" asChild>
+                  <Button mode="outlined" compact>
+                    Edit profile
+                  </Button>
+                </Link>
+              </View>
+              <View className="flex-1">
+                <Link href="/profile/saved" asChild>
+                  <Button mode="outlined" compact>
+                    Saved
+                  </Button>
+                </Link>
+              </View>
+              <IconButton
+                icon="settings"
+                iconColor={colors.text}
+                size={iconSize.md}
+                accessibilityLabel="Settings"
+                onPress={() => router.push('/profile/settings')}
+              />
             </View>
           )}
-          {posts.length === 0 && <Text>No posts yet.</Text>}
+          {!isOwnProfile && viewer && profile.isFollowedByMe !== null && (
+            <FollowButton
+              isFollowing={profile.isFollowedByMe}
+              pending={followPending}
+              error={followError}
+              onPress={handleFollowToggle}
+              block
+            />
+          )}
         </View>
+      }
+      ListEmptyComponent={
+        <EmptyState icon="photo-camera" message="No posts yet." />
       }
       renderItem={({ item }) => (
         <Pressable
           testID={`post-tile-${item.id}`}
           accessibilityRole="button"
+          accessibilityLabel="View post"
           onPress={() =>
             router.push({ pathname: '/post/[id]', params: { id: item.id } })
           }
@@ -190,43 +239,20 @@ export default function ProfileScreen() {
           {item.thumbnailUrl ? (
             <Image
               source={{ uri: item.thumbnailUrl }}
-              style={styles.gridTile}
+              style={{
+                width: tileSize,
+                height: tileSize,
+                backgroundColor: colors.surfaceVariant,
+              }}
             />
           ) : (
-            <View style={[styles.gridTile, styles.gridTilePlaceholder]} />
+            <View
+              className="bg-surface-variant"
+              style={{ width: tileSize, height: tileSize }}
+            />
           )}
         </Pressable>
       )}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#ffffff',
-  },
-  centered: { alignItems: 'center', justifyContent: 'center' },
-  header: {
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 16,
-  },
-  title: { fontSize: 20, fontWeight: '600' },
-  stats: { flexDirection: 'row', gap: 16, marginVertical: 8 },
-  button: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-  },
-  buttonText: { color: '#ffffff', fontWeight: '600' },
-  error: { color: '#dc2626' },
-  gridTile: {
-    width: GRID_TILE_SIZE,
-    height: GRID_TILE_SIZE,
-    margin: 1,
-  },
-  gridTilePlaceholder: { backgroundColor: '#e5e7eb' },
-});
