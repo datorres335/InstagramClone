@@ -25,8 +25,8 @@ export default async function NotificationsPage() {
   await apiClient.notifications.markRead();
 
   return (
-    <main>
-      <h1>Notifications</h1>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-4">
+      <h1 className="text-title font-semibold">Notifications</h1>
       <NotificationsList
         initialNotifications={notifications.data}
         initialNextCursor={notifications.meta.nextCursor}

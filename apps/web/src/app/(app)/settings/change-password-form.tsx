@@ -1,46 +1,71 @@
 'use client';
 
-import { useActionState } from 'react';
+import Button from '@mui/material/Button';
+import FormHelperText from '@mui/material/FormHelperText';
+import TextField from '@mui/material/TextField';
+import { useActionState, useState } from 'react';
 
 import { initialSettingsActionState } from './action-state';
 import { changePasswordAction } from './actions';
+import { SettingsSection } from './settings-section';
 
 export function ChangePasswordForm() {
   const [state, formAction, pending] = useActionState(
     changePasswordAction,
     initialSettingsActionState,
   );
+  // React 19 resets the uncontrolled fields after the action; remount them
+  // so MUI's floating labels match (same fix as the auth forms, M23).
+  const [resetKey, setResetKey] = useState(0);
 
   return (
-    <form action={formAction}>
-      <h2>Change password</h2>
-      <div>
-        <label htmlFor="currentPassword">Current password</label>
-        <input
+    <SettingsSection id="change-password-heading" title="Change password">
+      <form
+        action={formAction}
+        onReset={() => setResetKey((key) => key + 1)}
+        className="flex flex-col gap-4"
+      >
+        <TextField
+          key={`currentPassword-${resetKey}`}
           id="currentPassword"
           name="currentPassword"
+          label="Current password"
           type="password"
           autoComplete="current-password"
           required
+          fullWidth
         />
-      </div>
-      <div>
-        <label htmlFor="newPassword">New password</label>
-        <input
+        <TextField
+          key={`newPassword-${resetKey}`}
           id="newPassword"
           name="newPassword"
+          label="New password"
           type="password"
           autoComplete="new-password"
-          minLength={8}
-          maxLength={128}
           required
+          fullWidth
+          helperText="At least 8 characters."
+          slotProps={{ htmlInput: { minLength: 8, maxLength: 128 } }}
         />
-      </div>
-      {state.error && <p role="alert">{state.error}</p>}
-      {state.success && <p>Password changed.</p>}
-      <button type="submit" disabled={pending}>
-        {pending ? 'Saving…' : 'Change password'}
-      </button>
-    </form>
+        {state.error && (
+          <FormHelperText error role="alert">
+            {state.error}
+          </FormHelperText>
+        )}
+        {state.success && (
+          <p role="status" className="text-success">
+            Password changed.
+          </p>
+        )}
+        <Button
+          type="submit"
+          variant="contained"
+          disabled={pending}
+          className="self-start"
+        >
+          {pending ? 'Saving…' : 'Change password'}
+        </Button>
+      </form>
+    </SettingsSection>
   );
 }

@@ -12,7 +12,7 @@ export function TimeAgo({ iso }: { iso: string }) {
       dateTime={iso}
       title={new Date(iso).toLocaleString('en-US')}
       suppressHydrationWarning
-      className="text-caption text-text-secondary"
+      className="text-caption whitespace-nowrap text-text-secondary"
     >
       {formatTimeAgo(iso)}
     </time>

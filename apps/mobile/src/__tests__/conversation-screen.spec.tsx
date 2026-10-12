@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react-native';
 
 import { ApiError } from '@instagram-clone/api-client';
+import { colors } from '@instagram-clone/design-tokens';
 
 import { apiClient } from '../lib/api-client';
 import { useAuth } from '../lib/auth-context';
@@ -28,7 +29,17 @@ jest.mock('../lib/auth-context', () => ({
 jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
 jest.mock('expo-router', () => ({
   useLocalSearchParams: jest.fn(() => ({ id: 'conv-1' })),
+  Stack: { Screen: jest.fn(() => null) },
 }));
+
+const { Stack } = jest.requireMock('expo-router') as {
+  Stack: { Screen: jest.Mock };
+};
+
+/** The title the screen last gave its stack header. */
+function headerTitle(): unknown {
+  return Stack.Screen.mock.calls.at(-1)?.[0]?.options?.title;
+}
 
 const fakeSelf = {
   id: 'user-1',
@@ -82,8 +93,70 @@ describe('ConversationScreen', () => {
 
     render(<ConversationScreen />);
 
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await waitFor(() => expect(headerTitle()).toBe('@bob'));
     expect(screen.getByText('hello alice')).toBeTruthy();
+  });
+
+  it('puts your own messages on the right in the primary color', async () => {
+    jest
+      .mocked(apiClient.conversations.get)
+      .mockResolvedValue(fakeConversation);
+    jest.mocked(apiClient.conversations.listMessages).mockResolvedValue({
+      data: [
+        fakeMessage('msg-1', { body: 'hello alice' }),
+        fakeMessage('msg-2', { sender: fakeSelf, body: 'hey bob' }),
+      ],
+      meta: { nextCursor: null },
+    });
+
+    render(<ConversationScreen />);
+
+    expect(await screen.findByLabelText('You: hey bob')).toHaveStyle({
+      alignSelf: 'flex-end',
+      backgroundColor: colors.primary,
+    });
+    expect(screen.getByText('hey bob')).toHaveStyle({
+      color: colors.onPrimary,
+    });
+    expect(screen.getByLabelText('@bob: hello alice')).toHaveStyle({
+      alignSelf: 'flex-start',
+      backgroundColor: colors.surfaceVariant,
+    });
+  });
+
+  it('shows "Seen" under your latest message once it has been read', async () => {
+    jest
+      .mocked(apiClient.conversations.get)
+      .mockResolvedValue(fakeConversation);
+    jest.mocked(apiClient.conversations.listMessages).mockResolvedValue({
+      data: [
+        fakeMessage('msg-1', {
+          sender: fakeSelf,
+          body: 'hey bob',
+          readAt: '2026-01-01T00:01:00.000Z',
+        }),
+      ],
+      meta: { nextCursor: null },
+    });
+
+    render(<ConversationScreen />);
+
+    expect(await screen.findByText('Seen')).toBeTruthy();
+  });
+
+  it('shows no "Seen" while your latest message is unread', async () => {
+    jest
+      .mocked(apiClient.conversations.get)
+      .mockResolvedValue(fakeConversation);
+    jest.mocked(apiClient.conversations.listMessages).mockResolvedValue({
+      data: [fakeMessage('msg-1', { sender: fakeSelf, body: 'hey bob' })],
+      meta: { nextCursor: null },
+    });
+
+    render(<ConversationScreen />);
+
+    await screen.findByText('hey bob');
+    expect(screen.queryByText('Seen')).toBeNull();
   });
 
   it('sends a message and appends it to the thread', async () => {
@@ -100,7 +173,7 @@ describe('ConversationScreen', () => {
       );
 
     render(<ConversationScreen />);
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await screen.findByLabelText('Message');
 
     fireEvent.changeText(screen.getByLabelText('Message'), 'hey bob');
     fireEvent.press(screen.getByText('Send'));
@@ -144,7 +217,7 @@ describe('ConversationScreen', () => {
       .mockResolvedValue({ data: [], meta: { nextCursor: null } });
 
     render(<ConversationScreen />);
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await screen.findByLabelText('Message');
 
     const onEvent = jest.mocked(useRealtimeEvents).mock.calls[0]?.[0];
     if (!onEvent) throw new Error('useRealtimeEvents not called');
@@ -166,7 +239,7 @@ describe('ConversationScreen', () => {
       .mockResolvedValue({ data: [], meta: { nextCursor: null } });
 
     render(<ConversationScreen />);
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await screen.findByLabelText('Message');
 
     const onEvent = jest.mocked(useRealtimeEvents).mock.calls[0]?.[0];
     if (!onEvent) throw new Error('useRealtimeEvents not called');

@@ -1,5 +1,7 @@
 import { Link, type Href } from 'expo-router';
-import { KeyboardAvoidingView, Platform, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
+
+import { KeyboardAvoidingView } from './ui/keyboard-avoiding-view';
 
 interface AuthCardProps {
   title: string;
@@ -21,10 +23,7 @@ export function AuthCard({
   footerHref,
 }: AuthCardProps) {
   return (
-    <KeyboardAvoidingView
-      className="flex-1 bg-surface"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView className="flex-1 bg-surface">
       <View className="flex-1 justify-center gap-3 px-4">
         <View className="gap-6 rounded-lg border border-border bg-background px-6 py-10">
           <Text className="text-center font-inter-semibold text-headline text-text">

@@ -1,5 +1,8 @@
 'use client';
 
+import Button from '@mui/material/Button';
+import FormHelperText from '@mui/material/FormHelperText';
+import TextField from '@mui/material/TextField';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -30,19 +33,32 @@ export function StartConversationForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
-      <label htmlFor="new-message-username">New message to</label>
-      <input
-        id="new-message-username"
-        type="text"
-        value={username}
-        onChange={(event) => setUsername(event.target.value)}
-        placeholder="username"
-      />
-      <button type="submit" disabled={pending || !username.trim()}>
-        {pending ? 'Starting…' : 'Chat'}
-      </button>
-      {error && <p role="alert">{error}</p>}
+    <form onSubmit={handleSubmit} className="flex flex-col gap-1">
+      <div className="flex items-start gap-2">
+        <TextField
+          id="new-message-username"
+          label="New message to"
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          placeholder="username"
+          size="small"
+          fullWidth
+          slotProps={{ htmlInput: { autoCapitalize: 'none' } }}
+        />
+        <Button
+          type="submit"
+          variant="contained"
+          disabled={pending || !username.trim()}
+          className="min-h-10 shrink-0"
+        >
+          {pending ? 'Starting…' : 'Chat'}
+        </Button>
+      </div>
+      {error && (
+        <FormHelperText error role="alert">
+          {error}
+        </FormHelperText>
+      )}
     </form>
   );
 }

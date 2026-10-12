@@ -46,7 +46,7 @@ and `IMPLEMENTATION_PLAN.md` all assume the decisions recorded here.
 | Local infra     | Docker Compose                                                        | Postgres, MinIO, Redis, Maildev                                    |
 | Testing         | Vitest (unit), Nest/Supertest (API integration), Playwright (web E2E) | Per-project Nx targets                                             |
 | Lint/format     | ESLint 9 (flat config) + Prettier                                     | Shared `packages/eslint-config`                                    |
-| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | Foundation implemented Milestone 23; feed, posts and profiles restyled Milestone 24; remaining screens M25, polish M26. Shared `packages/design-tokens`, see §5.5 |
+| UI styling      | Web: Material UI v9 + Tailwind CSS v4; mobile: React Native Paper v5 + NativeWind v4 | Foundation implemented Milestone 23; feed, posts and profiles restyled Milestone 24; the remaining screens Milestone 25; polish M26. Shared `packages/design-tokens`, see §5.5 |
 
 Exact framework minor/patch versions are intentionally not pinned in this document —
 confirm current stable versions against each framework's official docs at the moment a
@@ -367,21 +367,22 @@ real consumers needing it — not built speculatively ahead of either.
   `onConnect` immediately, so the re-fetch-on-connect contract above still holds.
   Mobile still opens one connection per caller: since Milestone 24 the tab bar's
   unread-count hook (`useUnreadNotificationCount`) holds one for the whole
-  signed-in session, and the messages screens open a second while shown. Because every
+  signed-in session, the Messages tab holds another once it has been opened (tabs
+  stay mounted), and an open conversation a third. Because every
   signed-in page now holds a stream, the per-host HTTP/1.1 connection limit matters
   (risk #17). A re-fetch result never overwrites a push that arrived while it was in
   flight (the unread badge keeps the larger value).
 
-### 5.5 UI Styling & Design System (foundation Milestone 23, screens from Milestone 24)
+### 5.5 UI Styling & Design System (foundation Milestone 23, screens Milestones 24–25)
 
 The styling track (`IMPLEMENTATION_PLAN.md` M23–M26). **Milestone 23 built the
 foundation**: the tokens package, both themes, the web app shell and mobile tab
 bar, and the login/register screens on both platforms. **Milestone 24 restyled the
 feed, post and profile screens** (post card, carousel, comments, create post,
 profile, edit profile, people lists) and added the shared building blocks below.
-M25 restyles the rest (explore, search, notifications, saved, messages, settings),
-which keep their pre-M23 markup inside the new shell until then, and M26 is the
-consistency pass.
+**Milestone 25 restyled the rest** (explore, search, notifications, saved posts,
+the messages inbox and thread, settings), so every screen has its finished design.
+M26 is the consistency pass.
 
 **Goal:** both apps look as alike as their platforms allow: same colors, type scale,
 spacing, icons, and component shapes. Each still follows its own platform's
@@ -442,9 +443,15 @@ isn't production-ready. This project is on SDK 56, so v4 it is (risk #15).
     workaround is an `any` cast, which `CLAUDE.md` forbids.
   - MD3 Paper draws buttons at 5 × `roundness`; `components/ui/button.tsx` scales that
     back so buttons get the same 8 px radius as MUI's, at a 48 dp minimum height.
-  - The root Stack applies the top safe-area inset once for every screen (Android is
-    edge-to-edge). `app.json` declares `userInterfaceStyle: "light"` so the system
-    draws dark status-bar icons.
+  - The root Stack applies the safe-area insets once (Android is edge-to-edge): the
+    top inset to the headerless tab and auth screens, the bottom inset to every
+    pushed screen (the tab bar handles its own). `app.json` declares
+    `userInterfaceStyle: "light"` so the system draws dark status-bar icons.
+  - With edge-to-edge, Android no longer resizes the window for the keyboard, so
+    every form uses `components/ui/keyboard-avoiding-view.tsx`: React Native's
+    `KeyboardAvoidingView` with `padding` on both platforms, offset by the stack
+    header's height, and on Android enabled only while the keyboard is up (its hide
+    handling otherwise leaves padding behind).
 - **Two Tailwind majors side by side.** Web's v4 sits in the root `package.json`;
   mobile's v3 is pinned in `apps/mobile/package.json`. pnpm's isolated `node_modules`
   gives each app its own copy. Verify with `pnpm --filter mobile why tailwindcss`.
@@ -461,17 +468,21 @@ the same on both platforms):
 | Icon action (like, save, ...)    | `IconButton` + `@mui/icons-material`, `aria-label` + `aria-pressed` | `IconButton` + `MaterialIcons`, `accessibilityLabel` + `accessibilityState.selected` |
 | Avatar                           | `components/ui/user-avatar.tsx` (`Avatar`, letter fallback)  | `components/ui/user-avatar.tsx` (`Avatar.Image` / `Avatar.Text`) |
 | People row (likers, followers)   | `(app)/follow-list-item.tsx`: `<li>` with avatar, profile link, Follow button | `components/follow-list-item.tsx`: `View` row, same parts     |
-| List row with one action (inbox, ...) | `List` + `ListItemButton` + `ListItemAvatar`            | `List.Item` with an avatar on the left                        |
+| List row with one action (notifications, inbox) | One `Link` row in the people-row layout: avatar, text with `TimeAgo`, an optional trailing thumbnail or count | One `Link asChild` + `Pressable` row, same parts, with an explicit `accessibilityLabel` |
+| Unread row                       | Primary dot or count pill, semibold text, "Unread" / "N unread" for screen readers | Same, with Paper's `Badge` for the count             |
+| Post grid (profile, Explore)     | `(app)/post-grid.tsx`: 3-column square tiles                 | `components/post-grid.tsx`: `PostTile` + `postGridListProps` for a `FlatList` |
+| Chat bubble                      | `messages/[id]/message-thread.tsx`: own right on `primary`, theirs left on `surfaceVariant`, "Seen" under your latest read message | `conversation/[id].tsx`: same                    |
+| Settings section                 | `settings/settings-section.tsx`: bordered card with a heading | A local `SettingsSection` in `profile/settings.tsx`, same card |
 | Post card                        | `(app)/post-card.tsx`                                        | `components/post-card.tsx`                                    |
 | Photo carousel                   | `(app)/media-carousel.tsx`: scroll-snap row, dots, arrows at `md`+ | `components/media-carousel.tsx`: paging `FlatList`, dots |
 | Follow toggle                    | `(app)/follow-button.tsx`: contained "Follow" / outlined "Unfollow" | `components/follow-button.tsx`: same                    |
 | Timestamp                        | `components/ui/time-ago.tsx` (`<time>`)                      | `components/ui/time-ago.tsx`; both print `formatTimeAgo` (`packages/types`) |
 | Empty state                      | `components/ui/empty-state.tsx` (icon + sentence)            | `components/ui/empty-state.tsx`                               |
 | Pushed-screen title / back       | The page's own `<h1>` (browser back)                          | Native stack header from the root `_layout.tsx`               |
-| Unread count                     | `Badge`                                                      | `Badge`; the Notifications tab's `tabBarBadge` (`lib/use-unread-notification-count.ts`) |
+| Unread count (navigation)        | `Badge` on the nav icon                                      | The Notifications tab's `tabBarBadge` (`lib/use-unread-notification-count.ts`) |
 | Progress                         | `CircularProgress` / `LinearProgress`                        | `ActivityIndicator` / `ProgressBar`                           |
 | Loading placeholder              | `Skeleton`                                                   | `components/ui/skeleton.tsx`, a token-colored `View` (Paper has no skeleton) |
-| Confirmation                     | `Dialog`                                                     | `Portal` + `Dialog`                                           |
+| Confirmation (delete account)    | `Dialog` with `DialogTitle`/`DialogContentText`/`DialogActions` | `Portal` + `Dialog`, its radius and title size set to match MUI's |
 | Transient message                | `Snackbar`                                                   | `Snackbar`                                                    |
 | Primary navigation               | `(app)/app-nav.tsx`: one `<nav>`, a labelled left rail at `md`+ and an icon-only bottom bar below it | `(tabs)/_layout.tsx`: icon-only Expo Router `Tabs`, same glyphs, order and tints |
 | Auth screen                      | `(auth)/auth-card.tsx`                                       | `components/auth-card.tsx`                                    |

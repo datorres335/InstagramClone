@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList } from 'react-native';
+import { HelperText } from 'react-native-paper';
 
+import { colors } from '@instagram-clone/design-tokens';
 import type { PostResponse } from '@instagram-clone/validation';
 
 import { PostCard } from '../../components/post-card';
+import { EmptyState } from '../../components/ui/empty-state';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
@@ -20,7 +17,9 @@ import { useAuth } from '../../lib/auth-context';
  * (matching `followers.tsx`/`following.tsx`/`edit.tsx`'s convention) rather
  * than nesting, reached via `Link` from the own-profile screen. Real
  * infinite scroll (`onEndReached`), the same convention `(tabs)/home.tsx`
- * established for the feed.
+ * established for the feed. Full post cards rather than a thumbnail grid, so
+ * a post can be unsaved right here (docs/PROGRESS.md Milestone 25
+ * deviations); the title is the stack header's.
  */
 export default function SavedPostsScreen() {
   const { user } = useAuth();
@@ -84,7 +83,7 @@ export default function SavedPostsScreen() {
   return (
     <FlatList
       testID="saved-posts-list"
-      style={styles.container}
+      className="flex-1 bg-background"
       data={posts}
       keyExtractor={(item) => item.id}
       renderItem={({ item }) => (
@@ -97,41 +96,33 @@ export default function SavedPostsScreen() {
         />
       )}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title} role="heading">
-            Saved posts
-          </Text>
-          {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
-              {error}
-            </Text>
-          )}
-        </View>
+        error ? (
+          <HelperText type="error" accessibilityRole="alert">
+            {error}
+          </HelperText>
+        ) : null
       }
       ListEmptyComponent={
         loading ? (
           <ActivityIndicator
             testID="loading-indicator"
-            style={styles.centered}
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
           />
         ) : (
-          <Text style={styles.empty}>No saved posts yet.</Text>
+          <EmptyState icon="bookmark-border" message="No saved posts yet." />
         )
       }
       ListFooterComponent={
-        loadingMore ? <ActivityIndicator style={styles.centered} /> : null
+        loadingMore ? (
+          <ActivityIndicator
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
+          />
+        ) : null
       }
       onEndReachedThreshold={0.5}
       onEndReached={handleLoadMore}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  header: { padding: 16, gap: 12 },
-  centered: { padding: 16 },
-  title: { fontSize: 20, fontWeight: '600' },
-  empty: { padding: 16, textAlign: 'center', color: '#6b7280' },
-  error: { color: '#dc2626' },
-});

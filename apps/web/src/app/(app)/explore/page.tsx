@@ -19,8 +19,8 @@ export default async function ExplorePage() {
   const explore = await apiClient.posts.getExplore();
 
   return (
-    <main>
-      <h1>Explore</h1>
+    <main className="mx-auto flex w-full max-w-content flex-col gap-4">
+      <h1 className="text-title font-semibold">Explore</h1>
       <ExploreGrid
         initialPosts={explore.data}
         initialNextCursor={explore.meta.nextCursor}

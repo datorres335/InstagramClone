@@ -9,7 +9,7 @@ It should be updated after every completed milestone or meaningful development s
 ## Current Status
 
 **Phase:** Post-MVP Features
-**Current Milestone:** Milestone 24 — Feed, Posts & Profiles
+**Current Milestone:** Milestone 25 — Discovery, Activity, Messages & Settings
 **Status:** Complete
 
 The Nx/pnpm monorepo, all three application shells (web, api, mobile), the five
@@ -307,6 +307,21 @@ print identical timestamps, and `frameAspect`/`avatarSize` (`packages/design-tok
 A follower list no longer shows a Follow button on the viewer's own row, and
 `apps/mobile` gained a `typecheck` target that CI and the pre-push hook now run. No
 API, database or validation changes.
+
+Milestone 25 restyles the remaining screens on both platforms: Explore (the profile's
+3-column grid, now one shared component per app), Search (a search field with an
+icon, people rows), Notifications (avatar, sentence, age and the post's thumbnail,
+with unread rows marked by a primary dot and semibold text), Saved posts, the
+Messages inbox (name, last message, age and an unread-count badge), the conversation
+thread (your bubbles on the right in the primary color, theirs on the left, "Seen"
+under your latest read message, the input bar pinned to the bottom) and Settings
+(bordered sections, with account deletion confirmed in a dialog). Testing it on the
+emulator turned up several mobile bugs that are now fixed: with SDK 56's edge-to-edge
+layout the keyboard covered the message and comment fields, the inbox and
+notifications tabs never refreshed after their first visit, and the bottom of pushed
+screens sat under the home indicator. On web, Settings now shows the new address
+right after an email change, and decorative avatars are hidden from screen readers.
+No API, database or validation changes.
 
 ---
 
@@ -1864,6 +1879,58 @@ IMPLEMENTATION_PLAN.md` M21/M22
 - [x] Updated `docs/ARCHITECTURE.md` (§5.5 status, parity map and building blocks,
       §6 packages table), `docs/IMPLEMENTATION_PLAN.md` (M24 record),
       `docs/FEATURES.md` (Features 6 and 20), `docs/API.md` (§5 own-row note)
+
+### Milestone 25 — Discovery, Activity, Messages & Settings
+
+- [x] Shared grids: web `(app)/post-grid.tsx` (`PostGrid`) and mobile
+      `components/post-grid.tsx` (`PostTile`, `usePostTileSize`,
+      `postGridListProps`), used by the profile and Explore on each platform
+- [x] Explore: title, the shared grid (each post's first photo), an empty state,
+      outlined "Load more" on web and infinite scroll on mobile
+- [x] Search: a search field with a leading icon (`aria-label`/
+      `accessibilityLabel` "Search for people", the same placeholder), a spinner
+      while searching, people rows, and a "No results found." empty state. The
+      viewer's own result row has no Follow button (web reads the session on the
+      page, mobile uses `useAuth`), like M24's people lists
+- [x] Notifications: avatar, `@actor` + sentence, age, and the post's thumbnail
+      for likes and comments; unread rows get a primary dot, semibold text and
+      "Unread" in the row's accessible name. Each row links to the post or, for a
+      follow, the actor's profile
+- [x] Messages inbox: a "New message to" field with a contained Chat button;
+      rows with avatar, the other person's name, the last message ("You: …" or
+      "@sender: …") with its age, and a primary unread-count badge ("3 unread"
+      for screen readers)
+- [x] Conversation thread: your bubbles on the right in the primary color, the
+      other person's on the left on `surfaceVariant`, each with its sender for
+      screen readers; "Seen" under your latest message once it's read; the input
+      bar sticks to the bottom (above web's phone bottom bar, above the keyboard
+      and home indicator on mobile). Web's header has a back link, avatar,
+      `@username` and full name; mobile's `@username` is the native header title
+- [x] Saved posts: post cards with an empty state; web adds "Only you can see
+      your saved posts." under the title; mobile's title is the stack header's
+- [x] Settings: bordered sections for Change password ("At least 8
+      characters." hint), Change email (current address) and Delete account.
+      Deleting opens a MUI `Dialog` on web and a Paper `Portal` + `Dialog` on
+      mobile that asks for the password; it replaces M19's "I understand"
+      checkbox. Log out stays at the bottom on mobile
+- [x] Mobile headers: Saved posts, Settings and the conversation now have titles
+      (the conversation sets `@username` once loaded), resolving M24's known issue
+- [x] Mobile keyboard and safe area: a shared `components/ui/keyboard-avoiding-view.tsx`
+      used by the conversation, post detail, settings, edit profile, new post and
+      the auth card; pushed screens get the bottom safe-area inset from the root
+      stack (bugs #89/#90)
+- [x] Mobile inbox and Notifications tabs refresh when they regain focus (bug #88)
+- [x] Web: Settings re-renders after an email change (bug #91); decorative
+      avatars are `aria-hidden` (bug #92); timestamps never wrap
+- [x] Tests: web `notifications-list.spec.tsx` (5), `conversations-list.spec.tsx`
+      (5) and `message-thread.spec.tsx` (5) for unread styling, the preview text,
+      bubble alignment and colors, sender names and "Seen"; mobile specs for the
+      same (unread dot and label, badge and bold text, bubble alignment and
+      colors, "Seen"), the focus refreshes, search's own row, the delete dialog,
+      and the conversation's header title. Existing specs were updated for the new
+      markup without dropping a check; every e2e spec passes unchanged
+- [x] Updated `docs/ARCHITECTURE.md` (§5.5), `docs/IMPLEMENTATION_PLAN.md` (M25
+      record), `docs/FEATURES.md` (Features 13, 14, 16, 17, 18, 20)
 
 ---
 
@@ -3706,6 +3773,47 @@ like web's, grid tiles get a placeholder color while their image loads, and
 mobile's Bio field gained web's "Up to 150 characters." hint. Photos stay gray on
 the emulator (Known Issues: media URLs point at `localhost`).
 
+### Milestone 25
+
+```bash
+pnpm exec nx run web:test
+# ^ first run: 2 of the new specs failed on the rows' accessible names —
+#   "Unread:@bob" and "Jan 13 unread": dom-accessibility-api drops a span's
+#   trailing space and joins adjacent spans. Moved the spaces into text
+#   nodes between the parts; also found the avatar's letter ("B") read
+#   first in every row (bug #92).
+pnpm exec nx run mobile:test
+# ^ first run: 22 failures, all in specs whose screens gained a dependency
+#   (useAuth, Stack.Screen, Paper's Portal) or new markup. Added the mocks /
+#   renderWithTheme and updated queries; no check removed. Later the new
+#   focus-refresh test failed only in the full parallel run: the refresh
+#   ran outside act and landed after waitFor gave up; now wrapped in act,
+#   3/3 full runs green.
+
+pnpm exec nx run-many -t lint typecheck test build --exclude=mobile,web-e2e,api-e2e --skip-nx-cache   # 9 projects, clean
+pnpm exec nx run-many -t lint typecheck test -p mobile --skip-nx-cache   # 27 suites / 149 tests
+pnpm --filter mobile exec expo export --platform android                # 5.4 MB Hermes bundle
+pnpm exec nx run web-e2e:e2e -- --project=chromium                       # 30/30
+pnpm exec nx run web-e2e:e2e -- --project=webkit --workers=1             # 30/30
+pnpm exec nx run web-e2e:e2e -- --project=firefox --workers=1            # 30/30
+```
+
+No API or package changes, so `api-e2e` wasn't affected and wasn't re-run.
+
+Visual check (not automated): Playwright screenshots at 1280 px and 390 px of the
+inbox, thread, notifications (unread, then read), explore, search, settings, the
+delete dialog and saved posts, plus a script that changed a throwaway account's email
+(the page showed the new address, bug #91), failed a password change (labels reset
+correctly) and checked "Seen" after the other user read a message. In Expo Go on the
+`Pixel_6a` emulator: inbox (live push of a new message, then back from the thread),
+the thread with the keyboard open and closed, explore, search, notifications,
+settings and the delete dialog, saved posts, and the post detail comment field. Fixes
+that came out of it: the timestamp in inbox rows wrapped ("Just / now"), web's Chat
+button was shorter than its field, the keyboard covered inputs on Android (bug #89),
+stale tabs (bug #88), the home-indicator overlap (bug #90), and Paper's dialog
+corners and title were much larger than web's (now the `lg` radius and the title
+size).
+
 ---
 
 ## Deviations From the Original Docs (and why)
@@ -5061,6 +5169,48 @@ corrections to something it got wrong.
   skeleton rows; the feed, post and profile keep the centered `ActivityIndicator`,
   since their layout depends on photo sizes the skeleton wouldn't know yet.
 
+### Milestone 25
+
+- **Saved posts stay a list of post cards, not a grid.** The plan called for a grid,
+  but unsaving happens from the list itself: `save-post.spec.ts` checks the caption
+  and an Unsave button on `/saved`, and a grid would have meant opening each post to
+  unsave it. The cards are the ones M24 already restyled.
+- **Unread rows are marked with a dot and weight, not a tinted background.** A tinted
+  row would carry secondary-color timestamps, and `textSecondary` on `surfaceVariant`
+  fails the AA pairs `design-tokens` tests (4.1:1); `surface` passes but is too faint to
+  read as a highlight. Notifications get a primary dot, semibold text and "Unread" in
+  the accessible name; the inbox uses its unread-count badge and semibold text, the way
+  Instagram marks unread conversations.
+- **Single-action rows use the people-row anatomy, not MUI `ListItemButton` or Paper
+  `List.Item`.** Notifications and inbox rows are a link (web) or `Pressable`
+  (mobile) laid out like M24's people rows, so every list in the app shares one avatar
+  size, padding and type scale. Paper's `List.Item` brings fixed title/description
+  typography that would drift from web. The parity map is updated.
+- **The web inbox's unread count is a Tailwind pill, not MUI's `Badge`.** MUI's badge
+  positions itself on a child element (the shell uses it on the nav icon); a count at
+  the end of a row is a plain pill in the primary color. Mobile uses Paper's `Badge`,
+  which is a standalone pill already.
+- **Inbox rows read "<name>" over "@sender: message".** The title is the other
+  person's full name (or username without one) and the preview names the sender
+  ("You: …" for your own), so you can see who wrote last. It also keeps the text
+  `direct-messages.spec.ts` looks for ("@bob: Thanks Alice!").
+- **Deleting the account is confirmed in a dialog instead of M19's checkbox/switch.**
+  The plan asked for the dialog; it is the explicit second step now, with the
+  password field inside it. Mobile's tests check the same things as before: nothing is
+  deleted until the dialog's Delete is pressed, and not without a password.
+- **"Seen" appears only under your latest message**, like Instagram, instead of
+  "(seen)" after every read message of yours.
+- **Web's thread page sizes itself from the shell's dimensions**: its minimum height
+  is the viewport minus the phone bars (14 spacing units each) and the content
+  column's padding, so the input bar sits at the bottom of a short thread. If the
+  shell's bar height or padding changes, this page's `min-h` must change with it
+  (noted in the page's doc comment).
+- **The thread's back link is labelled "Back to inbox"**, not "Back to messages":
+  Playwright's `getByLabel('Message')` matches `aria-label`s by substring, and the
+  e2e suite finds the message field that way.
+- **Mobile's keyboard handling moved into one component** (`components/ui/keyboard-avoiding-view.tsx`)
+  and now also applies on Android; M24's screens use it too. See bug #89.
+
 ---
 
 ## Bugs Found and Fixed
@@ -6357,6 +6507,39 @@ dev`/`web-e2e` harness instead of Jest, and failing because that job
     target, which had never run in CI and didn't depend on `prisma:generate` even
     though `seed.ts` imports the gitignored generated client; it now does.
 
+### Milestone 25
+
+88. **Mobile's Messages and Notifications tabs showed stale data after their first
+    visit.** Tabs stay mounted, and both screens loaded only on mount. Coming back
+    from a thread left its unread count in the inbox (reading pushes no realtime
+    event), and reopening Notifications showed the old list and never marked newer
+    notifications read, so the tab badge came back on the next launch. Both refresh
+    when they regain focus (`useFocusEffect`, skipping the initial focus that the
+    mount already covers); new tests drive the focus callback. Seen on the emulator
+    while checking the inbox.
+89. **On Android the keyboard covered the message input and the post's comment
+    field.** With Expo SDK 56's edge-to-edge layout the window no longer resizes for
+    the keyboard, and every screen used `KeyboardAvoidingView` on iOS only (the post
+    detail screen had none). Enabling React Native's `KeyboardAvoidingView` on Android
+    exposed a second problem: its `keyboardDidHide` handling left about 70 dp of
+    padding after the keyboard closed. `components/ui/keyboard-avoiding-view.tsx` pads
+    on both platforms, offsets by the stack header's height, and on Android is only
+    enabled while the keyboard is up. Used by the conversation, post detail,
+    settings, edit profile, new post and the auth card; checked on the emulator with
+    the keyboard opening and closing.
+90. **The bottom of pushed mobile screens sat under the home indicator** (Settings'
+    Log out button, the conversation's input bar). The root stack applied only the
+    top inset, to headerless screens. Pushed screens now get the bottom inset in
+    `contentStyle`.
+91. **Web Settings kept showing the old address after a successful email change.**
+    The page read the session once; `changeEmailAction` now revalidates `/settings`.
+    Verified with a throwaway account.
+92. **Screen readers announced the avatar's letter fallback** ("B, @bob started
+    following you…") wherever an avatar sits inside a link, because MUI renders the
+    letter as text. Found while writing the new notifications test's
+    accessible-name check.
+    `UserAvatar` is now `aria-hidden` unless it has an `alt`.
+
 ---
 
 ## Known Issues / Follow-ups (non-blocking)
@@ -6450,8 +6633,10 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   — every field on `PublicProfileResponse` (`avatarUrl` since Milestone 9,
   `followersCount`/`followingCount`/`isFollowedByMe` since Milestone 10,
   `postsCount` since Milestone 11) is real now, none still hardcoded.
-- **The public profile _view_ screens (web's `[username]/page.tsx`, mobile's
-  `profile/[username].tsx`) don't render the avatar image at all** — only the
+- **RESOLVED (Milestone 24):** the profile view screens render the avatar now
+  (`UserAvatar`). Original note: **The public profile _view_ screens (web's
+  `[username]/page.tsx`, mobile's `profile/[username].tsx`) don't render the avatar
+  image at all** — only the
   Milestone 8/9 profile-_edit_ screens show it (that was this milestone's explicit
   scope: wiring avatar upload into the edit screens). `PublicProfileResponse.avatarUrl`
   is already populated and ready to use; adding an `<img>`/`<Image>` to the view
@@ -6499,8 +6684,10 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   afterward. Still a shared, whole-suite budget (now at 20/40 used); the same
   discipline from Milestone 8's bug #20 still applies going forward: register
   the minimum a file's tests actually need via shared `beforeAll` fixtures.
-- **Web's post detail carousel is a plain stacked list, not a swipeable
-  widget** (see Deviations above) — all images are present and correctly
+- **RESOLVED (Milestone 24):** web's `MediaCarousel` is a scroll-snap row with page
+  dots and previous/next buttons. Original note: **Web's post detail carousel is a
+  plain stacked list, not a swipeable widget** (see Deviations above) — all images
+  are present and correctly
   ordered, only the browsing interaction differs from mobile's real paged
   `FlatList` carousel. A small, low-risk follow-up, not a functional gap.
 - **No caption/hashtag/mention parsing** — `Post.caption` is plain text
@@ -6866,13 +7053,19 @@ store` has no web implementation (Milestone 7, confirmed empirically). This is
   milestone (no on-device SSE run happened, same limitation Milestone 7's mobile
   auth entry already notes for this environment) — worth a real device/simulator
   pass alongside that existing follow-up.
-- **Discovery, activity, messages and settings screens aren't restyled yet.** M23
-  styled the shell and auth screens and M24 the feed, post and profile screens;
-  explore, search, notifications, saved, the messages inbox and thread, and settings
-  still have their pre-M23 markup inside the new shell until Milestone 25. On
-  mobile, Saved, Settings and a conversation show an untitled stack header (back
-  button only) because they still render their own titles in the content; M25
-  gives them header titles like the other pushed screens.
+- **Two mobile screens still use `StyleSheet` with a color literal**: the profile
+  tab's redirect wrapper (`app/(tabs)/profile.tsx`) and the index loading screen
+  (`app/index.tsx`), both `backgroundColor: '#ffffff'`. Every other screen was moved to
+  tokens in M23–M25. Milestone 26's lint rule against color literals will flag both.
+- **Mobile's Home and Explore tabs show what they loaded on their first visit**
+  until the app restarts: tabs stay mounted and there's no pull-to-refresh. Inbox and
+  Notifications refresh on focus (bug #88) because a stale unread state there is
+  misleading; refreshing the feed and Explore is a feature decision (pull-to-refresh
+  or refresh-on-focus), not a styling one.
+- **Mobile's delete-account dialog isn't keyboard-aware**: Paper's `Dialog` renders
+  in a `Portal`, outside the screen's `KeyboardAvoidingView`, and stays centered. It
+  wasn't checked with the keyboard open; M26's parity review should, ideally on a
+  small screen.
 - **Post photos and avatars don't load in the Android emulator, and uploads from it
   would fail the same way.** `StorageService` builds both public media URLs and
   presigned upload URLs from `S3_ENDPOINT` (`http://localhost:9000` in `.env`), and
@@ -7044,9 +7237,9 @@ web-proxy-vs-mobile-direct auth split, adding `react-native-sse` via `pnpm add`
 rather than `expo install`, and the seventh register-throttle increase) are equally
 each decided and recorded above with rationale, not left open — including the
 WebSocket-vs-SSE choice itself, explicitly decided (not deferred) in
-`docs/IMPLEMENTATION_PLAN.md`'s M22 section. Milestones 23 and 24 (the first
-two styling milestones) made styling and placement decisions only, each recorded
-with its reason in their Deviations entries above. Everything else recorded in
+`docs/IMPLEMENTATION_PLAN.md`'s M22 section. Milestones 23–25 (the styling
+milestones so far) made styling and placement decisions only, each recorded with
+its reason in their Deviations entries above. Everything else recorded in
 this file is
 implementation-detail-level — versions, ports, a webpack externals list, one deferred
 column, one simplified index, two deferred extensions — with rationale in
@@ -7057,49 +7250,49 @@ changes anything either document asserts at the design level.
 
 ## Next Milestone
 
-**Milestone 24 — Feed, Posts & Profiles is now complete** (see Completed/Validation
-Performed/Deviations/Bugs Found above). The styling track continues as planned in
+**Milestone 25 — Discovery, Activity, Messages & Settings is now complete** (see
+Completed/Validation Performed/Deviations/Bugs Found above). Every screen now has its
+finished design. The styling track ends with M26 as planned in
 `docs/IMPLEMENTATION_PLAN.md`; push notifications stays at **Milestone 27**, after it.
 
-**Milestone 25 — Discovery, Activity, Messages & Settings.** Full scope in
-`docs/IMPLEMENTATION_PLAN.md` M25: explore, search, notifications, saved posts, the
-messages inbox and conversation thread, and settings, on web and mobile. This is
-the last batch of screens before M26's consistency pass:
+**Milestone 26 — Cross-Platform Consistency & Polish Pass.** Full scope in
+`docs/IMPLEMENTATION_PLAN.md` M26. No new screens; this pass compares, enforces and
+fixes:
 
-1. **Reuse M24's building blocks rather than writing new ones.** Web:
-   `components/ui/` (`UserAvatar`, `EmptyState`, `TimeAgo`), `(app)/post-card.tsx`,
-   and the profile page's 3-column grid markup for explore and saved. Mobile:
-   `components/ui/` (`UserAvatar`, `EmptyState`, `TimeAgo`, `Skeleton`, `Button`),
-   `post-card.tsx`, and the profile screen's grid `FlatList`. Search results and
-   notification rows follow the people-list row (`follow-list-item.tsx` on both
-   platforms): avatar, a link, a trailing control. Colors and sizes still come from
-   `@instagram-clone/design-tokens` only (`avatarSize` for avatars); follow the
-   parity map in `docs/ARCHITECTURE.md` §5.5.
-2. **Give mobile's Saved, Settings and conversation screens real header titles.**
-   They show an untitled stack header today (`app/_layout.tsx`, Known Issues)
-   because each still renders its own title; move the title into the header the
-   way M24 did for post, likes, profile and edit screens. The conversation title is
-   the other participant's `@username`, like `usernameTitle` does for profiles.
-3. **Keep accessible names and keep the waits honest.** Rows that become icon
-   buttons keep their names as `aria-label`/`accessibilityLabel`. Unread state needs
-   a non-visual signal as well as the highlight (for example "unread" in the row's
-   accessible name), and the web notifications nav item keeps `Notifications (N)`.
-   In e2e, assert something only true once an action has finished (bugs #79/#80),
-   call `waitForHydration(locator)` after `goto()`/`reload()` before interacting
+1. **Parity review.** Compare every screen at a 390 px web viewport with the same
+   screen in Expo Go on the Android emulator, against a checklist (spacing, type
+   sizes, colors, icons, empty/loading/error states), fix the drift, and record the
+   checklist outcome here. Known candidates: mobile's Messages "Chat" button (48 dp)
+   is taller than its dense text field, and the delete-account dialog with the
+   keyboard open (Known Issues).
+2. **Enforce tokens with a lint rule.** Add `no-restricted-syntax` rules that ban
+   hex/rgb color literals in `apps/web` and `apps/mobile` source (not in
+   `packages/design-tokens`, where they belong). Today only `app/(tabs)/profile.tsx`
+   and `app/index.tsx` on mobile would fail it (Known Issues); move them to tokens
+   and drop their `StyleSheet`s. Check that test files are covered or deliberately
+   excluded.
+3. **Accessibility.** Visible focus rings on web: the custom row links
+   (notifications, inbox, people rows, grid tiles) and Tailwind-styled links have no
+   explicit `focus-visible` style yet, unlike `NavLink`. Touch targets of at least
+   48 dp on mobile: the comment "Delete" text button relies on `hitSlop`, so measure
+   it and similar small controls. Contrast is already covered by the token tests.
+   Decide whether to add `@axe-core/playwright`, since it's a new dependency.
+4. **Visual regression baselines** are optional: Playwright `toHaveScreenshot` on a
+   handful of Chromium pages, adopted only if stable, with baselines generated on
+   Linux (CI), never on Windows.
+5. **Fix `docs/ARCHITECTURE.md` risk #11** (the `useActionState` + `redirect()`
+   resubmit bug) in the four affected forms. Remove `critical-path.spec.ts`'s
+   `page.reload()` workaround only after a real resubmission is shown to redirect
+   correctly without it.
+6. **Keep the rules from M23–M25.** e2e specs pass unchanged; wait for real
+   completion signals (bugs #79/#80), call `waitForHydration` after navigation
    (bug #83), close extra browser contexts (bug #84), and validate with
-   `--project=webkit --workers=1` as well as Chromium.
-4. **Settings' delete-account confirmation** becomes a MUI `Dialog` on web and a
-   Paper `Portal` + `Dialog` on mobile. Keep the existing button and field names the
-   e2e and unit tests use.
-5. **Validate visually on both platforms**, the same way M23/M24 did: Playwright
-   screenshots at 1280 px and 390 px, and Expo Go on the Android emulator (the API
-   on `127.0.0.1`, `apps/mobile/.env` pointing at `10.0.2.2`). Photos show as gray
-   placeholders on the emulator (Known Issues: media URLs use `localhost`), so
-   check image layout on web. Expo Go's floating dev-tools button can cover a
-   header icon; drag it aside rather than restyling around it.
-6. **Run `nx run-many -t lint typecheck test`** before calling it done; mobile's
-   new `typecheck` target covers app and spec code, which Jest and Metro don't
-   type-check.
+   `--project=webkit --workers=1` as well as Chromium. On mobile, any new form uses
+   `components/ui/keyboard-avoiding-view.tsx` (bug #89), and Playwright's
+   `getByLabel` matches `aria-label`s by substring (see the "Back to inbox"
+   deviation). Run `nx run-many -t lint typecheck test` before calling it done. For
+   the emulator, drag Expo Go's floating Tools button aside, and don't press Back
+   on the home tab: it leaves Expo Go and later taps land on the launcher.
 
 The guidance from Milestone 22 below still applies (throttle budgets, Playwright
 `--grep` placement, WebKit/Firefox checks, confirming process identity before

@@ -1,13 +1,9 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react-native';
+import { fireEvent, screen, waitFor } from '@testing-library/react-native';
 
 import { apiClient } from '../lib/api-client';
 import { useAuth } from '../lib/auth-context';
 import SettingsScreen from '../app/profile/settings';
+import { renderWithTheme } from '../test-support/render-with-theme';
 
 jest.mock('../lib/api-client', () => ({
   apiClient: {
@@ -64,7 +60,7 @@ describe('SettingsScreen', () => {
       logout,
     });
 
-    render(<SettingsScreen />);
+    renderWithTheme(<SettingsScreen />);
 
     expect(Redirect).toHaveBeenCalledWith(
       expect.objectContaining({ href: '/(auth)/login' }),
@@ -75,7 +71,7 @@ describe('SettingsScreen', () => {
   it('logs out and navigates back to /login', async () => {
     logout.mockResolvedValue(undefined);
 
-    render(<SettingsScreen />);
+    renderWithTheme(<SettingsScreen />);
     fireEvent.press(screen.getByRole('button', { name: 'Log out' }));
 
     await waitFor(() => expect(logout).toHaveBeenCalled());
@@ -86,7 +82,7 @@ describe('SettingsScreen', () => {
     it('changes the password and shows a success message', async () => {
       jest.mocked(apiClient.users.changePassword).mockResolvedValue(undefined);
 
-      render(<SettingsScreen />);
+      renderWithTheme(<SettingsScreen />);
       fireEvent.changeText(
         screen.getByLabelText('Current password'),
         'old-password',
@@ -111,7 +107,7 @@ describe('SettingsScreen', () => {
         .mocked(apiClient.users.changePassword)
         .mockRejectedValue(new Error('network down'));
 
-      render(<SettingsScreen />);
+      renderWithTheme(<SettingsScreen />);
       fireEvent.press(screen.getByRole('button', { name: 'Change password' }));
 
       await waitFor(() => {
@@ -129,7 +125,7 @@ describe('SettingsScreen', () => {
         .mocked(apiClient.users.changeEmail)
         .mockResolvedValue(updated as never);
 
-      render(<SettingsScreen />);
+      renderWithTheme(<SettingsScreen />);
       fireEvent.changeText(
         screen.getByLabelText('New email'),
         'new@example.com',
@@ -152,28 +148,34 @@ describe('SettingsScreen', () => {
   });
 
   describe('delete account', () => {
-    it('is disabled until the confirmation switch is on', async () => {
-      render(<SettingsScreen />);
+    it('only asks for confirmation when "Delete account" is pressed', async () => {
+      renderWithTheme(<SettingsScreen />);
 
       fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
+
+      expect(await screen.findByText('Delete your account?')).toBeTruthy();
+      expect(apiClient.users.deleteAccount).not.toHaveBeenCalled();
+    });
+
+    it("keeps the dialog's Delete button disabled until a password is entered", async () => {
+      renderWithTheme(<SettingsScreen />);
+      fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
+
+      fireEvent.press(await screen.findByRole('button', { name: 'Delete' }));
 
       expect(apiClient.users.deleteAccount).not.toHaveBeenCalled();
     });
 
-    it('deletes the account, clears the session, and navigates to login once confirmed', async () => {
+    it('deletes the account, clears the session, and navigates to login once confirmed in the dialog', async () => {
       jest.mocked(apiClient.users.deleteAccount).mockResolvedValue(undefined);
 
-      render(<SettingsScreen />);
+      renderWithTheme(<SettingsScreen />);
+      fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
       fireEvent.changeText(
-        screen.getByLabelText('Current password for account deletion'),
+        await screen.findByLabelText('Current password for account deletion'),
         'old-password',
       );
-      fireEvent(
-        screen.getByLabelText('Confirm permanent account deletion'),
-        'onValueChange',
-        true,
-      );
-      fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
+      fireEvent.press(screen.getByRole('button', { name: 'Delete' }));
 
       await waitFor(() => {
         expect(apiClient.users.deleteAccount).toHaveBeenCalledWith({
@@ -189,17 +191,13 @@ describe('SettingsScreen', () => {
         .mocked(apiClient.users.deleteAccount)
         .mockRejectedValue(new Error('network down'));
 
-      render(<SettingsScreen />);
+      renderWithTheme(<SettingsScreen />);
+      fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
       fireEvent.changeText(
-        screen.getByLabelText('Current password for account deletion'),
+        await screen.findByLabelText('Current password for account deletion'),
         'old-password',
       );
-      fireEvent(
-        screen.getByLabelText('Confirm permanent account deletion'),
-        'onValueChange',
-        true,
-      );
-      fireEvent.press(screen.getByRole('button', { name: 'Delete account' }));
+      fireEvent.press(screen.getByRole('button', { name: 'Delete' }));
 
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(

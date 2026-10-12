@@ -617,6 +617,26 @@ record in `docs/PROGRESS.md`'s Milestone 24 entries):
   unread styling in the notifications list and the inbox, and for the bubble
   alignment of your own messages vs. the other person's.
 
+**Implemented (Milestone 25)**, with these differences from the plan above (full
+record in `docs/PROGRESS.md`'s Milestone 25 entries):
+
+- Saved posts stay a list of post cards, so posts can be unsaved in place (an e2e
+  test depends on it).
+- Unread notification rows get a primary dot, semibold text and "Unread" for screen
+  readers instead of a tinted background, which the token contrast rules don't
+  allow with secondary text.
+- Notification and inbox rows use the same row layout as the people lists, not MUI
+  `ListItemButton` / Paper `List.Item`; web's inbox count is a Tailwind pill rather
+  than MUI's `Badge`.
+- Deleting the account: the dialog replaced M19's confirmation checkbox, with the
+  password field inside it.
+- Additions not in the plan: shared post-grid components on both platforms; Search
+  hides the Follow button on the viewer's own row; mobile keyboard handling that
+  works on Android (with SDK 56's edge-to-edge layout) for every form; the bottom
+  safe-area inset on pushed screens; inbox and notifications tabs that refresh on
+  focus; web Settings showing the new email immediately; decorative avatars hidden
+  from screen readers.
+
 ### M26 — Cross-Platform Consistency & Polish Pass
 
 - **Parity review**: compare every screen at a 390 px web viewport against the same

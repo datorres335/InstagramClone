@@ -30,10 +30,10 @@ function usernameTitle(params: object | undefined): string {
 
 /**
  * Screens pushed on top of the tabs (post, profile, lists, forms) get a
- * token-styled native header with a back button (Milestone 24). The tab
- * group, the auth screens and the index redirect hide it, so with Android's
- * edge-to-edge layout they take the top safe-area inset here instead; the
- * tab bar handles the bottom inset itself.
+ * token-styled native header with a back button (Milestone 24) and the
+ * bottom safe-area inset. The tab group, the auth screens and the index
+ * redirect hide the header, so with Android's edge-to-edge layout they take
+ * the top inset here instead; the tab bar handles the bottom inset itself.
  */
 function RootStack() {
   const insets = useSafeAreaInsets();
@@ -57,7 +57,12 @@ function RootStack() {
           fontFamily: interFamily.semibold,
           fontSize: typography.bodyLarge.fontSize,
         },
-        contentStyle: { backgroundColor: colors.background },
+        // Pushed screens have no tab bar under them, so they keep clear of
+        // the home indicator here (Milestone 25).
+        contentStyle: {
+          backgroundColor: colors.background,
+          paddingBottom: insets.bottom,
+        },
       }}
     >
       <Stack.Screen name="index" options={headerless} />
@@ -84,10 +89,9 @@ function RootStack() {
       <Stack.Screen name="profile/edit" options={{ title: 'Edit profile' }} />
       <Stack.Screen name="profile/followers" options={{ title: 'Followers' }} />
       <Stack.Screen name="profile/following" options={{ title: 'Following' }} />
-      {/* Restyled in Milestone 25; until then they keep their own in-screen
-          titles, so the header only provides the back button. */}
-      <Stack.Screen name="profile/saved" options={{ title: '' }} />
-      <Stack.Screen name="profile/settings" options={{ title: '' }} />
+      <Stack.Screen name="profile/saved" options={{ title: 'Saved posts' }} />
+      <Stack.Screen name="profile/settings" options={{ title: 'Settings' }} />
+      {/* The screen sets "@username" once the conversation has loaded. */}
       <Stack.Screen name="conversation/[id]" options={{ title: '' }} />
     </Stack>
   );

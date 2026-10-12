@@ -1,7 +1,7 @@
 import * as ImagePicker from 'expo-image-picker';
 import { Redirect, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import {
   HelperText,
   ProgressBar,
@@ -17,6 +17,7 @@ import { UserAvatar } from '../../components/ui/user-avatar';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { apiClient } from '../../lib/api-client';
 import { useAuth } from '../../lib/auth-context';
+import { KeyboardAvoidingView } from '../../components/ui/keyboard-avoiding-view';
 
 type AvatarStatus = 'idle' | 'uploading' | 'processing' | 'done';
 
@@ -135,10 +136,7 @@ export default function EditProfileScreen() {
     avatarStatus === 'uploading' || avatarStatus === 'processing';
 
   return (
-    <KeyboardAvoidingView
-      className="flex-1 bg-background"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView className="flex-1 bg-background">
       <ScrollView contentContainerClassName="gap-4 p-4">
         <View className="flex-row items-center gap-4 rounded-lg bg-surface p-4">
           <UserAvatar

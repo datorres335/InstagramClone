@@ -21,8 +21,8 @@ export default async function SettingsPage() {
   if (!user) redirect('/login');
 
   return (
-    <main>
-      <h1>Settings</h1>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-6">
+      <h1 className="text-title font-semibold">Settings</h1>
       <ChangePasswordForm />
       <ChangeEmailForm currentEmail={user.email} />
       <DeleteAccountForm />

@@ -1,34 +1,30 @@
-import { router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, View } from 'react-native';
+import { HelperText, Text } from 'react-native-paper';
 
+import { colors } from '@instagram-clone/design-tokens';
 import type { PostResponse } from '@instagram-clone/validation';
 
+import {
+  PostTile,
+  postGridListProps,
+  usePostTileSize,
+} from '../../components/post-grid';
+import { EmptyState } from '../../components/ui/empty-state';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 
-const GRID_COLUMNS = 3;
-const GRID_TILE_SIZE = 120;
-
 /**
  * `GET /explore` (docs/API.md §11, docs/FEATURES.md #15, Milestone 18) —
- * a thumbnail grid, the same tile shape the profile grid
- * (`profile/[username].tsx`) already renders, reused here since
- * `ExploreResponse` carries full `PostResponse` items (first media item
- * per post), not the profile grid's `PostSummary.thumbnailUrl`. Real
- * infinite scroll (`onEndReached`), the same `(tabs)/home.tsx` convention —
- * unlike Milestone 17's search, Explore's ranking has a real, stable
- * keyset cursor.
+ * the same thumbnail grid as the profile screen (`components/post-grid.tsx`),
+ * each post's first photo as its tile, since `ExploreResponse` carries full
+ * `PostResponse` items, not the profile grid's `PostSummary.thumbnailUrl`.
+ * Real infinite scroll (`onEndReached`), the same `(tabs)/home.tsx`
+ * convention — unlike Milestone 17's search, Explore's ranking has a real,
+ * stable keyset cursor.
  */
 export default function ExploreScreen() {
+  const tileSize = usePostTileSize();
   const [posts, setPosts] = useState<PostResponse[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,40 +68,27 @@ export default function ExploreScreen() {
   return (
     <FlatList
       testID="explore-grid"
-      style={styles.container}
+      className="flex-1 bg-background"
       data={posts}
-      numColumns={GRID_COLUMNS}
+      {...postGridListProps}
       keyExtractor={(post) => post.id}
-      renderItem={({ item }) => {
-        const cover = item.media[0];
-        return (
-          <Pressable
-            testID={`explore-tile-${item.id}`}
-            accessibilityRole="button"
-            onPress={() =>
-              router.push({ pathname: '/post/[id]', params: { id: item.id } })
-            }
-          >
-            {cover ? (
-              <Image
-                source={{ uri: cover.thumbnailUrl }}
-                style={styles.gridTile}
-              />
-            ) : (
-              <View style={[styles.gridTile, styles.gridTilePlaceholder]} />
-            )}
-          </Pressable>
-        );
-      }}
+      renderItem={({ item }) => (
+        <PostTile
+          postId={item.id}
+          thumbnailUrl={item.media[0]?.thumbnailUrl ?? null}
+          size={tileSize}
+          testID={`explore-tile-${item.id}`}
+        />
+      )}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title} role="heading">
+        <View className="px-4 py-3">
+          <Text variant="titleLarge" role="heading">
             Explore
           </Text>
           {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
+            <HelperText type="error" accessibilityRole="alert">
               {error}
-            </Text>
+            </HelperText>
           )}
         </View>
       }
@@ -113,32 +96,23 @@ export default function ExploreScreen() {
         loading ? (
           <ActivityIndicator
             testID="loading-indicator"
-            style={styles.centered}
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
           />
         ) : (
-          <Text style={styles.empty}>No posts to explore yet.</Text>
+          <EmptyState icon="explore" message="No posts to explore yet." />
         )
       }
       ListFooterComponent={
-        loadingMore ? <ActivityIndicator style={styles.centered} /> : null
+        loadingMore ? (
+          <ActivityIndicator
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
+          />
+        ) : null
       }
       onEndReachedThreshold={0.5}
       onEndReached={handleLoadMore}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  header: { padding: 16, gap: 12 },
-  centered: { padding: 16 },
-  title: { fontSize: 20, fontWeight: '600' },
-  empty: { padding: 16, textAlign: 'center', color: '#6b7280' },
-  error: { color: '#dc2626' },
-  gridTile: {
-    width: GRID_TILE_SIZE,
-    height: GRID_TILE_SIZE,
-    margin: 1,
-  },
-  gridTilePlaceholder: { backgroundColor: '#e5e7eb' },
-});

@@ -15,6 +15,9 @@ jest.mock('../lib/api-client', () => ({
     follows: { follow: jest.fn(), unfollow: jest.fn() },
   },
 }));
+jest.mock('../lib/auth-context', () => ({
+  useAuth: () => ({ user: { username: 'dave' } }),
+}));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {
@@ -24,12 +27,15 @@ jest.mock('expo-router', () => {
   };
 });
 
-const fakeResult = (username: string) => ({
+const fakeResult = (
+  username: string,
+  isFollowedByMe: boolean | null = null,
+) => ({
   id: `user-${username}`,
   username,
   fullName: null,
   avatarUrl: null,
-  isFollowedByMe: null,
+  isFollowedByMe,
 });
 
 describe('SearchScreen', () => {
@@ -73,6 +79,25 @@ describe('SearchScreen', () => {
 
     expect(apiClient.search.searchUsers).toHaveBeenCalledWith({ q: 'al' });
     await waitFor(() => expect(screen.getByText('@alice')).toBeTruthy());
+  });
+
+  it("renders no follow button on the viewer's own result row", async () => {
+    jest.mocked(apiClient.search.searchUsers).mockResolvedValue({
+      data: [fakeResult('dave', false), fakeResult('davina', false)],
+      meta: { nextCursor: null },
+    });
+
+    render(<SearchScreen />);
+    fireEvent.changeText(
+      screen.getByPlaceholderText(/search by username/i),
+      'dav',
+    );
+    await jest.advanceTimersByTimeAsync(300);
+
+    await waitFor(() => expect(screen.getByText('@davina')).toBeTruthy());
+    expect(screen.getByText('@dave')).toBeTruthy();
+    // Only davina's row has one.
+    expect(screen.getAllByRole('button', { name: 'Follow' })).toHaveLength(1);
   });
 
   it('shows an empty-state message when nothing matches', async () => {

@@ -18,7 +18,9 @@ interface UserAvatarProps {
  * The one avatar used everywhere on web (docs/ARCHITECTURE.md §5.5 parity
  * map; `apps/mobile`'s `components/ui/user-avatar.tsx` is its twin). With no
  * photo it shows the username's first letter on the surface color rather
- * than an empty `<img>`.
+ * than an empty `<img>`. Without an `alt` it's decorative and hidden from
+ * screen readers, letter included, so a row's link isn't announced as "B,
+ * @bob …".
  */
 export function UserAvatar({
   username,
@@ -30,6 +32,7 @@ export function UserAvatar({
     <Avatar
       src={avatarUrl ?? undefined}
       alt={alt}
+      aria-hidden={alt === '' ? true : undefined}
       className={`${sizeClassName[size]} bg-surface-variant font-semibold text-text-secondary`}
     >
       {username.charAt(0).toUpperCase()}

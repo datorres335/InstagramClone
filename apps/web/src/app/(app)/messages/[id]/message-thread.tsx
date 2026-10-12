@@ -1,6 +1,8 @@
 'use client';
 
-import { useCallback, useRef, useState, useTransition } from 'react';
+import Button from '@mui/material/Button';
+import TextField from '@mui/material/TextField';
+import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 
 import type { MessageResponse } from '@instagram-clone/validation';
 
@@ -29,6 +31,12 @@ interface MessageThreadProps {
  * appends anything not already known by id — covering both "I was
  * connected the whole time" and "I missed some while disconnected"
  * without assuming either one.
+ *
+ * Chat bubbles (Milestone 25): your own on the right in the primary color,
+ * the other person's on the left on the surface color, each prefixed with
+ * its sender for screen readers; "Seen" under your latest message once it's
+ * read. The input bar sticks to the bottom of the viewport (above the phone
+ * bottom bar), and the page scrolls to the newest message when one arrives.
  */
 export function MessageThread({
   conversationId,
@@ -42,6 +50,13 @@ export function MessageThread({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const knownIds = useRef(new Set(initialMessages.map((m) => m.id)));
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const newestId = messages.at(-1)?.id;
+  useEffect(() => {
+    // Optional call: jsdom (unit tests) doesn't implement scrollIntoView.
+    endRef.current?.scrollIntoView?.({ block: 'end' });
+  }, [newestId]);
 
   const refreshNewest = useCallback(() => {
     getMessagesPageAction(conversationId, undefined)
@@ -57,18 +72,18 @@ export function MessageThread({
       });
   }, [conversationId]);
 
-  useRealtimeEvents(
-    (event) => {
-      if (event.type !== 'message' || event.message.conversationId !== conversationId) {
-        return;
-      }
-      if (!knownIds.current.has(event.message.id)) {
-        knownIds.current.add(event.message.id);
-        setMessages((prev) => [...prev, event.message]);
-      }
-    },
-    refreshNewest,
-  );
+  useRealtimeEvents((event) => {
+    if (
+      event.type !== 'message' ||
+      event.message.conversationId !== conversationId
+    ) {
+      return;
+    }
+    if (!knownIds.current.has(event.message.id)) {
+      knownIds.current.add(event.message.id);
+      setMessages((prev) => [...prev, event.message]);
+    }
+  }, refreshNewest);
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -106,36 +121,83 @@ export function MessageThread({
     });
   }
 
+  const newest = messages.at(-1);
+  const seenId =
+    newest && newest.sender.username === viewerUsername && newest.readAt
+      ? newest.id
+      : null;
+
   return (
-    <div>
+    <div className="flex flex-1 flex-col">
       {olderCursor && (
-        <button type="button" onClick={handleLoadOlder} disabled={pending}>
+        <Button
+          onClick={handleLoadOlder}
+          disabled={pending}
+          className="mt-2 self-center"
+        >
           {pending ? 'Loading…' : 'Load older messages'}
-        </button>
+        </Button>
       )}
-      <ul>
-        {messages.map((message) => (
-          <li key={message.id}>
-            <strong>@{message.sender.username}</strong> {message.body}
-            {message.sender.username === viewerUsername &&
-              message.readAt &&
-              ' (seen)'}
-          </li>
-        ))}
+      <ul className="flex flex-1 flex-col justify-end gap-1 py-4">
+        {messages.map((message) => {
+          const own = message.sender.username === viewerUsername;
+          return (
+            <li
+              key={message.id}
+              className={`flex flex-col ${own ? 'items-end' : 'items-start'}`}
+            >
+              <p
+                className={`max-w-3/4 rounded-lg px-3 py-2 whitespace-pre-line wrap-break-word ${
+                  own
+                    ? 'rounded-br-sm bg-primary text-on-primary'
+                    : 'rounded-bl-sm bg-surface-variant text-text'
+                }`}
+              >
+                <span className="sr-only">
+                  {own ? 'You' : `@${message.sender.username}`}:{' '}
+                </span>
+                {message.body}
+              </p>
+              {message.id === seenId && (
+                <span className="px-1 text-caption text-text-secondary">
+                  Seen
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="message-body">Message</label>
-        <textarea
-          id="message-body"
-          maxLength={2200}
-          value={body}
-          onChange={(event) => setBody(event.target.value)}
-        />
-        <button type="submit" disabled={pending || !body.trim()}>
-          Send
-        </button>
+      <div ref={endRef} />
+      <form
+        onSubmit={handleSubmit}
+        className="sticky bottom-14 flex flex-col gap-1 border-t border-border bg-background py-3 md:bottom-0"
+      >
+        <div className="flex items-end gap-2">
+          <TextField
+            id="message-body"
+            label="Message"
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            multiline
+            maxRows={4}
+            size="small"
+            fullWidth
+            slotProps={{ htmlInput: { maxLength: 2200 } }}
+          />
+          <Button
+            type="submit"
+            disabled={pending || !body.trim()}
+            className="shrink-0"
+          >
+            Send
+          </Button>
+        </div>
+        {error && (
+          <p role="alert" className="text-error">
+            {error}
+          </p>
+        )}
       </form>
-      {error && <p role="alert">{error}</p>}
     </div>
   );
 }

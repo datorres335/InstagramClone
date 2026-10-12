@@ -1,9 +1,12 @@
 'use client';
 
+import BookmarkBorderIcon from '@mui/icons-material/BookmarkBorder';
+import Button from '@mui/material/Button';
 import { useState, useTransition } from 'react';
 
 import type { PostResponse } from '@instagram-clone/validation';
 
+import { EmptyState } from '../../../components/ui/empty-state';
 import { PostCard } from '../post-card';
 import { getSavedPageAction } from './actions';
 
@@ -17,7 +20,8 @@ interface SavedPostsListProps {
  * "Load more" pagination, mirroring `FeedList` (Milestone 12/15) — same
  * reasoning: simpler than an IntersectionObserver-based auto-load, and
  * there's no dedicated scroll-position/loading-sentinel machinery to get
- * right for one button.
+ * right for one button. Full post cards rather than a thumbnail grid, so a
+ * post can be unsaved right here (docs/PROGRESS.md Milestone 25 deviations).
  */
 export function SavedPostsList({
   initialPosts,
@@ -43,11 +47,13 @@ export function SavedPostsList({
   }
 
   if (posts.length === 0) {
-    return <p>No saved posts yet.</p>;
+    return (
+      <EmptyState icon={<BookmarkBorderIcon />} message="No saved posts yet." />
+    );
   }
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       {posts.map((post) => (
         <PostCard
           key={post.id}
@@ -56,11 +62,15 @@ export function SavedPostsList({
         />
       ))}
       {nextCursor && (
-        <button type="button" onClick={handleLoadMore} disabled={pending}>
+        <Button variant="outlined" onClick={handleLoadMore} disabled={pending}>
           {pending ? 'Loading…' : 'Load more'}
-        </button>
+        </Button>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert" className="text-center text-error">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

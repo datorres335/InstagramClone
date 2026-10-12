@@ -1,28 +1,34 @@
-import { Link } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Link, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  StyleSheet,
-  Text,
+  Image,
+  Pressable,
   View,
 } from 'react-native';
+import { HelperText, Text } from 'react-native-paper';
 
+import { avatarSize, colors } from '@instagram-clone/design-tokens';
+import { formatTimeAgo } from '@instagram-clone/types';
 import type { NotificationResponse } from '@instagram-clone/validation';
 
+import { EmptyState } from '../../components/ui/empty-state';
+import { TimeAgo } from '../../components/ui/time-ago';
+import { UserAvatar } from '../../components/ui/user-avatar';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
+import { interFamily } from '../../theme/fonts';
 
-function describeNotification(notification: NotificationResponse): string {
+/** What the actor did, after their `@username` (the sentence apps/web shows too). */
+function describeAction(notification: NotificationResponse): string {
   switch (notification.type) {
     case 'FOLLOW':
-      return `@${notification.actor.username} started following you.`;
+      return 'started following you.';
     case 'LIKE':
-      return `@${notification.actor.username} liked your post.`;
+      return 'liked your post.';
     case 'COMMENT':
-      return `@${notification.actor.username} commented: "${
-        notification.comment?.body ?? ''
-      }"`;
+      return `commented: "${notification.comment?.body ?? ''}"`;
   }
 }
 
@@ -32,6 +38,10 @@ function describeNotification(notification: NotificationResponse): string {
  * this screen marks every notification as read (`docs/FEATURES.md` #16's
  * explicit UX), fired after the initial list load so this render still
  * reflects each notification's real pre-open `isRead` state.
+ *
+ * Rows match apps/web's `NotificationsList`: avatar, sentence, age, the
+ * post's thumbnail for likes and comments, and for unread rows a primary
+ * dot, semibold text and "Unread" in the row's accessibility label.
  */
 export default function NotificationsScreen() {
   const [notifications, setNotifications] = useState<NotificationResponse[]>(
@@ -61,6 +71,17 @@ export default function NotificationsScreen() {
     loadFirstPage();
   }, [loadFirstPage]);
 
+  // The tab stays mounted after its first visit, so each later visit reloads
+  // the list and marks the new notifications read, matching the tab badge,
+  // which resets whenever this screen opens.
+  const focusedBefore = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      if (focusedBefore.current) loadFirstPage();
+      focusedBefore.current = true;
+    }, [loadFirstPage]),
+  );
+
   async function handleLoadMore() {
     if (!nextCursor || loadingMore) return;
     setLoadingMore(true);
@@ -78,35 +99,81 @@ export default function NotificationsScreen() {
   return (
     <FlatList
       testID="notifications-list"
-      style={styles.container}
+      className="flex-1 bg-background"
       data={notifications}
       keyExtractor={(item) => item.id}
-      renderItem={({ item }) => (
-        <Link
-          href={
-            item.post
-              ? { pathname: '/post/[id]', params: { id: item.post.id } }
-              : {
-                  pathname: '/profile/[username]',
-                  params: { username: item.actor.username },
-                }
-          }
-        >
-          <View style={styles.row}>
-            <Text>{describeNotification(item)}</Text>
-            {!item.isRead && <Text style={styles.new}> (new)</Text>}
-          </View>
-        </Link>
-      )}
+      renderItem={({ item }) => {
+        const unread = !item.isRead;
+        const sentence = `@${item.actor.username} ${describeAction(item)}`;
+        return (
+          <Link
+            href={
+              item.post
+                ? { pathname: '/post/[id]', params: { id: item.post.id } }
+                : {
+                    pathname: '/profile/[username]',
+                    params: { username: item.actor.username },
+                  }
+            }
+            asChild
+          >
+            <Pressable
+              accessibilityRole="link"
+              accessibilityLabel={`${unread ? 'Unread: ' : ''}${sentence} ${formatTimeAgo(item.createdAt)}`}
+              className="flex-row items-center gap-3 px-4 py-2"
+            >
+              <UserAvatar
+                username={item.actor.username}
+                avatarUrl={item.actor.avatarUrl}
+                size="md"
+              />
+              <View className="flex-1">
+                <Text
+                  variant="bodyMedium"
+                  style={
+                    unread ? { fontFamily: interFamily.semibold } : undefined
+                  }
+                >
+                  <Text variant="labelLarge">@{item.actor.username}</Text>{' '}
+                  {describeAction(item)}
+                </Text>
+                <TimeAgo iso={item.createdAt} />
+              </View>
+              {item.post &&
+                (item.post.thumbnailUrl ? (
+                  <Image
+                    source={{ uri: item.post.thumbnailUrl }}
+                    style={{
+                      width: avatarSize.md,
+                      height: avatarSize.md,
+                      backgroundColor: colors.surfaceVariant,
+                    }}
+                  />
+                ) : (
+                  <View
+                    className="bg-surface-variant"
+                    style={{ width: avatarSize.md, height: avatarSize.md }}
+                  />
+                ))}
+              {unread && (
+                <View
+                  testID="unread-indicator"
+                  className="h-2 w-2 rounded-full bg-primary"
+                />
+              )}
+            </Pressable>
+          </Link>
+        );
+      }}
       ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title} role="heading">
+        <View className="px-4 py-3">
+          <Text variant="titleLarge" role="heading">
             Notifications
           </Text>
           {error && (
-            <Text accessibilityRole="alert" style={styles.error}>
+            <HelperText type="error" accessibilityRole="alert">
               {error}
-            </Text>
+            </HelperText>
           )}
         </View>
       }
@@ -114,28 +181,23 @@ export default function NotificationsScreen() {
         loading ? (
           <ActivityIndicator
             testID="loading-indicator"
-            style={styles.centered}
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
           />
         ) : (
-          <Text style={styles.empty}>No notifications yet.</Text>
+          <EmptyState icon="favorite-border" message="No notifications yet." />
         )
       }
       ListFooterComponent={
-        loadingMore ? <ActivityIndicator style={styles.centered} /> : null
+        loadingMore ? (
+          <ActivityIndicator
+            color={colors.textSecondary}
+            style={{ padding: 16 }}
+          />
+        ) : null
       }
       onEndReachedThreshold={0.5}
       onEndReached={handleLoadMore}
     />
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  header: { padding: 16, gap: 12 },
-  centered: { padding: 16 },
-  title: { fontSize: 20, fontWeight: '600' },
-  empty: { padding: 16, textAlign: 'center', color: '#6b7280' },
-  row: { flexDirection: 'row', padding: 16, gap: 4 },
-  new: { color: '#2563eb', fontWeight: '600' },
-  error: { color: '#dc2626' },
-});

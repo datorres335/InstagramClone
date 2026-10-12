@@ -17,12 +17,13 @@ export default async function MessagesPage() {
   const conversations = await apiClient.conversations.list();
 
   return (
-    <main>
-      <h1>Messages</h1>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-4">
+      <h1 className="text-title font-semibold">Messages</h1>
       <StartConversationForm />
       <ConversationsList
         initialConversations={conversations.data}
         initialNextCursor={conversations.meta.nextCursor}
+        viewerUsername={user.username}
       />
     </main>
   );

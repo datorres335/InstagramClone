@@ -9,6 +9,7 @@ import { EmptyState } from '../../../components/ui/empty-state';
 import { UserAvatar } from '../../../components/ui/user-avatar';
 import { getApiClient } from '../../../lib/get-api-client';
 import { FollowButton } from '../follow-button';
+import { PostGrid } from '../post-grid';
 
 interface ProfilePageProps {
   params: Promise<{ username: string }>;
@@ -135,25 +136,7 @@ export default async function ProfilePage({ params }: ProfilePageProps) {
             message="No posts yet."
           />
         ) : (
-          <ul className="grid grid-cols-3 gap-1">
-            {posts.data.map((post) => (
-              <li key={post.id}>
-                <Link
-                  href={`/p/${post.id}`}
-                  aria-label="View post"
-                  className="block aspect-square bg-surface-variant hover:opacity-90"
-                >
-                  {post.thumbnailUrl && (
-                    <img
-                      src={post.thumbnailUrl}
-                      alt=""
-                      className="h-full w-full object-cover"
-                    />
-                  )}
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <PostGrid posts={posts.data} />
         )}
       </section>
     </main>

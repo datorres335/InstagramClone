@@ -1,9 +1,15 @@
 'use client';
 
+import SearchIcon from '@mui/icons-material/Search';
+import SearchOffIcon from '@mui/icons-material/SearchOff';
+import CircularProgress from '@mui/material/CircularProgress';
+import InputAdornment from '@mui/material/InputAdornment';
+import TextField from '@mui/material/TextField';
 import { useEffect, useState } from 'react';
 
 import type { FollowListItem as FollowListItemType } from '@instagram-clone/validation';
 
+import { EmptyState } from '../../../components/ui/empty-state';
 import { FollowListItem } from '../follow-list-item';
 import { searchUsersAction } from './actions';
 
@@ -16,7 +22,12 @@ import { searchUsersAction } from './actions';
  */
 const DEBOUNCE_MS = 300;
 
-export function SearchBox() {
+interface SearchBoxProps {
+  /** The signed-in viewer, whose own result row gets no follow button. */
+  viewerUsername: string | null;
+}
+
+export function SearchBox({ viewerUsername }: SearchBoxProps) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<FollowListItemType[]>([]);
   const [pending, setPending] = useState(false);
@@ -49,24 +60,51 @@ export function SearchBox() {
   const trimmed = query.trim();
 
   return (
-    <div>
-      <label htmlFor="search-query">Search for people</label>
-      <input
+    <div className="flex flex-col gap-2">
+      <TextField
         id="search-query"
-        type="text"
         value={query}
         onChange={(event) => setQuery(event.target.value)}
         placeholder="Search by username or name"
+        size="small"
+        fullWidth
+        slotProps={{
+          htmlInput: {
+            'aria-label': 'Search for people',
+            autoComplete: 'off',
+          },
+          input: {
+            startAdornment: (
+              <InputAdornment position="start">
+                <SearchIcon className="text-text-secondary" />
+              </InputAdornment>
+            ),
+          },
+        }}
       />
-      {pending && <p>Searching…</p>}
-      {error && <p role="alert">{error}</p>}
+      {pending && (
+        <CircularProgress
+          size={24}
+          aria-label="Searching"
+          className="mx-auto my-4"
+        />
+      )}
+      {error && (
+        <p role="alert" className="text-center text-error">
+          {error}
+        </p>
+      )}
       {!pending && trimmed.length >= 2 && results.length === 0 && !error && (
-        <p>No results found.</p>
+        <EmptyState icon={<SearchOffIcon />} message="No results found." />
       )}
       {results.length > 0 && (
-        <ul>
+        <ul className="flex flex-col">
           {results.map((item) => (
-            <FollowListItem key={item.id} item={item} />
+            <FollowListItem
+              key={item.id}
+              item={item}
+              isViewer={item.username === viewerUsername}
+            />
           ))}
         </ul>
       )}

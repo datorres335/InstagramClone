@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { authErrorMessage } from '../../../lib/auth-error-message';
@@ -36,6 +37,8 @@ export async function changeEmailAction(
     return { error: authErrorMessage(error), success: false };
   }
 
+  // Re-render the page so "Current email" shows the new address.
+  revalidatePath('/settings');
   return { error: null, success: true };
 }
 

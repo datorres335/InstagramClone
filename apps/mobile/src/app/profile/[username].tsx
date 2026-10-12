@@ -1,13 +1,6 @@
 import { useLocalSearchParams, Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Image,
-  Pressable,
-  View,
-  useWindowDimensions,
-} from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, View } from 'react-native';
 import { IconButton, Text } from 'react-native-paper';
 
 import { ApiError } from '@instagram-clone/api-client';
@@ -18,15 +11,17 @@ import type {
 } from '@instagram-clone/validation';
 
 import { FollowButton } from '../../components/follow-button';
+import {
+  PostTile,
+  postGridListProps,
+  usePostTileSize,
+} from '../../components/post-grid';
 import { Button } from '../../components/ui/button';
 import { EmptyState } from '../../components/ui/empty-state';
 import { UserAvatar } from '../../components/ui/user-avatar';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
-
-const GRID_COLUMNS = 3;
-const GRID_GAP = 2;
 
 /**
  * Public profile view (docs/API.md §4, docs/FEATURES.md #3) — the same
@@ -38,7 +33,7 @@ const GRID_GAP = 2;
 export default function ProfileScreen() {
   const { username } = useLocalSearchParams<{ username: string }>();
   const { user: viewer } = useAuth();
-  const { width } = useWindowDimensions();
+  const tileSize = usePostTileSize();
   const [profile, setProfile] = useState<PublicProfileResponse | null>(null);
   const [posts, setPosts] = useState<PostSummary[]>([]);
   const [notFound, setNotFound] = useState(false);
@@ -120,15 +115,12 @@ export default function ProfileScreen() {
   }
 
   const isOwnProfile = viewer?.username === profile.username;
-  const tileSize = (width - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS;
 
   return (
     <FlatList
       className="flex-1 bg-background"
       data={posts}
-      numColumns={GRID_COLUMNS}
-      columnWrapperStyle={{ gap: GRID_GAP }}
-      contentContainerStyle={{ gap: GRID_GAP }}
+      {...postGridListProps}
       keyExtractor={(post) => post.id}
       ListHeaderComponent={
         <View className="gap-3 border-b border-border px-4 pt-4 pb-3">
@@ -228,30 +220,12 @@ export default function ProfileScreen() {
         <EmptyState icon="photo-camera" message="No posts yet." />
       }
       renderItem={({ item }) => (
-        <Pressable
+        <PostTile
+          postId={item.id}
+          thumbnailUrl={item.thumbnailUrl}
+          size={tileSize}
           testID={`post-tile-${item.id}`}
-          accessibilityRole="button"
-          accessibilityLabel="View post"
-          onPress={() =>
-            router.push({ pathname: '/post/[id]', params: { id: item.id } })
-          }
-        >
-          {item.thumbnailUrl ? (
-            <Image
-              source={{ uri: item.thumbnailUrl }}
-              style={{
-                width: tileSize,
-                height: tileSize,
-                backgroundColor: colors.surfaceVariant,
-              }}
-            />
-          ) : (
-            <View
-              className="bg-surface-variant"
-              style={{ width: tileSize, height: tileSize }}
-            />
-          )}
-        </Pressable>
+        />
       )}
     />
   );

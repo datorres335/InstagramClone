@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import Link from 'next/link';
 
 import { getApiClient } from '../../../lib/get-api-client';
 import { SavedPostsList } from './saved-posts-list';
@@ -23,9 +22,13 @@ export default async function SavedPostsPage() {
   const saved = await apiClient.savedPosts.getSaved();
 
   return (
-    <main>
-      <h1>Saved posts</h1>
-      <Link href={`/${user.username}`}>Back to profile</Link>
+    <main className="mx-auto flex w-full max-w-feed flex-col gap-4">
+      <header className="flex flex-col gap-0.5">
+        <h1 className="text-title font-semibold">Saved posts</h1>
+        <p className="text-text-secondary">
+          Only you can see your saved posts.
+        </p>
+      </header>
       <SavedPostsList
         initialPosts={saved.data}
         initialNextCursor={saved.meta.nextCursor}

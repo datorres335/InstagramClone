@@ -1,14 +1,18 @@
 import * as React from 'react';
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
 } from '@testing-library/react-native';
 
+import { colors } from '@instagram-clone/design-tokens';
+
 import { apiClient } from '../lib/api-client';
 import { useRealtimeEvents } from '../lib/realtime';
 import MessagesScreen from '../app/(tabs)/messages';
+import { interFamily } from '../theme/fonts';
 
 jest.mock('../lib/api-client', () => ({
   apiClient: {
@@ -16,6 +20,9 @@ jest.mock('../lib/api-client', () => ({
   },
 }));
 jest.mock('../lib/realtime', () => ({ useRealtimeEvents: jest.fn() }));
+jest.mock('../lib/auth-context', () => ({
+  useAuth: () => ({ user: { username: 'alice' } }),
+}));
 jest.mock('expo-router', () => {
   const { Text } = jest.requireActual('react-native');
   return {
@@ -23,11 +30,13 @@ jest.mock('expo-router', () => {
       <Text>{children}</Text>
     ),
     router: { push: jest.fn() },
+    useFocusEffect: jest.fn(),
   };
 });
 
-const { router } = jest.requireMock('expo-router') as {
+const { router, useFocusEffect } = jest.requireMock('expo-router') as {
   router: { push: jest.Mock };
+  useFocusEffect: jest.Mock;
 };
 
 const fakeOther = {
@@ -74,8 +83,9 @@ describe('MessagesScreen', () => {
 
     render(<MessagesScreen />);
 
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
-    expect(screen.getByText('hey there')).toBeTruthy();
+    // The title is the full name, or the username without one.
+    await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+    expect(screen.getByText('@bob: hey there')).toBeTruthy();
   });
 
   it('shows an unread count when present', async () => {
@@ -86,7 +96,51 @@ describe('MessagesScreen', () => {
 
     render(<MessagesScreen />);
 
-    await waitFor(() => expect(screen.getByText(' (3)')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('3')).toBeTruthy());
+    expect(screen.getByLabelText(/, 3 unread$/)).toBeTruthy();
+    expect(screen.getByText('3')).toHaveStyle({
+      backgroundColor: colors.primary,
+    });
+    expect(screen.getByText('bob')).toHaveStyle({
+      fontFamily: interFamily.semibold,
+    });
+  });
+
+  it('shows no badge and regular text once everything is read', async () => {
+    jest.mocked(apiClient.conversations.list).mockResolvedValue({
+      data: [fakeConversation('conv-1', { unreadCount: 0 })],
+      meta: { nextCursor: null },
+    });
+
+    render(<MessagesScreen />);
+
+    await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
+    expect(screen.queryByLabelText(/unread/)).toBeNull();
+    expect(screen.getByText('bob')).not.toHaveStyle({
+      fontFamily: interFamily.semibold,
+    });
+  });
+
+  it('prefixes your own last message with "You"', async () => {
+    jest.mocked(apiClient.conversations.list).mockResolvedValue({
+      data: [
+        fakeConversation('conv-1', {
+          lastMessage: {
+            id: 'msg-1',
+            conversationId: 'conv-1',
+            sender: { ...fakeOther, id: 'user-1', username: 'alice' },
+            body: 'see you',
+            readAt: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+          },
+        }),
+      ],
+      meta: { nextCursor: null },
+    });
+
+    render(<MessagesScreen />);
+
+    await waitFor(() => expect(screen.getByText('You: see you')).toBeTruthy());
   });
 
   it('shows an empty-state message when there are no conversations', async () => {
@@ -114,7 +168,7 @@ describe('MessagesScreen', () => {
       });
 
     render(<MessagesScreen />);
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
 
     fireEvent(screen.getByTestId('conversations-list'), 'onEndReached');
 
@@ -150,6 +204,33 @@ describe('MessagesScreen', () => {
     });
   });
 
+  it('re-fetches the first page when the inbox regains focus', async () => {
+    jest
+      .mocked(apiClient.conversations.list)
+      .mockResolvedValueOnce({
+        data: [fakeConversation('conv-1', { unreadCount: 2 })],
+        meta: { nextCursor: null },
+      })
+      .mockResolvedValueOnce({
+        data: [fakeConversation('conv-1', { unreadCount: 0 })],
+        meta: { nextCursor: null },
+      });
+
+    render(<MessagesScreen />);
+    await waitFor(() => expect(screen.getByText('2')).toBeTruthy());
+
+    const onFocus = useFocusEffect.mock.calls.at(-1)?.[0];
+    if (typeof onFocus !== 'function') throw new Error('no focus effect');
+    // The first focus is the initial mount, which already loaded page one.
+    act(() => onFocus());
+    expect(apiClient.conversations.list).toHaveBeenCalledTimes(1);
+    // Coming back from a thread.
+    await act(async () => onFocus());
+
+    await waitFor(() => expect(screen.queryByText('2')).toBeNull());
+    expect(apiClient.conversations.list).toHaveBeenCalledTimes(2);
+  });
+
   it('re-fetches the first page when a message event arrives', async () => {
     jest
       .mocked(apiClient.conversations.list)
@@ -178,7 +259,7 @@ describe('MessagesScreen', () => {
       },
     });
 
-    await waitFor(() => expect(screen.getByText('@bob')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('bob')).toBeTruthy());
     expect(apiClient.conversations.list).toHaveBeenCalledTimes(2);
   });
 });

@@ -1,22 +1,32 @@
-import { useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  FlatList,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { ActivityIndicator, FlatList, View } from 'react-native';
+import { HelperText, Text, TextInput } from 'react-native-paper';
 
 import { ApiError } from '@instagram-clone/api-client';
+import { colors, radii } from '@instagram-clone/design-tokens';
 import type { MessageResponse } from '@instagram-clone/validation';
 
+import { Button } from '../../components/ui/button';
+import { KeyboardAvoidingView } from '../../components/ui/keyboard-avoiding-view';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
 import { useRealtimeEvents } from '../../lib/realtime';
+
+/** Own messages on the right in the primary color, the other person's on the left — the same bubbles as apps/web's `MessageThread`. */
+function bubbleStyle(own: boolean) {
+  return {
+    alignSelf: own ? ('flex-end' as const) : ('flex-start' as const),
+    maxWidth: '75%' as const,
+    backgroundColor: own ? colors.primary : colors.surfaceVariant,
+    borderRadius: radii.lg,
+    borderBottomRightRadius: own ? radii.sm : radii.lg,
+    borderBottomLeftRadius: own ? radii.lg : radii.sm,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  };
+}
 
 /**
  * The conversation thread (docs/API.md §17/§18, docs/IMPLEMENTATION_PLAN.md
@@ -27,6 +37,11 @@ import { useRealtimeEvents } from '../../lib/realtime';
  * realtime retrofit: a `message` event for this conversation is appended
  * directly, while a stream (re)connect re-fetches the newest page to catch
  * up on anything missed while disconnected.
+ *
+ * The other person's `@username` is the stack header's title (Milestone 25);
+ * the input bar sits at the bottom, above the keyboard
+ * (`components/ui/keyboard-avoiding-view.tsx`) and the home indicator (the
+ * root stack's bottom inset).
  */
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -81,22 +96,19 @@ export default function ConversationScreen() {
         setMessages((prev) => [...prev, ...fresh]);
       }
     } catch {
-      // Silently ignored — mirrors NotificationBadge's own poll-failure handling.
+      // Silently ignored — mirrors the unread badge's own refresh-failure handling.
     }
   }, [id]);
 
-  useRealtimeEvents(
-    (event) => {
-      if (event.type !== 'message' || event.message.conversationId !== id) {
-        return;
-      }
-      if (!knownIds.current.has(event.message.id)) {
-        knownIds.current.add(event.message.id);
-        setMessages((prev) => [...prev, event.message]);
-      }
-    },
-    refreshNewest,
-  );
+  useRealtimeEvents((event) => {
+    if (event.type !== 'message' || event.message.conversationId !== id) {
+      return;
+    }
+    if (!knownIds.current.has(event.message.id)) {
+      knownIds.current.add(event.message.id);
+      setMessages((prev) => [...prev, event.message]);
+    }
+  }, refreshNewest);
 
   async function handleSend() {
     const trimmed = body.trim();
@@ -132,117 +144,121 @@ export default function ConversationScreen() {
     }
   }
 
+  const header = (
+    <Stack.Screen
+      options={{ title: otherUsername ? `@${otherUsername}` : '' }}
+    />
+  );
+
   if (loading) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <ActivityIndicator testID="loading-indicator" />
+      <View className="flex-1 items-center justify-center bg-background">
+        {header}
+        <ActivityIndicator
+          testID="loading-indicator"
+          color={colors.textSecondary}
+        />
       </View>
     );
   }
 
   if (notFound) {
     return (
-      <View style={[styles.container, styles.centered]}>
-        <Text role="heading">Conversation not found</Text>
+      <View className="flex-1 items-center justify-center bg-background">
+        {header}
+        <Text variant="titleLarge" role="heading">
+          Conversation not found
+        </Text>
       </View>
     );
   }
 
+  const newest = messages.at(-1);
+  const seenId =
+    newest && newest.sender.username === viewer?.username && newest.readAt
+      ? newest.id
+      : null;
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title} role="heading">
-        @{otherUsername ?? 'unknown'}
-      </Text>
+    <KeyboardAvoidingView className="flex-1 bg-background">
+      {header}
       <FlatList
         testID="messages-list"
         inverted
         data={messages.slice().reverse()}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <View
-            style={[
-              styles.bubble,
-              item.sender.username === viewer?.username
-                ? styles.bubbleMine
-                : styles.bubbleTheirs,
-            ]}
-          >
-            <Text>{item.body}</Text>
-          </View>
-        )}
+        contentContainerStyle={{ padding: 12, gap: 4 }}
+        renderItem={({ item }) => {
+          const own = item.sender.username === viewer?.username;
+          return (
+            <View>
+              <View
+                accessible
+                accessibilityLabel={`${own ? 'You' : `@${item.sender.username}`}: ${item.body}`}
+                style={bubbleStyle(own)}
+              >
+                <Text
+                  variant="bodyMedium"
+                  style={{ color: own ? colors.onPrimary : colors.text }}
+                >
+                  {item.body}
+                </Text>
+              </View>
+              {item.id === seenId && (
+                <Text
+                  variant="bodySmall"
+                  style={{
+                    alignSelf: 'flex-end',
+                    color: colors.textSecondary,
+                    paddingHorizontal: 4,
+                  }}
+                >
+                  Seen
+                </Text>
+              )}
+            </View>
+          );
+        }}
         ListFooterComponent={
           olderCursor ? (
-            <Pressable
+            <Button
+              mode="text"
               onPress={handleLoadOlder}
               disabled={loadingOlder}
-              accessibilityRole="button"
+              style={{ alignSelf: 'center' }}
             >
-              <Text style={styles.loadOlder}>
-                {loadingOlder ? 'Loading…' : 'Load older messages'}
-              </Text>
-            </Pressable>
+              {loadingOlder ? 'Loading…' : 'Load older messages'}
+            </Button>
           ) : null
         }
       />
-      <View style={styles.form}>
-        <TextInput
-          style={styles.input}
-          placeholder="Message"
-          accessibilityLabel="Message"
-          value={body}
-          onChangeText={setBody}
-          maxLength={2200}
-          multiline
-        />
-        <Pressable
-          style={styles.sendButton}
-          onPress={handleSend}
-          disabled={sending || !body.trim()}
-          accessibilityRole="button"
-        >
-          <Text style={styles.sendButtonText}>
+      <View className="gap-1 border-t border-border px-3 py-2">
+        <View className="flex-row items-center gap-2">
+          <TextInput
+            mode="outlined"
+            dense
+            label="Message"
+            accessibilityLabel="Message"
+            value={body}
+            onChangeText={setBody}
+            maxLength={2200}
+            multiline
+            style={{ flex: 1, maxHeight: 120 }}
+          />
+          <Button
+            mode="text"
+            onPress={handleSend}
+            disabled={sending || !body.trim()}
+          >
             {sending ? 'Sending…' : 'Send'}
-          </Text>
-        </Pressable>
+          </Button>
+        </View>
+        {error && (
+          <HelperText type="error" accessibilityRole="alert">
+            {error}
+          </HelperText>
+        )}
       </View>
-      {error && (
-        <Text accessibilityRole="alert" style={styles.error}>
-          {error}
-        </Text>
-      )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ffffff' },
-  centered: { alignItems: 'center', justifyContent: 'center' },
-  title: { fontSize: 18, fontWeight: '600', padding: 16 },
-  loadOlder: { color: '#2563eb', textAlign: 'center', padding: 8 },
-  bubble: { margin: 8, padding: 10, borderRadius: 12, maxWidth: '75%' },
-  bubbleMine: { backgroundColor: '#dbeafe', alignSelf: 'flex-end' },
-  bubbleTheirs: { backgroundColor: '#f3f4f6', alignSelf: 'flex-start' },
-  form: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    padding: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#d1d5db',
-    borderRadius: 8,
-    padding: 8,
-  },
-  sendButton: {
-    backgroundColor: '#111827',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  sendButtonText: { color: '#ffffff', fontWeight: '600' },
-  error: { color: '#dc2626', padding: 8 },
-});

@@ -190,7 +190,9 @@ referenced to `DATABASE.md` / `API.md`).
 ### 13. Saved Posts (implemented Milestone 15)
 
 - Bookmark a post privately (not visible to other users, matching Instagram's own
-  "Saved" behavior); view your saved posts in a dedicated list.
+  "Saved" behavior); view your saved posts in a dedicated list. The list shows full
+  post cards, not a thumbnail grid, so a post can be unsaved right there
+  (Milestone 25).
 - **Out of scope**: save collections/folders (a single flat saved list for MVP).
 - Entities/endpoints: `SavedPost` (`DATABASE.md` §3.9), `PUT`/`DELETE
 /posts/:postId/save`, `GET /me/saved` (`API.md` §10).
@@ -203,7 +205,8 @@ referenced to `DATABASE.md` / `API.md`).
 - Backed by Postgres `pg_trgm` similarity search (`DATABASE.md` §5, §6) — good enough
   for MVP scale, not a general-purpose search engine (see `ARCHITECTURE.md` risk #7).
 - Debounced search input on both web and mobile (300ms) — the first debounced input
-  in this codebase.
+  in this codebase. Results are the same people rows as the followers lists, with no
+  Follow button on the viewer's own row (Milestone 25).
 - **Out of scope**: searching posts by caption text, hashtag search, search history/
   suggestions.
 - Entities/endpoints: `GET /search/users?q=` (`API.md` §11).
@@ -227,7 +230,9 @@ referenced to `DATABASE.md` / `API.md`).
   was poll-based at this feature's own original Milestone 16 implementation): a
   pushed event increments the badge immediately, with a REST re-fetch on every
   (re)connect so a client that was briefly disconnected is never silently wrong.
-  Marking as read happens on opening the notifications screen.
+  Marking as read happens on opening the notifications screen (on mobile, every time
+  the tab is opened, not only the first). Rows that were unread when the screen
+  opened are marked with a dot and bolder text, and "Unread" for screen readers.
 - Generated asynchronously via a background job (`ARCHITECTURE.md` §8/§12 risk #10),
   not written synchronously on the triggering request, so a burst of engagement on one
   post can't slow down the like/comment/follow endpoints themselves.
@@ -253,8 +258,9 @@ referenced to `DATABASE.md` / `API.md`).
 - Changing email and deleting the account both require re-entering the current
   password first (the same defense-in-depth change-password already needed) — deleting
   the account is this codebase's first genuinely destructive, irreversible-from-the-UI
-  action, so both web and mobile also require an explicit confirmation checkbox/switch
-  before the delete button is enabled.
+  action, so both web and mobile also ask for confirmation in a dialog (Milestone 25;
+  Milestone 19 used a confirmation checkbox/switch), and the password is entered
+  there.
 - Deleting an account only soft-deletes the `User` row and revokes every session — it
   does not cascade to hide that account's existing posts/comments/likes from feed,
   explore, or other users' profiles (only the account's own profile and search
@@ -300,7 +306,8 @@ original 17.
   Feature 19 below; this was poll-based at this feature's own original Milestone 21
   implementation, matching `Notification`'s then-current MVP choice).
 - Read receipts: a message's `readAt` is set once the other participant views the
-  thread; the inbox surfaces this as a per-conversation unread count.
+  thread; the inbox surfaces this as a per-conversation unread count, and the thread
+  shows "Seen" under your latest message once it's read (Milestone 25).
 - **Out of scope**: group chat (schema allows it, nothing implements it), message
   editing/deletion, media attachments in messages, typing indicators, message
   reactions, blocking a user from messaging you (no block/mute feature exists
@@ -339,9 +346,11 @@ original 17.
   tab bar, and the login/register screens on both platforms. Milestone 24 restyled
   the feed, post detail and comments, create post, profiles, edit profile and the
   likers/followers/following lists, with icon toggles for like and save, and gave
-  mobile's pushed screens a native header with a back button. M25 restyles explore,
-  search, notifications, saved, messages and settings, then M26 reviews everything
-  for consistency.
+  mobile's pushed screens a native header with a back button. Milestone 25 restyled
+  explore, search, notifications, saved, the messages inbox and thread, and
+  settings, so every screen now has its finished design. M26 reviews everything for
+  consistency, enforces the tokens with a lint rule and closes the accessibility
+  gaps.
 - Every web page and mobile screen gets a finished, Instagram-like visual design,
   replacing the original unstyled HTML (web) and ad-hoc `StyleSheet`s (mobile).
 - **Web**: Material UI v9 components plus Tailwind CSS v4 for layout. **Mobile**: the

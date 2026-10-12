@@ -13,6 +13,7 @@ import type {
 
 import { CommentSection } from '../../components/comment-section';
 import { PostCard } from '../../components/post-card';
+import { KeyboardAvoidingView } from '../../components/ui/keyboard-avoiding-view';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
 import { useAuth } from '../../lib/auth-context';
@@ -94,23 +95,25 @@ export default function PostScreen() {
   const isAuthor = viewer?.username === post.author.username;
 
   return (
-    <ScrollView className="flex-1 bg-background">
-      <PostCard
-        post={post}
-        isAuthor={isAuthor}
-        deleting={deleting}
-        error={error}
-        onDelete={handleDelete}
-      />
-      {comments && (
-        <CommentSection
-          postId={post.id}
-          initialComments={comments.data}
-          initialNextCursor={comments.meta.nextCursor}
-          viewerUsername={viewer?.username ?? null}
-          postAuthorUsername={post.author.username}
+    <KeyboardAvoidingView className="flex-1 bg-background">
+      <ScrollView className="flex-1" keyboardShouldPersistTaps="handled">
+        <PostCard
+          post={post}
+          isAuthor={isAuthor}
+          deleting={deleting}
+          error={error}
+          onDelete={handleDelete}
         />
-      )}
-    </ScrollView>
+        {comments && (
+          <CommentSection
+            postId={post.id}
+            initialComments={comments.data}
+            initialNextCursor={comments.meta.nextCursor}
+            viewerUsername={viewer?.username ?? null}
+            postAuthorUsername={post.author.username}
+          />
+        )}
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }

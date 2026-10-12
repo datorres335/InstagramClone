@@ -4,8 +4,6 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import {
   Image,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   ScrollView,
   View,
@@ -24,6 +22,7 @@ import { colors, iconSize } from '@instagram-clone/design-tokens';
 import { Button } from '../../components/ui/button';
 import { apiClient } from '../../lib/api-client';
 import { authErrorMessage } from '../../lib/auth-error-message';
+import { KeyboardAvoidingView } from '../../components/ui/keyboard-avoiding-view';
 
 const MAX_IMAGES = 10;
 const TILE_COLUMNS = 3;
@@ -154,10 +153,7 @@ export default function NewPostScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      className="flex-1 bg-background"
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView className="flex-1 bg-background">
       <ScrollView contentContainerClassName="gap-4 p-4">
         <Pressable
           onPress={handlePickImages}
